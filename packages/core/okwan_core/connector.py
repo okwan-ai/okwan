@@ -7,6 +7,7 @@ auto-generates: (a) REST endpoints, (b) SQL-queryable tables (v2),
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -33,9 +34,15 @@ READ_ONLY: frozenset[OpType] = frozenset({OpType.LIST, OpType.GET, OpType.SEARCH
 
 @dataclass(slots=True)
 class ConnectorContext:
-    """Injected into every operation handler at call time."""
+    """Injected into every operation handler at call time.
 
-    client: OkwanClient
+    `client` is the connector's transport: an OkwanClient for HTTP
+    APIs, or any object exposing `aclose()` for other protocols
+    (database pools, gRPC channels...). Handlers know their own
+    transport type; the platform only requires `aclose()`.
+    """
+
+    client: Any
     credentials: dict[str, str]
 
 
@@ -110,6 +117,7 @@ class Connector:
     rate_limit: RateLimitProfile
     docs_url: str = ""
     resources: dict[str, Resource] = field(default_factory=dict)
+    context_factory: Callable[["Connector", dict[str, str]], ConnectorContext] | None = None
 
     def resource(
         self, name: str, schema: type[BaseModel], description: str = ""
@@ -122,6 +130,8 @@ class Connector:
 
     def context(self, credentials: dict[str, str]) -> ConnectorContext:
         """Build a ready-to-call context with auth + rate limiting applied."""
+        if self.context_factory is not None:
+            return self.context_factory(self, credentials)
         client = OkwanClient(
             base_url=self.base_url,
             auth=self.auth.bind(credentials),

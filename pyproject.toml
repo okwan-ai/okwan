@@ -10,10 +10,11 @@ dependencies = [
     "tenacity>=9.0",
     "mcp>=1.0",
     "uvicorn>=0.30",
+    "asyncpg>=0.29",
 ]
 
 [tool.setuptools]
-packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/mcp_gen", "apps/api"] } }
+packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/connectors/postgres", "packages/mcp_gen", "apps/api"] } }
 
 [tool.ruff]
 line-length = 90

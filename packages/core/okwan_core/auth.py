@@ -67,3 +67,18 @@ class ApiKeyAuth(AuthAdapter):
     def bind(self, credentials: dict[str, str]) -> httpx.Auth:
         self.validate(credentials)
         return _HeaderKeyAuth(self.header, credentials["api_key"])
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionStringAuth(AuthAdapter):
+    """Connection-string credential for non-HTTP transports (Postgres,
+    MySQL, MongoDB...). `bind` is never called; connectors using this
+    adapter supply a `context_factory` that consumes the string directly.
+    """
+
+    required_fields: tuple[str, ...] = ("connection_string",)
+
+    def bind(self, credentials: dict[str, str]) -> httpx.Auth:
+        raise NotImplementedError(
+            "ConnectionStringAuth is transport-level; use a context_factory"
+        )
