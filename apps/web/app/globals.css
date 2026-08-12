@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* ── Okwan brand tokens (OKWAN_PROJECT.md §2.1) ─────────────────── */
+@theme {
+  --color-canvas: #f4f1eb;
+  --color-surface: #fdfcfa;
+  --color-ink: #111111;
+  --color-ink-soft: #4a4a45;
+  --color-volt: #ffd400;
+  --color-volt-deep: #e8b800;
+  --color-navy: #0d1b2e;
+  --color-sky: #b9c6f2;
+  --color-line: #e2ded4;
+
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body: "Poppins", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Signature: data dots traveling the hub-and-spoke rails */
+@keyframes travel-in {
+  0% { offset-distance: 0%; opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+
+.dot {
+  offset-rotate: 0deg;
+  animation: travel-in 3.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot { animation: none; opacity: 0; }
+  html { scroll-behavior: auto; }
+}
+
+::selection {
+  background: var(--color-volt);
+  color: var(--color-ink);
+}
