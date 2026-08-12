@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/connectors/postgres", "packages/mcp_gen", "apps/api"] } }
+packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/connectors/postgres", "packages/connectors/stripe", "packages/mcp_gen", "apps/api"] } }
 
 [tool.ruff]
 line-length = 90

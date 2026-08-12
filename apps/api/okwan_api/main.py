@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 import okwan_postgres.connector  # noqa: F401  (registers the connector)
+import okwan_stripe.connector  # noqa: F401  (registers the connector)
 import okwan_whatsapp.connector  # noqa: F401  (registers the connector)
 from okwan_core import (
     CredentialError,

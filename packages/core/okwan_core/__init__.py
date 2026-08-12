@@ -8,6 +8,7 @@ from .connector import (
     Resource,
 )
 from .errors import CredentialError, OkwanError, RateLimitedError, UpstreamError
+from .pagination import CursorPage, CursorPageIn
 from .registry import all_connectors, get, register
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "OkwanClient", "RateLimitProfile",
     "Connector", "ConnectorContext", "Operation", "OpType", "Resource",
     "CredentialError", "OkwanError", "RateLimitedError", "UpstreamError",
+    "CursorPage", "CursorPageIn",
     "all_connectors", "get", "register",
 ]
