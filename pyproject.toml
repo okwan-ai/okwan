@@ -1,0 +1,20 @@
+[project]
+name = "okwan"
+version = "0.1.0"
+description = "Okwan — the data connectivity layer built for AI agents."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "tenacity>=9.0",
+    "mcp>=1.0",
+    "uvicorn>=0.30",
+]
+
+[tool.setuptools]
+packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/mcp_gen", "apps/api"] } }
+
+[tool.ruff]
+line-length = 90
+target-version = "py312"
