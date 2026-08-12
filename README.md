@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/brand/okwan-logo.svg" width="340" alt="Okwan — the data connectivity layer built for AI agents"></p>
+
 # Okwan
 
 **The data connectivity layer built for AI agents.**
