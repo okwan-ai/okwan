@@ -45,7 +45,7 @@ class BearerTokenAuth(AuthAdapter):
 
     def bind(self, credentials: dict[str, str]) -> httpx.Auth:
         self.validate(credentials)
-        return _BearerAuth(credentials["access_token"])
+        return _BearerAuth(credentials[self.required_fields[0]])
 
 
 class _HeaderKeyAuth(httpx.Auth):
@@ -66,7 +66,7 @@ class ApiKeyAuth(AuthAdapter):
 
     def bind(self, credentials: dict[str, str]) -> httpx.Auth:
         self.validate(credentials)
-        return _HeaderKeyAuth(self.header, credentials["api_key"])
+        return _HeaderKeyAuth(self.header, credentials[self.required_fields[0]])
 
 
 @dataclass(frozen=True, slots=True)
