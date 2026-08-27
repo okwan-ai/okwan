@@ -11,11 +11,19 @@ dependencies = [
     "mcp>=2.0",
     "uvicorn>=0.30",
     "asyncpg>=0.29",
+    "duckdb>=1.1",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.6"]
+
 [tool.setuptools]
-packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/connectors/paystack", "packages/connectors/postgres", "packages/connectors/stripe", "packages/mcp_gen", "apps/api"] } }
+packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/connectors/paystack", "packages/connectors/postgres", "packages/connectors/stripe", "packages/recon", "packages/mcp_gen", "apps/api"] } }
 
 [tool.ruff]
 line-length = 90
 target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
