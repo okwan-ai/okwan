@@ -270,3 +270,22 @@ def test_shopify_amounts_are_comparable_with_paystack():
     txn = Transaction(id=9, reference="#1002", amount=99900,
                       currency="USD", status="success")
     assert order.net_payment_minor == txn.amount
+
+
+def test_fuzzy_matches_across_differently_named_amount_fields():
+    """Two systems rarely name the same concept identically."""
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency",
+                       amount_right="net_payment_minor")]
+    })
+    left = [{"payment_id": "P1", "amount": 45000, "currency": "USD",
+             "created_at": "2026-08-01T10:00:00Z"}]
+    right = [{"name": "#1004", "net_payment_minor": 45000, "currency": "USD",
+              "created_at": "2026-08-01T10:30:00Z"}]
+    assert match(spec, left, right).summary["matched"] == 1
+
+
+def test_fuzzy_right_paths_default_to_left():
+    rule = Fuzzy(amount="amount", currency="currency")
+    assert rule.right_amount == "amount"
+    assert rule.right_currency == "currency"

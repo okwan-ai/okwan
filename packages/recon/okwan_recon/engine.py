@@ -150,9 +150,9 @@ def _apply_fuzzy(
         for r in right:
             if id(r) in consumed:
                 continue
-            if str(dig(r, rule.currency) or "").upper() != l_cur:
+            if str(dig(r, rule.right_currency) or "").upper() != l_cur:
                 continue
-            r_amt = dig(r, rule.amount)
+            r_amt = dig(r, rule.right_amount)
             if r_amt is None:
                 continue
             if abs(to_minor(r_amt, l_cur) - l_minor) > rule.amount_tolerance_minor:
