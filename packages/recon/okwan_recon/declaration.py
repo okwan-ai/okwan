@@ -65,12 +65,26 @@ class Fuzzy(Frozen):
     """
 
     kind: Literal["fuzzy"] = "fuzzy"
-    amount: str
-    currency: str
+    amount: str = Field(description="Amount path on the left side")
+    currency: str = Field(description="Currency path on the left side")
+    amount_right: str | None = Field(
+        default=None, description="Amount path on the right side; defaults to `amount`"
+    )
+    currency_right: str | None = Field(
+        default=None, description="Currency path on the right; defaults to `currency`"
+    )
     timestamp_left: str = "created_at"
     timestamp_right: str = "created_at"
     window: str = "48h"
     amount_tolerance_minor: int = 0
+
+    @property
+    def right_amount(self) -> str:
+        return self.amount_right or self.amount
+
+    @property
+    def right_currency(self) -> str:
+        return self.currency_right or self.currency
 
     @field_validator("window")
     @classmethod
