@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from okwan_core.currency import to_minor
-from okwan_recon import ExactRef, Fuzzy, MSISDN, Reconciliation, ResourceRef, match
+from okwan_recon import (
+    AmountRef, ExactRef, Fuzzy, MSISDN, Reconciliation, ResourceRef, match,
+)
 from okwan_recon.emitters.mcp import tool_metadata
 
 SPEC = Reconciliation(
@@ -289,3 +291,64 @@ def test_fuzzy_right_paths_default_to_left():
     rule = Fuzzy(amount="amount", currency="currency")
     assert rule.right_amount == "amount"
     assert rule.right_currency == "currency"
+
+
+# ── discrepancy on matched pairs ────────────────────────────────────
+
+def test_reference_matched_pair_with_wrong_money_is_flagged():
+    """The rail holds a gross charge; the ledger nets out a refund."""
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref")],
+        "amount": AmountRef(left="amount", right="net_minor"),
+    })
+    left = [{"reference": "#1001", "amount": 242300, "currency": "USD"}]
+    right = [{"order_ref": "#1001", "net_minor": 29900, "currency": "USD"}]
+
+    result = match(spec, left, right)
+    pair = result.matched[0]
+    assert pair.discrepancy_minor == 212400
+    assert pair.agrees is False
+    assert result.summary["matched"] == 1
+    assert result.summary["matched_in_agreement"] == 0
+    assert result.summary["matched_with_discrepancy"] == 1
+    assert result.summary["net_discrepancy_minor"] == 212400
+
+
+def test_clean_reference_match_agrees():
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref")],
+        "amount": AmountRef(left="amount", right="net_minor"),
+    })
+    left = [{"reference": "#1002", "amount": 99900, "currency": "USD"}]
+    right = [{"order_ref": "#1002", "net_minor": 99900, "currency": "USD"}]
+
+    result = match(spec, left, right)
+    assert result.matched[0].agrees is True
+    assert result.summary["matched_with_discrepancy"] == 0
+
+
+def test_cross_currency_pair_is_not_scored():
+    """A difference between two currencies is not a number."""
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref")],
+        "amount": AmountRef(left="amount", right="net_minor"),
+    })
+    left = [{"reference": "#1", "amount": 5000, "currency": "XOF"}]
+    right = [{"order_ref": "#1", "net_minor": 5000, "currency": "USD"}]
+
+    pair = match(spec, left, right).matched[0]
+    assert pair.discrepancy_minor is None
+    assert pair.agrees is None
+
+
+def test_discrepancy_defaults_to_fuzzy_paths():
+    """A declaration with no AmountRef borrows the first Fuzzy rule's paths."""
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency",
+                       amount_right="net_minor")],
+        "amount": None,
+    })
+    ref = spec.resolved_amount
+    assert ref is not None
+    assert ref.left == "amount"
+    assert ref.right_path == "net_minor"
