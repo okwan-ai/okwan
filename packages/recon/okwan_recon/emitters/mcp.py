@@ -17,7 +17,9 @@ from ..runner import run
 def tool_metadata(spec: Reconciliation) -> dict[str, Any]:
     """Declaration-derived descriptor; also used by docs and tests."""
     return {
-        "name": spec.tool_name,
+        "name": spec.name,
+        "tool_name": spec.tool_name,
+        "path": spec.rest_path,
         "title": spec.display_title,
         "description": spec.description
         or (
@@ -80,7 +82,7 @@ def build_server():
         meta = tool_metadata(spec)
         server.add_tool(
             _make_tool_fn(spec),
-            name=meta["name"],
+            name=meta["tool_name"],
             description=f"[reconciliation] {meta['description']}",
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
             structured_output=False,

@@ -32,7 +32,24 @@ def env_credentials(connector_name: str, fields: tuple[str, ...]) -> dict[str, s
 
 
 def _is_page(result: Any) -> bool:
+    """CursorPage: pageable, carries a cursor."""
     return hasattr(result, "items") and hasattr(result, "next_cursor")
+
+
+def _unwrap_container(result: Any) -> list[Row] | None:
+    """Non-paged list containers: RowSet.rows, TableList.items, ...
+
+    Returns None when the result is a single record rather than a
+    collection, so the caller can append it directly.
+    """
+    for attr in ("rows", "items"):
+        value = getattr(result, attr, None)
+        if isinstance(value, list):
+            return [
+                v.model_dump(mode="json") if hasattr(v, "model_dump") else dict(v)
+                for v in value
+            ]
+    return None
 
 
 async def fetch_rows(
@@ -60,7 +77,11 @@ async def fetch_rows(
             result = await op.handler(ctx, op.input_model.model_validate(payload))
 
             if not _is_page(result):
-                rows.append(result.model_dump(mode="json"))
+                container = _unwrap_container(result)
+                if container is None:
+                    rows.append(result.model_dump(mode="json"))
+                else:
+                    rows.extend(container)
                 break
 
             rows.extend(item.model_dump(mode="json") for item in result.items)
