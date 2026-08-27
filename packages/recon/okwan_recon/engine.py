@@ -92,11 +92,14 @@ def _ref_key(value: Any, case_sensitive: bool) -> str | None:
     return s if case_sensitive else s.casefold()
 
 
-def _identity_key(spec: MSISDN | None, row: Row, side: str) -> str | None:
+def _identity_disagrees(spec: MSISDN | None, left: Row, right: Row) -> bool:
+    """True only when both sides carry numbers that cannot be the same."""
     if spec is None:
-        return None
-    path = spec.left if side == "left" else (spec.right or spec.left)
-    return spec.normalize(dig(row, path))
+        return False
+    verdict = spec.agrees(
+        dig(left, spec.left), dig(right, spec.right or spec.left)
+    )
+    return verdict is False
 
 
 def _apply_exact(
@@ -141,7 +144,6 @@ def _apply_fuzzy(
             continue
         l_minor = to_minor(l_amt, l_cur)
         l_ts = _as_dt(dig(l, rule.timestamp_left))
-        l_id = _identity_key(identity, l, "left")
 
         best: Row | None = None
         best_gap: float | None = None
@@ -155,10 +157,8 @@ def _apply_fuzzy(
                 continue
             if abs(to_minor(r_amt, l_cur) - l_minor) > rule.amount_tolerance_minor:
                 continue
-            if identity is not None:
-                r_id = _identity_key(identity, r, "right")
-                if l_id and r_id and l_id != r_id:
-                    continue
+            if _identity_disagrees(identity, l, r):
+                continue
             r_ts = _as_dt(dig(r, rule.timestamp_right))
             if l_ts and r_ts:
                 gap = abs((l_ts - r_ts).total_seconds())

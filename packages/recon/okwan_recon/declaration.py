@@ -89,27 +89,46 @@ MatchRule = Annotated[Union[ExactRef, Fuzzy], Field(discriminator="kind")]
 class MSISDN(Frozen):
     """Phone-number identity, normalised to E.164 digits without '+'.
 
-    Used as a guard on fuzzy matches: two same-amount records in the
-    same window will not be paired if both carry phone numbers that
-    disagree. Silent on either side when a number is absent.
+    A guard on fuzzy matches: two same-amount records in the same window
+    are not paired if their phone numbers disagree. Silent when either
+    side is absent — absence is not evidence of a mismatch.
+
+    A national-format number (leading 0) is ambiguous without knowing
+    the country. `country_codes` lists the codes the merchant actually
+    operates in; every expansion is kept as a candidate and two numbers
+    agree if they share any. One hardcoded code silently blocks correct
+    matches for merchants collecting across borders.
     """
 
     kind: Literal["msisdn"] = "msisdn"
     left: str
     right: str | None = None
-    default_country_code: str | None = None
+    country_codes: tuple[str, ...] = ()
 
-    def normalize(self, raw: Any) -> str | None:
+    def candidates(self, raw: Any) -> frozenset[str]:
+        """Every plausible E.164 form of `raw`. Empty when unusable."""
         if raw is None:
-            return None
+            return frozenset()
         digits = re.sub(r"\D", "", str(raw))
         if not digits:
-            return None
+            return frozenset()
+        forms: set[str] = {digits}
         if digits.startswith("00"):
-            digits = digits[2:]
-        elif digits.startswith("0") and self.default_country_code:
-            digits = self.default_country_code + digits[1:]
-        return digits or None
+            # Reading A: international dial-out prefix -> already E.164.
+            forms.add(digits[2:])
+        if digits.startswith("0"):
+            # Reading B: national trunk prefix -> prepend each country code.
+            national = digits[1:]
+            if national:
+                forms.update(cc + national for cc in self.country_codes)
+        return frozenset(f for f in forms if f)
+
+    def agrees(self, left_raw: Any, right_raw: Any) -> bool | None:
+        """True/False when both sides are present, None when unknown."""
+        l, r = self.candidates(left_raw), self.candidates(right_raw)
+        if not l or not r:
+            return None
+        return bool(l & r)
 
 
 class Reconciliation(Frozen):
