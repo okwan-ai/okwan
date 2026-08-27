@@ -179,3 +179,37 @@ def test_msisdn_trunk_prefix_expands_not_truncates():
     # 00-prefixed digits are ambiguous: both readings are kept.
     assert spec.candidates("005060708") >= {"5060708", "22505060708"}
     assert spec.agrees("005060708", "22505060708") is True
+
+
+# ── connector amount parity ─────────────────────────────────────────
+
+def test_stripe_and_paystack_expose_the_same_amount_shape():
+    """Both rails must report major amounts, subunit-correct per currency."""
+    from okwan_paystack.schemas import Transaction
+    from okwan_stripe.schemas import Charge
+
+    charge = Charge(id="ch_1", amount=250000, currency="NGN",
+                    status="succeeded", created=0)
+    txn = Transaction(id=1, reference="ORD-1", amount=250000,
+                      currency="NGN", status="success")
+    assert charge.amount_major == txn.amount_major == 2500.0
+
+
+def test_stripe_zero_decimal_currency_not_scaled():
+    from okwan_stripe.schemas import Charge
+
+    charge = Charge(id="ch_2", amount=5000, currency="XOF",
+                    status="succeeded", created=0)
+    assert charge.amount_major == 5000.0
+    assert charge.model_dump()["amount_major"] == 5000.0
+
+
+def test_stripe_balance_entries_are_typed():
+    from okwan_stripe.schemas import Balance
+
+    b = Balance.model_validate({
+        "available": [{"currency": "usd", "amount": 12345}],
+        "pending": [{"currency": "xof", "amount": 5000}],
+    })
+    assert b.available[0].amount_major == 123.45
+    assert b.pending[0].amount_major == 5000.0
