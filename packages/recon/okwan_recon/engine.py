@@ -24,6 +24,16 @@ class MatchedPair:
     right: Row
     rule: str
     confidence: float
+    #: left minus right, in the source's own units. None when the
+    #: declaration names no amount, a value is missing, or the two sides
+    #: report different currencies — a cross-currency difference is not a
+    #: number, and reporting one would be worse than reporting nothing.
+    discrepancy_minor: int | None = None
+
+    @property
+    def agrees(self) -> bool | None:
+        """True when the amounts match, None when they cannot be compared."""
+        return None if self.discrepancy_minor is None else self.discrepancy_minor == 0
 
 
 @dataclass(slots=True)
@@ -36,9 +46,15 @@ class ReconResult:
     @property
     def summary(self) -> dict[str, Any]:
         total = len(self.matched) + len(self.unmatched_left)
+        discrepant = [p for p in self.matched if p.agrees is False]
         return {
             "reconciliation": self.name,
             "matched": len(self.matched),
+            # A matched pair whose amounts disagree is not a clean match.
+            # Collapsing the two hides the discrepancy inside a success count.
+            "matched_in_agreement": sum(1 for p in self.matched if p.agrees is True),
+            "matched_with_discrepancy": len(discrepant),
+            "net_discrepancy_minor": sum(p.discrepancy_minor or 0 for p in discrepant),
             "unmatched_left": len(self.unmatched_left),
             "unmatched_right": len(self.unmatched_right),
             "match_rate": round(len(self.matched) / total, 4) if total else 0.0,
@@ -48,9 +64,10 @@ class ReconResult:
         """Flat, view-shaped output — what the DuckDB view exposes."""
         out: list[Row] = [
             {
-                "status": "matched",
+                "status": "matched" if p.agrees is not False else "matched_discrepant",
                 "rule": p.rule,
                 "confidence": p.confidence,
+                "discrepancy": p.discrepancy_minor,
                 "left": p.left,
                 "right": p.right,
             }
@@ -58,12 +75,12 @@ class ReconResult:
         ]
         out += [
             {"status": "unmatched_left", "rule": None, "confidence": 0.0,
-             "left": r, "right": None}
+             "discrepancy": None, "left": r, "right": None}
             for r in self.unmatched_left
         ]
         out += [
             {"status": "unmatched_right", "rule": None, "confidence": 0.0,
-             "left": None, "right": r}
+             "discrepancy": None, "left": None, "right": r}
             for r in self.unmatched_right
         ]
         return out
@@ -179,6 +196,31 @@ def _apply_fuzzy(
     return still_left, [r for r in right if id(r) not in consumed]
 
 
+def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
+    """Compare amounts on every pair, however it was matched.
+
+    Runs after all rules so exact-reference pairs — which never read an
+    amount while matching — are compared too. That is where the useful
+    finding lives: a pair the reference says belongs together while the
+    money says otherwise.
+    """
+    ref = spec.resolved_amount
+    if ref is None:
+        return
+    for pair in result.matched:
+        l_amt, r_amt = dig(pair.left, ref.left), dig(pair.right, ref.right_path)
+        if l_amt is None or r_amt is None:
+            continue
+        l_cur = str(dig(pair.left, ref.currency) or "").upper()
+        r_cur = str(dig(pair.right, ref.right_currency) or "").upper()
+        if l_cur and r_cur and l_cur != r_cur:
+            continue
+        try:
+            pair.discrepancy_minor = int(l_amt) - int(r_amt)
+        except (TypeError, ValueError):
+            continue
+
+
 def match(spec: Reconciliation, left_rows: list[Row], right_rows: list[Row]) -> ReconResult:
     result = ReconResult(name=spec.name)
     left, right = list(left_rows), list(right_rows)
@@ -193,4 +235,5 @@ def match(spec: Reconciliation, left_rows: list[Row], right_rows: list[Row]) -> 
 
     result.unmatched_left = left
     result.unmatched_right = right
+    _score_discrepancies(spec, result)
     return result

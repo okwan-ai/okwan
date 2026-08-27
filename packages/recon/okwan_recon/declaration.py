@@ -145,6 +145,23 @@ class MSISDN(Frozen):
         return bool(l & r)
 
 
+class AmountRef(Frozen):
+    """The money figure to compare on an already-matched pair."""
+
+    left: str
+    right: str | None = None
+    currency: str = "currency"
+    currency_right: str | None = None
+
+    @property
+    def right_path(self) -> str:
+        return self.right or self.left
+
+    @property
+    def right_currency(self) -> str:
+        return self.currency_right or self.currency
+
+
 class Reconciliation(Frozen):
     name: str
     title: str | None = None
@@ -152,6 +169,10 @@ class Reconciliation(Frozen):
     left: ResourceRef
     right: ResourceRef
     keys: list[MatchRule]
+    amount: AmountRef | None = Field(
+        default=None,
+        description="Figure to compare on matched pairs; defaults to the first Fuzzy rule",
+    )
     identity: MSISDN | None = None
     max_records: int = Field(default=500, ge=1, le=10_000)
 
@@ -168,6 +189,21 @@ class Reconciliation(Frozen):
         if not v:
             raise ValueError("at least one match rule is required")
         return v
+
+    @property
+    def resolved_amount(self) -> AmountRef | None:
+        """Explicit declaration, or the first Fuzzy rule's paths."""
+        if self.amount is not None:
+            return self.amount
+        for rule in self.keys:
+            if isinstance(rule, Fuzzy):
+                return AmountRef(
+                    left=rule.amount,
+                    right=rule.right_amount,
+                    currency=rule.currency,
+                    currency_right=rule.right_currency,
+                )
+        return None
 
     @property
     def display_title(self) -> str:

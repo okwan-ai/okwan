@@ -6,7 +6,7 @@ adding a declaration here and nothing else.
 """
 from __future__ import annotations
 
-from .declaration import ExactRef, Fuzzy, MSISDN, Reconciliation, ResourceRef
+from .declaration import AmountRef, ExactRef, Fuzzy, MSISDN, Reconciliation, ResourceRef
 from .registry import register
 
 #: Payment rail against the merchant's own order ledger — the cross-rail
@@ -103,6 +103,7 @@ shopify_orders = register(
                 window="7d",
             ),
         ],
+        amount=AmountRef(left="amount", right="net_payment_minor"),
     )
 )
 
