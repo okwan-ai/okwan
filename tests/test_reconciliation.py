@@ -75,7 +75,7 @@ def test_identity_guard_blocks_mismatched_phones():
 
 def test_tool_metadata_derived_from_declaration():
     meta = tool_metadata(SPEC)
-    assert meta["name"] == "reconcile_paystack_settlement"
+    assert meta["tool_name"] == "reconcile_paystack_settlement"
     assert meta["view"] == "recon.paystack_settlement"
     assert meta["read_only"] is True
     assert meta["rules"] == ["exact_ref", "fuzzy"]
@@ -126,3 +126,19 @@ def test_duckdb_view_materializes_from_same_declaration():
         ).fetchall()
     )
     assert counts == {"matched": 2, "unmatched_left": 1, "unmatched_right": 1}
+
+
+def test_metadata_separates_registry_key_from_tool_name():
+    """REST clients navigate by `name`; MCP registers by `tool_name`."""
+    meta = tool_metadata(SPEC)
+    assert meta["name"] == "paystack_settlement"
+    assert meta["tool_name"] == "reconcile_paystack_settlement"
+    assert meta["path"] == "/v1/reconciliations/paystack_settlement"
+
+
+def test_listed_names_are_routable():
+    import okwan_recon.declarations  # noqa: F401
+    from okwan_recon import all_reconciliations, get
+
+    for spec in all_reconciliations():
+        assert get(tool_metadata(spec)["name"]) is spec

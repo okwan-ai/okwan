@@ -8,6 +8,7 @@ import okwan_paystack.connector  # noqa: F401  (registers the connector)
 import okwan_postgres.connector  # noqa: F401
 import okwan_stripe.connector  # noqa: F401
 
+from . import declarations  # noqa: F401  (registers reconciliations)
 from .emitters.mcp import run_stdio
 
 if __name__ == "__main__":

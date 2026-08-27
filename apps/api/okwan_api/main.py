@@ -25,6 +25,8 @@ from okwan_core import (
     all_connectors,
 )
 from okwan_core.connector import Connector, Operation, Resource
+import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
+from okwan_recon.emitters.rest import build_router
 
 app = FastAPI(
     title="Okwan API",
@@ -110,6 +112,11 @@ def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
 for _connector in all_connectors():
     for _resource, _op in _connector.iter_operations():
         _mount(_connector, _resource, _op)
+
+
+# Reconciliations span connectors, so they mount as one router rather
+# than per-connector routes. Registrations must be imported first.
+app.include_router(build_router())
 
 
 @app.get("/healthz")
