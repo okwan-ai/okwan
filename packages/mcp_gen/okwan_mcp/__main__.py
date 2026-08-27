@@ -5,6 +5,7 @@ Usage: python -m okwan_mcp whatsapp
 import asyncio
 import sys
 
+import okwan_paystack.connector  # noqa: F401
 import okwan_postgres.connector  # noqa: F401
 import okwan_stripe.connector  # noqa: F401
 import okwan_whatsapp.connector  # noqa: F401
