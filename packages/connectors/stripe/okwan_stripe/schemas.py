@@ -5,8 +5,9 @@ them; currency conversion is presentation-layer concern.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
+from okwan_core.currency import to_major
 from okwan_core.pagination import CursorPage, CursorPageIn
 
 
@@ -21,13 +22,19 @@ class Customer(BaseModel):
 
 class Charge(BaseModel):
     id: str
-    amount: int = Field(description="Amount in minor units (cents)")
+    amount: int = Field(description="Amount in minor units")
     currency: str
     status: str = Field(description="succeeded, pending, or failed")
     customer: str | None = Field(default=None, description="Customer ID")
     description: str | None = None
     created: int
     refunded: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def amount_major(self) -> float:
+        """Amount in major units, subunit-correct for zero-decimal currencies."""
+        return to_major(self.amount, self.currency)
 
 
 class Subscription(BaseModel):
@@ -40,9 +47,19 @@ class Subscription(BaseModel):
     cancel_at_period_end: bool = False
 
 
+class BalanceEntry(BaseModel):
+    currency: str
+    amount: int = Field(description="Amount in minor units")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def amount_major(self) -> float:
+        return to_major(self.amount, self.currency)
+
+
 class Balance(BaseModel):
-    available: list[dict] = Field(description="Available funds per currency")
-    pending: list[dict] = Field(description="Pending funds per currency")
+    available: list[BalanceEntry] = Field(description="Available funds per currency")
+    pending: list[BalanceEntry] = Field(description="Pending funds per currency")
 
 
 # ── operation inputs ────────────────────────────────────────────────
