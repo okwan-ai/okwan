@@ -54,7 +54,7 @@ payments_orders = register(
             ExactRef(left="reference", right="order_ref"),
             Fuzzy(amount="amount", currency="currency", window="48h"),
         ],
-        identity=MSISDN(left="phone", right="phone", default_country_code="233"),
+        identity=MSISDN(left="phone", right="phone", country_codes=("233", "225")),
     )
 )
 

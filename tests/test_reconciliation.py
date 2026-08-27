@@ -15,7 +15,7 @@ SPEC = Reconciliation(
         ExactRef(left="reference", right="order_ref"),
         Fuzzy(amount="amount", currency="currency", window="48h"),
     ],
-    identity=MSISDN(left="customer.phone", right="phone", default_country_code="233"),
+    identity=MSISDN(left="customer.phone", right="phone", country_codes=("233",)),
 )
 
 LEFT = [
@@ -142,3 +142,40 @@ def test_listed_names_are_routable():
 
     for spec in all_reconciliations():
         assert get(tool_metadata(spec)["name"]) is spec
+
+
+def test_msisdn_expands_national_format_per_country():
+    """A leading-zero number is ambiguous; keep every candidate."""
+    spec = MSISDN(left="phone", country_codes=("233", "225"))
+    assert {"233505060708", "225505060708"} <= spec.candidates("0505060708")
+    assert spec.candidates("+233 24 111 2222") == {"233241112222"}
+    assert spec.candidates(None) == frozenset()
+
+
+def test_msisdn_agreement_is_three_valued():
+    spec = MSISDN(left="phone", country_codes=("233", "225"))
+    assert spec.agrees("0505060708", "225505060708") is True
+    assert spec.agrees("233241112222", "233209999999") is False
+    assert spec.agrees(None, "233241112222") is None
+
+
+def test_absent_phone_does_not_block_a_fuzzy_match():
+    spec = SPEC.model_copy(update={"keys": [Fuzzy(amount="amount", currency="currency")]})
+    left = [{"amount": 100, "currency": "XOF", "created_at": "2026-08-01T10:00:00Z"}]
+    right = [{"order_ref": "B", "amount": 100, "currency": "XOF",
+              "phone": "233240000001", "created_at": "2026-08-01T10:01:00Z"}]
+    assert match(spec, left, right).summary["matched"] == 1
+
+
+def test_msisdn_international_dial_prefix_is_already_e164():
+    """00225... is an E.164 number written with a dial-out prefix."""
+    spec = MSISDN(left="phone", country_codes=("233", "225"))
+    assert "225050607080" in spec.candidates("00225050607080")
+    assert spec.agrees("0022505060708", "22505060708") is True
+
+
+def test_msisdn_trunk_prefix_expands_not_truncates():
+    spec = MSISDN(left="phone", country_codes=("225",))
+    # 00-prefixed digits are ambiguous: both readings are kept.
+    assert spec.candidates("005060708") >= {"5060708", "22505060708"}
+    assert spec.agrees("005060708", "22505060708") is True
