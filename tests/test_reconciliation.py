@@ -213,3 +213,60 @@ def test_stripe_balance_entries_are_typed():
     })
     assert b.available[0].amount_major == 123.45
     assert b.pending[0].amount_major == 5000.0
+
+
+# ── shopify money normalisation ─────────────────────────────────────
+
+def test_shopify_money_uses_decimal_not_float():
+    """299.10 * 100 is 29909.999... in binary float; money must not round down."""
+    from okwan_shopify.schemas import money_to_minor
+
+    assert money_to_minor("299.10", "USD") == 29910
+    assert money_to_minor("0.07", "USD") == 7
+    assert money_to_minor("1234.56", "USD") == 123456
+
+
+def test_shopify_zero_decimal_currency_not_scaled():
+    from okwan_shopify.schemas import money_to_minor
+
+    assert money_to_minor("5000", "XOF") == 5000
+    assert money_to_minor("5000", "USD") == 500000
+
+
+def test_shopify_net_payment_excludes_refund():
+    """A refunded order matched on gross looks like an over-collection."""
+    from okwan_shopify.schemas import Order
+
+    o = Order(
+        id="gid://shopify/Order/1", name="#1001", currency="USD",
+        total_price_minor=29900, total_received_minor=242300,
+        total_refunded_minor=212400,
+    )
+    assert o.net_payment_minor == 29900
+    assert o.net_payment_major == 299.00
+    assert o.is_reconcilable is True
+
+
+def test_shopify_uncollected_order_is_not_reconcilable():
+    from okwan_shopify.schemas import Order
+
+    o = Order(
+        id="gid://shopify/Order/2", name="#1099", currency="USD",
+        total_price_minor=5000, total_received_minor=0,
+    )
+    assert o.is_reconcilable is False
+
+
+def test_shopify_amounts_are_comparable_with_paystack():
+    """Both sides reduce to integer minor units of the same currency."""
+    from okwan_paystack.schemas import Transaction
+    from okwan_shopify.schemas import Order, money_to_minor
+
+    order = Order(
+        id="gid://shopify/Order/3", name="#1002", currency="USD",
+        total_price_minor=money_to_minor("999.00", "USD"),
+        total_received_minor=money_to_minor("999.00", "USD"),
+    )
+    txn = Transaction(id=9, reference="#1002", amount=99900,
+                      currency="USD", status="success")
+    assert order.net_payment_minor == txn.amount
