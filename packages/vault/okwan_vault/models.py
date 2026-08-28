@@ -18,7 +18,14 @@ def _now() -> datetime:
 class Tenant:
     id: str
     name: str
+    #: The ISV that provisioned this tenant, if any. None for a root
+    #: account — a solo developer, or an ISV itself.
+    parent_id: str | None = None
     created_at: datetime = field(default_factory=_now)
+
+    @property
+    def is_root(self) -> bool:
+        return self.parent_id is None
 
 
 @dataclass(frozen=True, slots=True)

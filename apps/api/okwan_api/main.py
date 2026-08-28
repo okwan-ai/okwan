@@ -32,6 +32,7 @@ from okwan_core import (
 from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
+from okwan_api.admin import build_router as build_admin_router
 from okwan_api.auth import close_store, current_tenant, load_credentials, open_store
 from okwan_query.mcp_http import build_server as build_mcp_server
 from okwan_query.rest import build_router as build_query_router
@@ -168,6 +169,7 @@ for _connector in all_connectors():
 # than per-connector routes. Registrations must be imported first.
 app.include_router(build_router())
 app.include_router(build_query_router())
+app.include_router(build_admin_router())
 
 # Hosted MCP. Mounted rather than run as a separate service so agents
 # authenticate through the same vault the REST routes use — one tenant

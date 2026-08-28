@@ -24,6 +24,15 @@ from .models import ApiKey, SealedCredential, Tenant
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 
 
+def _tenant(row) -> Tenant:
+    return Tenant(
+        id=row["id"],
+        name=row["name"],
+        parent_id=row["parent_id"],
+        created_at=row["created_at"],
+    )
+
+
 class PostgresStore:
     """Async store. Call `await connect()` before use."""
 
@@ -52,22 +61,38 @@ class PostgresStore:
 
     # ── tenants ─────────────────────────────────────────────────────
 
-    async def create_tenant(self, name: str) -> Tenant:
+    async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
+        """Create a tenant, optionally as a child of an existing one.
+
+        The parent must exist; the foreign key enforces that rather than a
+        prior read, so two concurrent creates cannot both pass a check
+        against a parent one of them is deleting.
+        """
         tenant_id = f"ten_{uuid.uuid4().hex[:16]}"
-        row = await self.pool.fetchrow(
-            "INSERT INTO tenants (id, name) VALUES ($1, $2) "
-            "RETURNING id, name, created_at",
-            tenant_id, name,
-        )
-        return Tenant(id=row["id"], name=row["name"], created_at=row["created_at"])
+        try:
+            row = await self.pool.fetchrow(
+                "INSERT INTO tenants (id, name, parent_id) VALUES ($1, $2, $3) "
+                "RETURNING id, name, parent_id, created_at",
+                tenant_id, name, parent_id,
+            )
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown parent tenant {parent_id!r}") from None
+        return _tenant(row)
 
     async def get_tenant(self, tenant_id: str) -> Tenant | None:
         row = await self.pool.fetchrow(
-            "SELECT id, name, created_at FROM tenants WHERE id = $1", tenant_id
+            "SELECT id, name, parent_id, created_at FROM tenants WHERE id = $1",
+            tenant_id,
         )
-        return None if row is None else Tenant(
-            id=row["id"], name=row["name"], created_at=row["created_at"]
+        return None if row is None else _tenant(row)
+
+    async def children_of(self, tenant_id: str) -> list[Tenant]:
+        rows = await self.pool.fetch(
+            "SELECT id, name, parent_id, created_at FROM tenants "
+            "WHERE parent_id = $1 ORDER BY created_at",
+            tenant_id,
         )
+        return [_tenant(r) for r in rows]
 
     # ── api keys ────────────────────────────────────────────────────
 
@@ -96,14 +121,12 @@ class PostgresStore:
     async def tenant_for_key(self, full_key: str) -> Tenant | None:
         """Indexed hash lookup — no scan over keys, no timing signal."""
         row = await self.pool.fetchrow(
-            "SELECT t.id, t.name, t.created_at "
+            "SELECT t.id, t.name, t.parent_id, t.created_at "
             "FROM api_keys k JOIN tenants t ON t.id = k.tenant_id "
             "WHERE k.hash_hex = $1 AND k.revoked_at IS NULL",
             apikey.hash_key(full_key),
         )
-        return None if row is None else Tenant(
-            id=row["id"], name=row["name"], created_at=row["created_at"]
-        )
+        return None if row is None else _tenant(row)
 
     # ── credentials ─────────────────────────────────────────────────
 
