@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from okwan_core import all_connectors
+from okwan_core import get as get_connector
 from okwan_core.connector import Connector, Operation, OpType, Resource
 
 from .types import columns_for
@@ -103,6 +104,28 @@ def declare_sql_table(
 def catalog() -> list[Table]:
     """Every SQL-addressable resource across every registered connector."""
     return [t for c in all_connectors() for t in tables_for(c)] + list(_DECLARED)
+
+
+def missing_credentials(
+    table: Table, resolver=None
+) -> tuple[str, ...]:
+    """Credential fields the deployment has not supplied for this table.
+
+    Empty means the table can be fetched. Declared SQL tables resolve
+    against the connector that actually serves them.
+    """
+    from okwan_recon.fetch import env_credentials
+
+    resolve = resolver or env_credentials
+    name = "postgres" if table.connector == "rail" else table.connector
+    try:
+        connector = get_connector(name)
+    except KeyError:
+        return ("<connector not registered>",)
+
+    fields = connector.auth.required_fields
+    supplied = resolve(connector.name, fields)
+    return tuple(f for f in fields if not supplied.get(f))
 
 
 def find(qualified: str) -> Table:

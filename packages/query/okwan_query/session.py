@@ -19,10 +19,12 @@ from typing import Any
 
 import duckdb
 
+from okwan_core import CredentialError
+
 from okwan_recon.fetch import CredentialResolver, env_credentials, fetch_rows
 from okwan_recon.declaration import ResourceRef
 
-from .catalog import Table, catalog
+from .catalog import Table, catalog, missing_credentials
 from .guard import check as check_statement
 
 #: schema.table references in a SQL string. Deliberately loose — a name
@@ -81,6 +83,13 @@ class QuerySession:
         """Fetch a table's rows and materialise them. Idempotent per session."""
         if table.qualified in self._loaded:
             return 0
+
+        missing = missing_credentials(table, self._resolver)
+        if missing:
+            raise CredentialError(
+                f"{table.qualified} needs {', '.join(missing)} — "
+                "not configured in this deployment"
+            )
 
         connector = "postgres" if table.connector == "rail" else table.connector
         resource = "sql" if table.connector == "rail" else table.resource
