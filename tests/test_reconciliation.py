@@ -352,3 +352,85 @@ def test_discrepancy_defaults_to_fuzzy_paths():
     assert ref is not None
     assert ref.left == "amount"
     assert ref.right_path == "net_minor"
+
+
+# ── ambiguity ───────────────────────────────────────────────────────
+
+def test_two_equal_candidates_are_unresolved_not_matched():
+    """A match the system is not entitled to is worse than no match."""
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency")],
+        "amount": None,
+    })
+    left = [{"payment_id": "P1", "amount": 45000, "currency": "USD",
+             "created_at": "2026-08-01T10:00:00Z"}]
+    right = [
+        {"order_ref": "A", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T10:05:00Z"},
+        {"order_ref": "B", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T22:00:00Z"},
+    ]
+
+    result = match(spec, left, right)
+    assert result.summary["matched"] == 0
+    assert result.summary["ambiguous"] == 1
+    assert {r["order_ref"] for r in result.ambiguous[0].candidates} == {"A", "B"}
+
+
+def test_ambiguous_candidates_are_not_consumed():
+    """Nothing claimed them, so they still appear as unmatched."""
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency")],
+        "amount": None,
+    })
+    left = [{"payment_id": "P1", "amount": 45000, "currency": "USD",
+             "created_at": "2026-08-01T10:00:00Z"}]
+    right = [
+        {"order_ref": "A", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T10:05:00Z"},
+        {"order_ref": "B", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T11:00:00Z"},
+    ]
+
+    result = match(spec, left, right)
+    assert result.summary["unmatched_right"] == 2
+
+
+def test_single_candidate_still_matches():
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency")],
+        "amount": None,
+    })
+    left = [{"payment_id": "P1", "amount": 45000, "currency": "USD",
+             "created_at": "2026-08-01T10:00:00Z"}]
+    right = [{"order_ref": "A", "amount": 45000, "currency": "USD",
+              "created_at": "2026-08-01T10:05:00Z"}]
+
+    result = match(spec, left, right)
+    assert result.summary["matched"] == 1
+    assert result.summary["ambiguous"] == 0
+
+
+def test_exact_reference_resolves_what_amount_alone_cannot():
+    """The reference is why duplicate amounts are still reconcilable."""
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref"),
+                 Fuzzy(amount="amount", currency="currency")],
+        "amount": None,
+    })
+    left = [
+        {"payment_id": "P1", "reference": "A", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T10:00:00Z"},
+        {"payment_id": "P2", "reference": "B", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T10:01:00Z"},
+    ]
+    right = [
+        {"order_ref": "A", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T10:05:00Z"},
+        {"order_ref": "B", "amount": 45000, "currency": "USD",
+         "created_at": "2026-08-01T10:06:00Z"},
+    ]
+
+    result = match(spec, left, right)
+    assert result.summary["matched"] == 2
+    assert result.summary["ambiguous"] == 0
