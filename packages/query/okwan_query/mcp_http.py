@@ -20,6 +20,10 @@ from mcp.server.mcpserver.context import Context
 
 from okwan_core import all_connectors
 
+from okwan_recon import all_reconciliations, get as get_reconciliation, run as run_recon
+from okwan_recon.declaration import Reconciliation
+
+from .catalog import missing_credentials
 from .guard import UnsafeStatement
 from .mcp import catalog_payload
 from .session import DEFAULT_LIMIT, QuerySession
@@ -73,6 +77,119 @@ async def _tenant_resolver(ctx: Context):
         return {f: loaded.get((connector_name, f), "") for f in fields}
 
     return resolve
+
+
+def _recon_blockers(spec: Reconciliation, resolver) -> list[str]:
+    """Credential fields missing for either side of a reconciliation."""
+    from .catalog import Table
+
+    out: list[str] = []
+    for ref in (spec.left, spec.right):
+        stub = Table(
+            connector=ref.connector, resource=ref.resource,
+            operation=ref.operation, model=type("x", (), {}), columns=(),
+        )
+        for field in missing_credentials(stub, resolver):
+            entry = f"{ref.connector}.{field}"
+            if entry not in out:
+                out.append(entry)
+    return out
+
+
+def _recon_metadata(spec: Reconciliation, resolver) -> dict[str, Any]:
+    blockers = _recon_blockers(spec, resolver)
+    return {
+        "name": spec.name,
+        "title": spec.display_title,
+        "description": spec.description,
+        "left": spec.left.qualified,
+        "right": spec.right.qualified,
+        "rules": [k.kind for k in spec.keys],
+        "runnable": not blockers,
+        "missing_credentials": blockers,
+    }
+
+
+def _list_recon_tool():
+    async def okwan_list_reconciliations(ctx: Context) -> dict[str, Any]:
+        """List the reconciliations available and whether they can run.
+
+        A reconciliation marked not runnable needs credentials this
+        account has not configured; the response names the fields.
+        """
+        try:
+            resolver = await _tenant_resolver(ctx)
+        except Unauthenticated as exc:
+            return {"error": str(exc), "reconciliations": []}
+        return {
+            "reconciliations": [
+                _recon_metadata(s, resolver) for s in all_reconciliations()
+            ]
+        }
+
+    okwan_list_reconciliations.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY, annotation=Context)]
+    )
+    return okwan_list_reconciliations
+
+
+def _reconcile_tool(max_records: int):
+    async def okwan_reconcile(
+        ctx: Context, name: str, limit: int = 200, status: str = "all"
+    ) -> dict[str, Any]:
+        """Run a named reconciliation across two live systems.
+
+        Call okwan_list_reconciliations first. Reports six outcomes, not
+        two: agrees, differs with a known cause, differs unexplained,
+        ambiguous, unmatched on either side. `net_unexplained_minor` is
+        the figure to act on — an explained difference is accounted for.
+        """
+        try:
+            resolver = await _tenant_resolver(ctx)
+        except Unauthenticated as exc:
+            return {"error": str(exc), "rows": [], "summary": {}}
+
+        try:
+            spec = get_reconciliation(name)
+        except KeyError:
+            known = ", ".join(s.name for s in all_reconciliations())
+            return {"error": f"unknown reconciliation {name!r}; known: {known}"}
+
+        blockers = _recon_blockers(spec, resolver)
+        if blockers:
+            return {
+                "error": f"{name} needs {', '.join(blockers)} — not configured",
+                "rows": [], "summary": {},
+            }
+
+        try:
+            result = await run_recon(
+                spec, resolver, max_records=min(limit, max_records)
+            )
+        except Exception as exc:  # noqa: BLE001 — surfaced to the agent as data
+            return {"error": f"{type(exc).__name__}: {exc}", "rows": [], "summary": {}}
+
+        rows = result.rows()
+        if status != "all":
+            rows = [r for r in rows if r["status"] == status]
+        return {
+            "summary": result.summary,
+            "ambiguous": [
+                {"left": a.left, "candidates": a.candidates, "rule": a.rule}
+                for a in result.ambiguous
+            ],
+            "rows": rows,
+        }
+
+    okwan_reconcile.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [
+            inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY, annotation=Context),
+            inspect.Parameter("name", inspect.Parameter.KEYWORD_ONLY, annotation=str),
+            inspect.Parameter("limit", inspect.Parameter.KEYWORD_ONLY, annotation=int, default=200),
+            inspect.Parameter("status", inspect.Parameter.KEYWORD_ONLY, annotation=str, default="all"),
+        ]
+    )
+    return okwan_reconcile
 
 
 def build_server(max_records: int = DEFAULT_LIMIT):
@@ -139,6 +256,20 @@ def build_server(max_records: int = DEFAULT_LIMIT):
         okwan_query,
         name="okwan_query",
         description="[okwan] Run a read-only SQL query across connectors.",
+        annotations=read_only,
+        structured_output=False,
+    )
+    server.add_tool(
+        _list_recon_tool(),
+        name="okwan_list_reconciliations",
+        description="[okwan] List reconciliations and whether they can run.",
+        annotations=read_only,
+        structured_output=False,
+    )
+    server.add_tool(
+        _reconcile_tool(max_records),
+        name="okwan_reconcile",
+        description="[okwan] Run a named reconciliation across two live systems.",
         annotations=read_only,
         structured_output=False,
     )
