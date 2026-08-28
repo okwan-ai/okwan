@@ -37,11 +37,26 @@ class MatchedPair:
 
 
 @dataclass(slots=True)
+class Ambiguity:
+    """A record with more than one equally valid counterpart.
+
+    Neither matched nor unmatched: the counterpart exists, but which one
+    cannot be determined from the data. Surfacing the candidates is the
+    answer — choosing between them would be invention.
+    """
+
+    left: Row
+    candidates: list[Row]
+    rule: str
+
+
+@dataclass(slots=True)
 class ReconResult:
     name: str
     matched: list[MatchedPair] = field(default_factory=list)
     unmatched_left: list[Row] = field(default_factory=list)
     unmatched_right: list[Row] = field(default_factory=list)
+    ambiguous: list[Ambiguity] = field(default_factory=list)
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -57,6 +72,10 @@ class ReconResult:
             "net_discrepancy_minor": sum(p.discrepancy_minor or 0 for p in discrepant),
             "unmatched_left": len(self.unmatched_left),
             "unmatched_right": len(self.unmatched_right),
+            # Records whose counterpart exists but cannot be identified.
+            # Counted apart from both matches and misses: reporting these
+            # as either would overstate what the data supports.
+            "ambiguous": len(self.ambiguous),
             "match_rate": round(len(self.matched) / total, 4) if total else 0.0,
         }
 
@@ -82,6 +101,12 @@ class ReconResult:
             {"status": "unmatched_right", "rule": None, "confidence": 0.0,
              "discrepancy": None, "left": None, "right": r}
             for r in self.unmatched_right
+        ]
+        out += [
+            {"status": "ambiguous", "rule": a.rule, "confidence": 0.0,
+             "discrepancy": None, "left": a.left, "right": None,
+             "candidates": a.candidates}
+            for a in self.ambiguous
         ]
         return out
 
@@ -149,6 +174,13 @@ def _apply_fuzzy(
     right: list[Row],
     out: ReconResult,
 ) -> tuple[list[Row], list[Row]]:
+    """Pair on amount, currency and time window.
+
+    Collects every viable candidate rather than the closest one. A single
+    candidate is a match; several are an ambiguity. Candidates are not
+    consumed when ambiguous — they remain available to later rules and to
+    the unmatched report, since none of them was claimed.
+    """
     span = rule.window_delta.total_seconds() or 1.0
     still_left: list[Row] = []
     consumed: set[int] = set()
@@ -162,8 +194,7 @@ def _apply_fuzzy(
         l_minor = to_minor(l_amt, l_cur)
         l_ts = _as_dt(dig(l, rule.timestamp_left))
 
-        best: Row | None = None
-        best_gap: float | None = None
+        candidates: list[tuple[Row, float]] = []
         for r in right:
             if id(r) in consumed:
                 continue
@@ -183,14 +214,24 @@ def _apply_fuzzy(
                     continue
             else:
                 gap = span
-            if best_gap is None or gap < best_gap:
-                best, best_gap = r, gap
+            candidates.append((r, gap))
 
-        if best is None:
+        if not candidates:
             still_left.append(l)
             continue
+
+        if len(candidates) > 1:
+            # Equal amount, equal currency, both in window. Time proximity
+            # is not evidence enough to choose — settlement lag is the least
+            # reliable signal a rail has.
+            out.ambiguous.append(
+                Ambiguity(left=l, candidates=[r for r, _ in candidates], rule=rule.kind)
+            )
+            continue
+
+        best, gap = candidates[0]
         consumed.add(id(best))
-        confidence = round(max(0.5, 1.0 - (best_gap or 0.0) / span * 0.5), 4)
+        confidence = round(max(0.5, 1.0 - gap / span * 0.5), 4)
         out.matched.append(MatchedPair(l, best, rule.kind, confidence))
 
     return still_left, [r for r in right if id(r) not in consumed]
