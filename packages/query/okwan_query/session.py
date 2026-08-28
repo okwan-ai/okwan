@@ -23,6 +23,7 @@ from okwan_recon.fetch import CredentialResolver, env_credentials, fetch_rows
 from okwan_recon.declaration import ResourceRef
 
 from .catalog import Table, catalog
+from .guard import check as check_statement
 
 #: schema.table references in a SQL string. Deliberately loose — a name
 #: that isn't in the catalog is left alone for DuckDB to resolve or reject.
@@ -113,6 +114,7 @@ class QuerySession:
         Read-only by construction: every table is materialised from a
         list/search operation, and there is nothing to write back to.
         """
+        sql = check_statement(sql)
         tables = self.referenced_tables(sql)
         loaded: dict[str, int] = {}
         for table in tables:

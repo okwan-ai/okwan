@@ -75,3 +75,83 @@ def test_ddl_quotes_identifiers():
     ddl = find("shopify.orders").ddl()
     assert ddl.startswith('CREATE OR REPLACE TABLE "shopify"."orders"')
     assert '"net_payment_minor" BIGINT' in ddl
+
+
+# ── statement guard ─────────────────────────────────────────────────
+
+def test_reads_are_allowed():
+    from okwan_query import check
+
+    assert check("SELECT * FROM shopify.orders").startswith("SELECT")
+    assert check("WITH x AS (SELECT 1) SELECT * FROM x").startswith("WITH")
+    assert check("  SELECT 1;  ") == "SELECT 1"
+
+
+@pytest.mark.parametrize("sql", [
+    "CREATE TABLE evil AS SELECT 1",
+    "DROP TABLE shopify.orders",
+    "INSERT INTO shopify.orders VALUES (1)",
+    "UPDATE shopify.orders SET name = 'x'",
+    "DELETE FROM shopify.orders",
+])
+def test_writes_are_rejected(sql):
+    from okwan_query import UnsafeStatement, check
+
+    with pytest.raises(UnsafeStatement):
+        check(sql)
+
+
+@pytest.mark.parametrize("sql", [
+    "COPY (SELECT 1) TO '/tmp/out.csv'",
+    "INSTALL httpfs",
+    "ATTACH '/etc/shadow' AS s",
+    "SELECT * FROM read_csv('/etc/passwd')",
+    "SELECT * FROM glob('/**')",
+])
+def test_filesystem_escapes_are_rejected(sql):
+    """readOnlyHint would be a false claim if these got through."""
+    from okwan_query import UnsafeStatement, check
+
+    with pytest.raises(UnsafeStatement):
+        check(sql)
+
+
+def test_statement_chaining_is_rejected():
+    from okwan_query import UnsafeStatement, check
+
+    with pytest.raises(UnsafeStatement, match="multiple statements"):
+        check("SELECT 1; DROP TABLE x")
+
+
+def test_comments_cannot_hide_a_second_statement():
+    from okwan_query import UnsafeStatement, check
+
+    with pytest.raises(UnsafeStatement):
+        check("SELECT 1 -- ok\n; DROP TABLE x")
+
+
+def test_empty_statement_is_rejected():
+    from okwan_query import UnsafeStatement, check
+
+    with pytest.raises(UnsafeStatement, match="empty"):
+        check("   -- just a comment\n  ")
+
+
+def test_query_tool_reports_guard_errors_as_data():
+    """An agent gets a usable error, not an exception."""
+    import asyncio
+
+    from okwan_query.mcp import _query_tool
+
+    result = asyncio.run(_query_tool(100)(sql="DROP TABLE x"))
+    assert "error" in result
+    assert result["row_count"] == 0
+
+
+def test_catalog_payload_names_every_table():
+    from okwan_query.mcp import catalog_payload
+
+    payload = catalog_payload()
+    names = {t["name"] for t in payload["tables"]}
+    assert "shopify.orders" in names
+    assert all(t["columns"] for t in payload["tables"])
