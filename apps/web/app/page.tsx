@@ -1,4 +1,5 @@
 const GITHUB = "https://github.com/okwan-ai/okwan";
+const API = "https://okwan.onrender.com";
 
 /* ── Wordmark: pipe glyph (two strokes, data dot passing through) ── */
 function Mark({ size = 26 }: { size?: number }) {
@@ -15,107 +16,93 @@ function Wordmark() {
   return (
     <span className="flex items-center gap-2">
       <Mark />
-      <span className="font-body text-[22px] font-semibold tracking-tight">
-        okwan
-      </span>
+      <span className="font-body text-[22px] font-semibold tracking-tight">okwan</span>
     </span>
   );
 }
 
-/* ── Signature: hub-and-spoke with traveling data dots ───────────── */
-function HubDiagram() {
-  const sources = [
-    { label: "WhatsApp", y: 60 },
-    { label: "Postgres", y: 150 },
-    { label: "Stripe", y: 240 },
-  ];
-  const rails = [
-    { label: "REST API", y: 60 },
-    { label: "SQL tables", y: 150 },
-    { label: "MCP server", y: 240 },
-  ];
-  const inPaths = sources.map(
-    (s) => `M 128 ${s.y} C 220 ${s.y}, 260 150, 330 150`
-  );
-  const outPaths = rails.map(
-    (r) => `M 430 150 C 500 150, 540 ${r.y}, 632 ${r.y}`
-  );
+/* ── Signature: a real reconciliation result ──────────────────────
+   These are the actual numbers from a live run against a Shopify
+   store and a payment ledger. Six orders, six different verdicts —
+   the distinctions are the product.                              */
 
+type Verdict = "agrees" | "explained" | "ambiguous" | "unpaid" | "orphan";
+
+const VERDICT: Record<Verdict, { label: string; tone: string }> = {
+  agrees:    { label: "agrees",             tone: "border-line text-ink-soft" },
+  explained: { label: "differs · refund",   tone: "border-ink bg-volt text-ink" },
+  ambiguous: { label: "ambiguous",          tone: "border-ink bg-sky text-navy" },
+  unpaid:    { label: "no payment",         tone: "border-ink text-ink" },
+  orphan:    { label: "no order",           tone: "border-ink text-ink" },
+};
+
+const RESULT: {
+  order: string; ledger: string; rail: string; verdict: Verdict; note: string;
+}[] = [
+  { order: "#1001", ledger: "$299.00", rail: "$2,423.00", verdict: "explained",
+    note: "rail holds the gross charge; the ledger nets out a $2,124 refund the feed cannot express" },
+  { order: "#1002", ledger: "$999.00", rail: "$999.00", verdict: "agrees",
+    note: "matched on reference, amounts agree" },
+  { order: "#1003", ledger: "$150.00", rail: "$150.00", verdict: "agrees",
+    note: "matched on reference, amounts agree" },
+  { order: "#1004", ledger: "$450.00", rail: "—", verdict: "ambiguous",
+    note: "two reference-less $450 payments, two $450 orders — not entitled to pick one" },
+  { order: "#1005", ledger: "$450.00", rail: "—", verdict: "ambiguous",
+    note: "same pair; reported unresolved rather than paired arbitrarily" },
+  { order: "#1006", ledger: "$75.00", rail: "—", verdict: "unpaid",
+    note: "marked paid in the ledger, nothing collected" },
+  { order: "—", ledger: "—", rail: "$333.00", verdict: "orphan",
+    note: "collected against order #9999, which does not exist" },
+];
+
+function ReconResult() {
   return (
-    <div className="relative mx-auto max-w-[760px] overflow-hidden rounded-2xl border border-line bg-surface px-2 py-6 sm:px-6">
-      <svg viewBox="0 0 760 300" className="w-full" role="img" aria-label="Sources flow into the Okwan hub and out as REST, SQL, and MCP interfaces">
-        {/* soft flow stream underlay */}
-        <path d="M 128 150 H 632" stroke="#B9C6F2" strokeWidth="26" strokeLinecap="round" opacity="0.25" />
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface">
+      <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-line px-5 py-4 sm:px-7">
+        <p className="font-mono text-[12.5px] text-ink-soft">
+          reconcile · shopify.orders ↔ payment rail
+        </p>
+        <p className="font-mono text-[12.5px] text-ink-soft">
+          net unexplained <span className="font-medium text-ink">$0.00</span>
+        </p>
+      </div>
 
-        {[...inPaths, ...outPaths].map((d, i) => (
-          <path key={i} d={d} fill="none" stroke="#C9C4B8" strokeWidth="1.5" />
-        ))}
-
-        {/* arrowheads into hub and out of rails */}
-        {sources.map((s, i) => (
-          <polygon key={`ai${i}`} points="326,146 336,150 326,154" fill="#C9C4B8" transform="rotate(0)" />
-        ))}
-        {rails.map((r, i) => (
-          <polygon key={`ao${i}`} points={`624,${r.y - 4} 634,${r.y} 624,${r.y + 4}`} fill="#C9C4B8" />
-        ))}
-
-        {/* source nodes */}
-        {sources.map((s) => (
-          <g key={s.label}>
-            <rect x="24" y={s.y - 22} width="104" height="44" rx="12" fill="#FDFCFA" stroke="#E2DED4" />
-            <text x="76" y={s.y + 5} textAnchor="middle" fontFamily="Poppins, sans-serif" fontSize="14" fill="#111111">
-              {s.label}
-            </text>
-          </g>
-        ))}
-
-        {/* volt hub */}
-        <g>
-          <rect x="330" y="102" width="100" height="96" rx="20" fill="#FFD400" stroke="#111111" strokeWidth="2" />
-          <path d="M 355 134 h 50" stroke="#111111" strokeWidth="5" strokeLinecap="round" />
-          <path d="M 355 166 h 50" stroke="#111111" strokeWidth="5" strokeLinecap="round" />
-          <circle cx="380" cy="150" r="9" fill="#FDFCFA" stroke="#111111" strokeWidth="3.5" />
-        </g>
-
-        {/* interface rails */}
-        {rails.map((r) => (
-          <g key={r.label}>
-            <rect x="632" y={r.y - 22} width="108" height="44" rx="12" fill="#0D1B2E" />
-            <text x="686" y={r.y + 5} textAnchor="middle" fontFamily="JetBrains Mono, monospace" fontSize="12.5" fill="#FDFCFA">
-              {r.label}
-            </text>
-          </g>
-        ))}
-      </svg>
-
-      {/* traveling data dots (CSS offset-path over the SVG geometry) */}
-      {[...inPaths, ...outPaths].map((d, i) => (
-        <div
-          key={`dot${i}`}
-          className="dot pointer-events-none absolute h-[7px] w-[7px] rounded-full bg-ink"
-          style={{
-            left: 0,
-            top: 0,
-            offsetPath: `path("${d}")`,
-            animationDelay: `${(i % 3) * 1.2 + (i > 2 ? 0.6 : 0)}s`,
-          }}
-        />
-      ))}
-
-      <p className="mt-3 text-center font-body text-sm text-ink-soft">
-        One connector definition in — three interfaces out. Nothing hand-written in between.
-      </p>
+      <table className="w-full border-collapse text-left">
+        <thead>
+          <tr className="border-b border-line font-mono text-[11.5px] uppercase tracking-wider text-ink-soft">
+            <th className="px-5 py-3 font-normal sm:px-7">Order</th>
+            <th className="px-3 py-3 text-right font-normal">Ledger</th>
+            <th className="px-3 py-3 text-right font-normal">Rail</th>
+            <th className="px-5 py-3 font-normal sm:px-7">Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          {RESULT.map((r, i) => (
+            <tr key={i} className="border-b border-line last:border-0 align-top">
+              <td className="px-5 py-4 font-mono text-[13.5px] sm:px-7">{r.order}</td>
+              <td className="px-3 py-4 text-right font-mono text-[13.5px] text-ink-soft">{r.ledger}</td>
+              <td className="px-3 py-4 text-right font-mono text-[13.5px] text-ink-soft">{r.rail}</td>
+              <td className="px-5 py-4 sm:px-7">
+                <span className={`inline-block rounded-md border px-2 py-0.5 font-mono text-[11.5px] ${VERDICT[r.verdict].tone}`}>
+                  {VERDICT[r.verdict].label}
+                </span>
+                <p className="mt-1.5 max-w-[42ch] font-body text-[13px] leading-relaxed text-ink-soft">
+                  {r.note}
+                </p>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-/* ── Small building blocks ───────────────────────────────────────── */
+/* ── Building blocks ─────────────────────────────────────────────── */
 function VoltButton({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <a
-      href={href}
-      className="inline-block rounded-xl bg-volt px-6 py-3 font-body text-[15px] font-semibold text-ink transition-colors hover:bg-volt-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-    >
+    <a href={href}
+      className="inline-block rounded-xl bg-volt px-6 py-3 font-body text-[15px] font-semibold text-ink transition-colors hover:bg-volt-deep focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
       {children}
     </a>
   );
@@ -123,131 +110,114 @@ function VoltButton({ href, children }: { href: string; children: React.ReactNod
 
 function GhostButton({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <a
-      href={href}
-      className="inline-block rounded-xl border border-ink px-6 py-3 font-body text-[15px] font-medium text-ink transition-colors hover:bg-ink hover:text-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink"
-    >
+    <a href={href}
+      className="inline-block rounded-xl border border-ink px-6 py-3 font-body text-[15px] font-medium text-ink transition-colors hover:bg-ink hover:text-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink">
       {children}
     </a>
   );
 }
 
-const connectorCode = `whatsapp = register(Connector(
-    name="whatsapp",
-    auth=BearerTokenAuth(),
-    rate_limit=RateLimitProfile(rps=20),
-))
+const declaration = `Reconciliation(
+    name="shopify_orders",
+    left  = ResourceRef("postgres", "sql", params={"sql": PAYMENTS}),
+    right = ResourceRef("shopify", "orders"),
 
-messages = whatsapp.resource("messages", schema=Message)
+    keys=[
+        ExactRef(left="reference", right="name"),
+        Fuzzy(amount="amount", currency="currency",
+              amount_right="net_payment_minor", window="7d"),
+    ],
 
-@messages.operation(OpType.CREATE,
-    input_model=SendTextIn, output_model=Message)
-async def send_text(ctx, params):
-    data = await ctx.client.post(
-        f"/{params.phone_number_id}/messages", json=...)
-    return Message(message_id=data["messages"][0]["id"])`;
+    amount   = AmountRef(left="amount", right="net_payment_minor"),
+    explains = [Explains(path="total_refunded_minor", label="refund")],
+)`;
+
+const curlExample = `curl ${API}/v1/query \\
+  -H "Authorization: Bearer okw_..." \\
+  -d '{"sql": "SELECT o.name, o.net_payment_minor, p.amount
+               FROM shopify.orders o
+               LEFT JOIN rail.payments p ON p.reference = o.name"}'`;
 
 /* ── Page ────────────────────────────────────────────────────────── */
 export default function Home() {
   return (
     <main>
-      {/* nav */}
       <header className="mx-auto flex max-w-[920px] items-center justify-between px-5 py-6">
-        <a href="#" aria-label="Okwan home">
-          <Wordmark />
-        </a>
+        <a href="#" aria-label="Okwan home"><Wordmark /></a>
         <nav className="flex items-center gap-6 font-body text-[15px]">
-          <a className="hidden text-ink-soft hover:text-ink sm:inline" href="#interfaces">Product</a>
-          <a className="hidden text-ink-soft hover:text-ink sm:inline" href="#connectors">Connectors</a>
-          <a className="hidden text-ink-soft hover:text-ink sm:inline" href="#quickstart">Docs</a>
-          <a
-            href={GITHUB}
-            className="rounded-lg bg-volt px-4 py-2 font-semibold text-ink transition-colors hover:bg-volt-deep"
-          >
+          <a className="hidden text-ink-soft hover:text-ink sm:inline" href="#how">How it works</a>
+          <a className="hidden text-ink-soft hover:text-ink sm:inline" href="#api">API</a>
+          <a className="hidden text-ink-soft hover:text-ink sm:inline" href="#fit">Who it's for</a>
+          <a href={GITHUB}
+            className="rounded-lg bg-volt px-4 py-2 font-semibold text-ink transition-colors hover:bg-volt-deep">
             GitHub
           </a>
         </nav>
       </header>
 
       {/* hero */}
-      <section className="mx-auto max-w-[920px] px-5 pb-16 pt-10 text-center sm:pt-16">
+      <section className="mx-auto max-w-[920px] px-5 pb-12 pt-10 sm:pt-16">
         <p className="mb-5 font-mono text-[13px] tracking-wide text-ink-soft">
-          Open-source · Python SDK · Apache-2.0
+          Open core · Python · Apache-2.0
         </p>
-        <h1 className="mx-auto max-w-[780px] font-display text-[44px] font-normal leading-[1.05] tracking-tight sm:text-[72px]">
-          The data connectivity layer built for{" "}
-          <span className="whitespace-nowrap">AI agents<span className="text-volt-deep">.</span></span>
+        <h1 className="max-w-[820px] font-display text-[44px] font-normal leading-[1.05] tracking-tight sm:text-[68px]">
+          Reconciliation as an API<span className="text-volt-deep">.</span>
         </h1>
-        <p className="mx-auto mt-6 max-w-[620px] font-body text-[17px] leading-relaxed text-ink-soft">
-          Your business data lives in hundreds of apps, databases, and APIs.
-          Okwan is the path between them and your agents: define a connector
-          once, and REST endpoints, SQL tables, and MCP servers are generated
-          from that single definition.
+        <p className="mt-6 max-w-[640px] font-body text-[17px] leading-relaxed text-ink-soft">
+          Your merchants collect money on rails that disagree with their own order
+          ledger. Define the match once and Okwan gives you an API endpoint, a SQL
+          view, and an MCP tool for your agents — from the same definition.
         </p>
-        <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-          <VoltButton href="#quickstart">Get started</VoltButton>
-          <GhostButton href={GITHUB}>View on GitHub</GhostButton>
+        <div className="mt-9 flex flex-wrap items-center gap-3">
+          <VoltButton href="#api">See the API</VoltButton>
+          <GhostButton href={GITHUB}>Read the source</GhostButton>
         </div>
       </section>
 
-      {/* signature diagram */}
-      <section className="mx-auto max-w-[920px] px-5 pb-24">
-        <HubDiagram />
+      {/* SIGNATURE */}
+      <section className="mx-auto max-w-[920px] px-5 pb-6">
+        <ReconResult />
+        <p className="mt-4 font-body text-[14px] leading-relaxed text-ink-soft">
+          A live run against a Shopify store and a payment ledger. Seven records,
+          five different verdicts — the distinctions are the product. A tool that
+          only says <span className="font-mono text-[13px]">matched</span> or{" "}
+          <span className="font-mono text-[13px]">unmatched</span> would report
+          #1001 as a $2,124 problem and pair #1004 with #1005 on a coin flip.
+        </p>
       </section>
 
-      {/* one definition, three interfaces */}
-      <section id="interfaces" className="border-y border-line bg-surface">
+      {/* how */}
+      <section id="how" className="border-y border-line bg-surface">
         <div className="mx-auto max-w-[920px] px-5 py-20">
           <h2 className="font-display text-[34px] leading-tight sm:text-[44px]">
-            One definition. Three interfaces.
+            One declaration. Three interfaces.
           </h2>
-          <p className="mt-4 max-w-[560px] font-body text-[16px] leading-relaxed text-ink-soft">
-            A connector is resources, operations, auth, and rate limits —
-            written once in the Python SDK. Everything an app or agent touches
-            is generated from it, so the interfaces can never drift apart.
+          <p className="mt-4 max-w-[600px] font-body text-[16px] leading-relaxed text-ink-soft">
+            The declaration above produced that table. It also produced a REST
+            route, a SQL view, and an MCP tool — nothing was hand-written in
+            between, so they cannot drift apart.
           </p>
 
-          <div className="mt-12 grid gap-6 lg:grid-cols-[1.15fr_1fr]">
-            <pre className="overflow-x-auto rounded-2xl bg-navy p-6 font-mono text-[12.5px] leading-relaxed text-[#E8EDF7]">
-              <code>{connectorCode}</code>
+          <div className="mt-12 grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+            <pre className="overflow-x-auto rounded-2xl bg-navy p-6 font-mono text-[12px] leading-relaxed text-[#E8EDF7]">
+              <code>{declaration}</code>
             </pre>
 
             <div className="flex flex-col gap-4">
               {[
-                {
-                  k: "REST",
-                  title: "Typed REST endpoints",
-                  body: "Every operation mounts as a route with request validation and OpenAPI docs. POST /v1/whatsapp/messages/send_text exists because the definition does.",
-                },
-                {
-                  k: "MCP",
-                  title: "MCP servers for agents",
-                  body: "Each connector serves its operations as MCP tools with schemas and read-only/write annotations, so agent runtimes can gate writes.",
-                },
-                {
-                  k: "SQL",
-                  title: "SQL-queryable tables",
-                  body: "Resource schemas project into a federated SQL layer — query live systems side by side, no pipelines. Shipping in the platform release.",
-                  soon: true,
-                },
+                { k: "REST", title: "An endpoint",
+                  body: "GET /v1/reconciliations/shopify_orders. Request validation and OpenAPI docs come with it." },
+                { k: "SQL", title: "A queryable view",
+                  body: "Join it against anything else in the catalog. Tables are fetched live at query time — federation, not a pipeline." },
+                { k: "MCP", title: "A tool your agent can call",
+                  body: "Read-only by construction: a declaration pointing at a write operation is rejected before it exists." },
               ].map((c) => (
                 <div key={c.k} className="rounded-2xl border border-line bg-canvas p-5">
                   <div className="flex items-center gap-3">
-                    <span className="rounded-md bg-volt px-2 py-0.5 font-mono text-[12px] font-medium">
-                      {c.k}
-                    </span>
-                    <h3 className="font-body text-[16px] font-semibold">
-                      {c.title}
-                    </h3>
-                    {c.soon && (
-                      <span className="ml-auto rounded-md border border-line px-2 py-0.5 font-mono text-[11px] text-ink-soft">
-                        soon
-                      </span>
-                    )}
+                    <span className="rounded-md bg-volt px-2 py-0.5 font-mono text-[12px] font-medium">{c.k}</span>
+                    <h3 className="font-body text-[16px] font-semibold">{c.title}</h3>
                   </div>
-                  <p className="mt-2 font-body text-[14px] leading-relaxed text-ink-soft">
-                    {c.body}
-                  </p>
+                  <p className="mt-2 font-body text-[14px] leading-relaxed text-ink-soft">{c.body}</p>
                 </div>
               ))}
             </div>
@@ -255,118 +225,91 @@ export default function Home() {
         </div>
       </section>
 
-      {/* connectors */}
-      <section id="connectors" className="mx-auto max-w-[920px] px-5 py-20">
+      {/* api */}
+      <section id="api" className="mx-auto max-w-[920px] px-5 py-20">
         <h2 className="font-display text-[34px] leading-tight sm:text-[44px]">
-          Production-grade connectors
+          Query across systems that disagree
         </h2>
-        <p className="mt-4 max-w-[560px] font-body text-[16px] leading-relaxed text-ink-soft">
-          Auth adapters, token-bucket rate limiting, Retry-After-aware
-          backoff, and typed errors are handled by the SDK — connector code is
-          pure business logic.
+        <p className="mt-4 max-w-[600px] font-body text-[16px] leading-relaxed text-ink-soft">
+          One SQL statement over a live Shopify store, a live Stripe account, and
+          your database. Only the tables the query names are fetched, and only
+          when it runs.
         </p>
 
-        <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <pre className="mt-10 overflow-x-auto rounded-2xl bg-navy p-6 font-mono text-[12.5px] leading-relaxed text-[#E8EDF7]">
+          <code>{curlExample}</code>
+        </pre>
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
           {[
-            { name: "WhatsApp Cloud API", live: true },
-            { name: "PostgreSQL / Neon", live: true },
-            { name: "Stripe", live: true },
-            { name: "Shopify" },
-            { name: "Google Sheets" },
-            { name: "Notion" },
-            { name: "Airtable" },
-            { name: "HubSpot" },
-            { name: "Slack" },
-            { name: "Paystack" },
-            { name: "MTN MoMo" },
-            { name: "Salesforce" },
+            { t: "Your keys stay yours", b: "Upstream credentials are stored server-side, sealed per tenant. They never travel in a request." },
+            { t: "One key per merchant", b: "Provision a tenant per merchant through the API. Each gets an endpoint scoped to their own systems." },
+            { t: "Read-only, structurally", b: "Not an annotation applied afterwards — a reconciliation over a write operation cannot be constructed." },
           ].map((c) => (
-            <div
-              key={c.name}
-              className={`rounded-xl border p-4 font-body text-[14px] ${
-                c.live
-                  ? "border-ink bg-surface font-medium"
-                  : "border-line bg-transparent text-ink-soft"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span>{c.name}</span>
-                {c.live ? (
-                  <span className="rounded-md bg-volt px-1.5 py-0.5 font-mono text-[10.5px] font-medium">
-                    live
-                  </span>
-                ) : (
-                  <span className="font-mono text-[10.5px]">planned</span>
-                )}
-              </div>
+            <div key={c.t} className="rounded-xl border border-line p-5">
+              <h3 className="font-body text-[15px] font-semibold">{c.t}</h3>
+              <p className="mt-2 font-body text-[13.5px] leading-relaxed text-ink-soft">{c.b}</p>
             </div>
           ))}
         </div>
+
+        <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[13px] text-ink-soft">
+          <span className="text-ink">Connected today:</span>
+          <span>Shopify</span><span>Stripe</span><span>Paystack</span>
+          <span>PostgreSQL</span><span>WhatsApp</span>
+        </div>
       </section>
 
-      {/* quickstart */}
-      <section id="quickstart" className="border-y border-line bg-surface">
+      {/* fit */}
+      <section id="fit" className="border-y border-line bg-surface">
         <div className="mx-auto max-w-[920px] px-5 py-20">
           <h2 className="font-display text-[34px] leading-tight sm:text-[44px]">
-            Running in three commands
+            Built for platforms, not merchants
           </h2>
-          <div className="mt-10 grid gap-6 md:grid-cols-3">
-            {[
-              {
-                step: "Install",
-                cmd: "git clone github.com/okwan-ai/okwan\ncd okwan && pip install -e .",
-                note: "Python 3.12+. The SDK, all connectors, and both generators come with it.",
-              },
-              {
-                step: "Serve the REST API",
-                cmd: "uvicorn okwan_api.main:app",
-                note: "Every registered connector mounts automatically. OpenAPI docs at /docs.",
-              },
-              {
-                step: "Give it to an agent",
-                cmd: "python -m okwan_mcp postgres",
-                note: "An MCP server over stdio. Point Claude Desktop at it and ask about your data.",
-              },
-            ].map((s, i) => (
-              <div key={s.step} className="rounded-2xl border border-line bg-canvas p-6">
-                <p className="font-mono text-[12px] text-ink-soft">step {i + 1}</p>
-                <h3 className="mt-1 font-body text-[17px] font-semibold">{s.step}</h3>
-                <pre className="mt-4 overflow-x-auto rounded-lg bg-navy p-4 font-mono text-[12px] leading-relaxed text-[#E8EDF7]">
-                  <code>{s.cmd}</code>
-                </pre>
-                <p className="mt-3 font-body text-[13.5px] leading-relaxed text-ink-soft">
-                  {s.note}
-                </p>
-              </div>
-            ))}
+          <div className="mt-8 grid gap-10 md:grid-cols-2">
+            <div>
+              <h3 className="font-body text-[16px] font-semibold">This is for you if</h3>
+              <ul className="mt-4 space-y-3 font-body text-[15px] leading-relaxed text-ink-soft">
+                <li>Your product serves merchants who take payments on more than one rail.</li>
+                <li>Your users reconcile in a spreadsheet, or ask your support team to.</li>
+                <li>You would rather ship a matching engine than build and maintain one.</li>
+              </ul>
+            </div>
+            <div>
+              <h3 className="font-body text-[16px] font-semibold">This is not</h3>
+              <ul className="mt-4 space-y-3 font-body text-[15px] leading-relaxed text-ink-soft">
+                <li>A bookkeeping product. Tools that sync Shopify into QuickBooks already exist and are good.</li>
+                <li>A connector library. Fetching from one system at a time is a solved and crowded problem.</li>
+                <li>Finished. Five connectors, one primitive, and an honest list of what it does not handle yet.</li>
+              </ul>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* CTA band */}
+      {/* CTA */}
       <section className="bg-volt">
         <div className="mx-auto max-w-[920px] px-5 py-20 text-center">
-          <h2 className="mx-auto max-w-[640px] font-display text-[38px] leading-[1.08] sm:text-[56px]">
-            Give your agents a path to your data.
+          <h2 className="mx-auto max-w-[680px] font-display text-[38px] leading-[1.08] sm:text-[52px]">
+            Tell us what your merchants can't reconcile.
           </h2>
+          <p className="mx-auto mt-5 max-w-[520px] font-body text-[16px] leading-relaxed text-ink">
+            We are looking for a handful of platforms to build against. If the
+            table above looks like a problem your users have, we want the call.
+          </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <a
-              href={GITHUB}
-              className="rounded-xl bg-ink px-6 py-3 font-body text-[15px] font-semibold text-surface transition-opacity hover:opacity-85"
-            >
-              Star okwan on GitHub
+            <a href="mailto:info@globaltechstartup.com?subject=Okwan%20—%20reconciliation"
+              className="rounded-xl bg-ink px-6 py-3 font-body text-[15px] font-semibold text-surface transition-opacity hover:opacity-85">
+              Start a conversation
             </a>
-            <a
-              href="#quickstart"
-              className="rounded-xl border border-ink px-6 py-3 font-body text-[15px] font-medium text-ink transition-colors hover:bg-ink hover:text-volt"
-            >
-              Read the quickstart
+            <a href={GITHUB}
+              className="rounded-xl border border-ink px-6 py-3 font-body text-[15px] font-medium text-ink transition-colors hover:bg-ink hover:text-volt">
+              Read the source first
             </a>
           </div>
         </div>
       </section>
 
-      {/* footer */}
       <footer className="bg-navy text-[#B8C2D4]">
         <div className="mx-auto flex max-w-[920px] flex-col gap-6 px-5 py-12 font-body text-[14px] sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 text-surface">
@@ -380,7 +323,7 @@ export default function Home() {
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             <a className="hover:text-surface" href={GITHUB}>GitHub</a>
             <a className="hover:text-surface" href={`${GITHUB}/blob/main/LICENSE`}>Apache-2.0</a>
-            <a className="hover:text-surface" href={`${GITHUB}#readme`}>Docs</a>
+            <a className="hover:text-surface" href={`${API}/docs`}>API docs</a>
           </div>
           <p>© 2026 Global Tech Startup LLC</p>
         </div>

@@ -4,3 +4,8 @@ __pycache__/
 .env
 okwan.egg-info/
 *.egg-info/
+
+# Next.js
+node_modules/
+.next/
+out/

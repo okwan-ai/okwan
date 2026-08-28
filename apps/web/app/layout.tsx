@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Okwan — The data connectivity layer built for AI agents",
+  title: "Okwan — Reconciliation as an API",
   description:
-    "Define a connector once. Okwan auto-generates REST endpoints, SQL-queryable tables, and MCP servers so AI agents can read and act on live business data.",
+    "Define a match once. Okwan gives you a REST endpoint, a SQL view, and an MCP tool for your agents — across payment rails that disagree with the order ledger.",
   metadataBase: new URL("https://okwan.ai"),
   openGraph: {
-    title: "Okwan — The data connectivity layer built for AI agents",
+    title: "Okwan — Reconciliation as an API",
     description:
-      "One connector definition → REST, SQL, and MCP. Open-source core, production-grade connectors.",
+      "An embeddable reconciliation engine for platforms. One declaration → REST, SQL, and MCP.",
     siteName: "Okwan",
   },
 };
