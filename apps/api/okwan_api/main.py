@@ -134,5 +134,27 @@ app.include_router(build_query_router())
 
 
 @app.get("/healthz")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok", "connectors": str(len(all_connectors()))}
+async def healthz() -> dict[str, Any]:
+    """Liveness plus vault reachability.
+
+    Returns 503 when the credential store cannot be reached, so an
+    instance that cannot serve any authenticated request is replaced
+    rather than left answering 401 to everything.
+    """
+    from okwan_api.auth import get_store
+
+    store = get_store()
+    vault = "memory"
+    pool = getattr(store, "_pool", None)
+    if pool is not None:
+        try:
+            await pool.fetchval("SELECT 1")
+            vault = "postgres"
+        except Exception as exc:
+            raise HTTPException(503, f"vault unreachable: {exc}") from exc
+
+    return {
+        "status": "ok",
+        "vault": vault,
+        "connectors": len(all_connectors()),
+    }

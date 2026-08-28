@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: okwan-api
+    runtime: docker
+    plan: starter
+    region: oregon
+    branch: main
+    healthCheckPath: /healthz
+    envVars:
+      - key: OKWAN_ENV
+        value: production
+      # Set in the Render dashboard, not here. A durable vault refuses to
+      # start without a master key — an ephemeral one would seal secrets
+      # nobody could ever open again.
+      - key: OKWAN_VAULT_MASTER_KEY
+        sync: false
+      - key: OKWAN_VAULT_DATABASE_URL
+        sync: false
