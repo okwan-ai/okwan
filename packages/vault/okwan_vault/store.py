@@ -23,19 +23,23 @@ from .usage import DEFAULT_PLAN, PLANS, hour_bucket
 
 
 class Store(Protocol):
-    def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
-    def get_tenant(self, tenant_id: str) -> Tenant | None: ...
-    def children_of(self, tenant_id: str) -> list[Tenant]: ...
-    def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]: ...
-    def revoke_key(self, key_id: str) -> None: ...
-    def tenant_for_key(self, full_key: str) -> Tenant | None: ...
-    def put_credential(
+    async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
+    async def get_tenant(self, tenant_id: str) -> Tenant | None: ...
+    async def children_of(self, tenant_id: str) -> list[Tenant]: ...
+    async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]: ...
+    async def revoke_key(self, key_id: str) -> None: ...
+    async def tenant_for_key(self, full_key: str) -> Tenant | None: ...
+    async def put_credential(
         self, tenant_id: str, connector: str, field_name: str, value: str
     ) -> None: ...
-    def credentials_for(
+    async def credentials_for(
         self, tenant_id: str, connector: str, fields: tuple[str, ...]
     ) -> dict[str, str]: ...
-    def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]: ...
+    async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]: ...
+    async def record_request(self, tenant_id: str, surface: str) -> None: ...
+    async def usage_since(self, root_id: str, since) -> int: ...
+    async def get_plan(self, tenant_id: str) -> tuple[str, int]: ...
+    async def set_plan(self, tenant_id: str, name: str) -> None: ...
 
 
 class MemoryStore:
@@ -49,7 +53,7 @@ class MemoryStore:
         self._usage: dict[tuple, int] = {}
         self._plans: dict[str, str] = {}
 
-    def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
+    async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
             raise KeyError(f"unknown parent tenant {parent_id!r}")
         tenant = Tenant(
@@ -58,13 +62,13 @@ class MemoryStore:
         self._tenants[tenant.id] = tenant
         return tenant
 
-    def get_tenant(self, tenant_id: str) -> Tenant | None:
+    async def get_tenant(self, tenant_id: str) -> Tenant | None:
         return self._tenants.get(tenant_id)
 
-    def children_of(self, tenant_id: str) -> list[Tenant]:
+    async def children_of(self, tenant_id: str) -> list[Tenant]:
         return [t for t in self._tenants.values() if t.parent_id == tenant_id]
 
-    def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
+    async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         full, prefix, hash_hex = apikey.generate()
@@ -77,7 +81,7 @@ class MemoryStore:
         self._keys[record.id] = record
         return full, record
 
-    def revoke_key(self, key_id: str) -> None:
+    async def revoke_key(self, key_id: str) -> None:
         from datetime import datetime, timezone
 
         record = self._keys.get(key_id)
@@ -92,13 +96,13 @@ class MemoryStore:
             revoked_at=datetime.now(timezone.utc),
         )
 
-    def tenant_for_key(self, full_key: str) -> Tenant | None:
+    async def tenant_for_key(self, full_key: str) -> Tenant | None:
         for record in self._keys.values():
             if record.is_active and apikey.matches(full_key, record.hash_hex):
                 return self._tenants.get(record.tenant_id)
         return None
 
-    def put_credential(
+    async def put_credential(
         self, tenant_id: str, connector: str, field_name: str, value: str
     ) -> None:
         if tenant_id not in self._tenants:
@@ -122,7 +126,7 @@ class MemoryStore:
             key_id=record.key_id,
         )
 
-    def credentials_for(
+    async def credentials_for(
         self, tenant_id: str, connector: str, fields: tuple[str, ...]
     ) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -137,11 +141,11 @@ class MemoryStore:
             ).decode()
         return out
 
-    def record_request(self, tenant_id: str, surface: str) -> None:
+    async def record_request(self, tenant_id: str, surface: str) -> None:
         key = (tenant_id, hour_bucket(), surface)
         self._usage[key] = self._usage.get(key, 0) + 1
 
-    def usage_since(self, root_id: str, since) -> int:
+    async def usage_since(self, root_id: str, since) -> int:
         subtree = {root_id}
         changed = True
         while changed:
@@ -155,16 +159,16 @@ class MemoryStore:
             if tid in subtree and hour >= since
         )
 
-    def get_plan(self, tenant_id: str) -> tuple[str, int]:
+    async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         name = self._plans.get(tenant_id, DEFAULT_PLAN)
         return name, PLANS[name]
 
-    def set_plan(self, tenant_id: str, name: str) -> None:
+    async def set_plan(self, tenant_id: str, name: str) -> None:
         if name not in PLANS:
             raise ValueError(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
         self._plans[tenant_id] = name
 
-    def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]:
+    async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
         for (tid, connector, field_name) in self._creds:
             if tid == tenant_id:
@@ -172,15 +176,29 @@ class MemoryStore:
         return out
 
 
-def resolver_for(store: Store, tenant_id: str):
-    """A CredentialResolver bound to one tenant.
+async def resolver_for(store: Store, tenant_id: str, connectors=None):
+    """Load a tenant's credentials, then return a synchronous resolver.
 
-    This is the seam the connector SDK already expects, so the vault
-    replaces header-supplied credentials without any change to fetch_rows,
-    the query session, or the reconciliation runner.
+    The SDK calls a CredentialResolver synchronously deep inside
+    fetch_rows, and reachability checks cannot await at all. So the
+    credentials are fetched once here and the returned closure reads from
+    a plain dict — which is the seam fetch_rows, the query session and the
+    reconciliation runner already expect, unchanged.
+
+    Loading up front also bounds the exposure: plaintext exists for the
+    life of one request rather than being fetchable at arbitrary depth.
     """
+    from okwan_core import all_connectors
+
+    loaded: dict[tuple[str, str], str] = {}
+    for connector in connectors or all_connectors():
+        creds = await store.credentials_for(
+            tenant_id, connector.name, connector.auth.required_fields
+        )
+        for field, value in creds.items():
+            loaded[(connector.name, field)] = value
 
     def resolve(connector_name: str, fields: tuple[str, ...]) -> dict[str, str]:
-        return store.credentials_for(tenant_id, connector_name, fields)
+        return {f: loaded.get((connector_name, f), "") for f in fields}
 
     return resolve

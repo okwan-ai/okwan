@@ -56,27 +56,16 @@ async def _tenant_resolver(ctx: Context):
     the SDK expects below this point, and keeping plaintext scoped to one
     tool call.
     """
-    from okwan_api.auth import get_store, load_credentials
+    from okwan_api.auth import get_store
 
     store = get_store()
-    tenant = store.tenant_for_key(_bearer(ctx))
-    if inspect.isawaitable(tenant):
-        tenant = await tenant
+    tenant = await store.tenant_for_key(_bearer(ctx))
     if tenant is None:
         raise Unauthenticated("invalid or revoked API key")
 
-    loaded: dict[tuple[str, str], str] = {}
-    for connector in all_connectors():
-        creds = await load_credentials(
-            tenant, connector.name, connector.auth.required_fields
-        )
-        for field, value in creds.items():
-            loaded[(connector.name, field)] = value
+    from okwan_vault import resolver_for
 
-    def resolve(connector_name: str, fields: tuple[str, ...]) -> dict[str, str]:
-        return {f: loaded.get((connector_name, f), "") for f in fields}
-
-    return resolve
+    return await resolver_for(store, tenant.id)
 
 
 def _recon_blockers(spec: Reconciliation, resolver) -> list[str]:

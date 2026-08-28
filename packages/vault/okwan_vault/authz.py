@@ -12,21 +12,12 @@ has.
 """
 from __future__ import annotations
 
-import inspect
-
 MAX_DEPTH = 8
 
 
 async def _tenant(store, tenant_id: str):
-    """Read a tenant from either store implementation.
-
-    MemoryStore is synchronous, PostgresStore is not. Awaiting
-    conditionally keeps the memory store simple for tests; the Store
-    protocol should become async throughout before a fourth call site
-    needs this.
-    """
-    result = store.get_tenant(tenant_id)
-    return await result if inspect.isawaitable(result) else result
+    """Read a tenant. Store is async throughout."""
+    return await store.get_tenant(tenant_id)
 
 
 class Forbidden(Exception):

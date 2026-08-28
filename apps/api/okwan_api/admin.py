@@ -34,10 +34,6 @@ class CredentialIn(BaseModel):
     value: str = Field(min_length=1, description="Written to the vault, never returned")
 
 
-async def _maybe(value):
-    return await value if inspect.isawaitable(value) else value
-
-
 async def _guard(actor, target_id: str) -> None:
     try:
         await require_administer(get_store(), actor.id, target_id)
@@ -63,7 +59,7 @@ def build_router() -> APIRouter:
     @router.get("")
     async def list_tenants(actor=Depends(current_tenant)) -> dict[str, Any]:
         """The caller's own record and the tenants it has provisioned."""
-        children = await _maybe(get_store().children_of(actor.id))
+        children = await get_store().children_of(actor.id)
         return {"self": _public(actor), "children": [_public(c) for c in children]}
 
     @router.post("", status_code=201)
@@ -71,9 +67,7 @@ def build_router() -> APIRouter:
         body: CreateTenantIn, actor=Depends(current_tenant)
     ) -> dict[str, Any]:
         """Provision a tenant beneath the caller."""
-        tenant = await _maybe(
-            get_store().create_tenant(body.name, parent_id=actor.id)
-        )
+        tenant = await get_store().create_tenant(body.name, parent_id=actor.id)
         return _public(tenant)
 
     @router.post("/{tenant_id}/keys", status_code=201)
@@ -85,7 +79,7 @@ def build_router() -> APIRouter:
         The secret is returned exactly once; only its hash is stored.
         """
         await _guard(actor, tenant_id)
-        full, record = await _maybe(get_store().issue_key(tenant_id))
+        full, record = await get_store().issue_key(tenant_id)
         return {
             "key_id": record.id,
             "prefix": record.prefix,
@@ -98,7 +92,7 @@ def build_router() -> APIRouter:
         """Revoke a key. Effective immediately on the next request."""
         store = get_store()
         try:
-            await _maybe(store.revoke_key(key_id))
+            await store.revoke_key(key_id)
         except KeyError as exc:
             raise HTTPException(404, f"no such key: {key_id}") from exc
 
@@ -123,10 +117,8 @@ def build_router() -> APIRouter:
                 f"{body.connector} takes "
                 f"{', '.join(connector.auth.required_fields)}",
             )
-        await _maybe(
-            get_store().put_credential(
-                tenant_id, body.connector, body.field, body.value
-            )
+        await get_store().put_credential(
+            tenant_id, body.connector, body.field, body.value
         )
 
     @router.get("/{tenant_id}/credentials")
@@ -135,7 +127,7 @@ def build_router() -> APIRouter:
     ) -> dict[str, Any]:
         """Which connectors are configured. Names only — never values."""
         await _guard(actor, tenant_id)
-        configured = await _maybe(get_store().connectors_configured(tenant_id))
+        configured = await get_store().connectors_configured(tenant_id)
         return {"tenant_id": tenant_id, "configured": configured}
 
     return router
