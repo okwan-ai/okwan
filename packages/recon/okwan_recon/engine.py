@@ -29,6 +29,14 @@ class MatchedPair:
     #: report different currencies — a cross-currency difference is not a
     #: number, and reporting one would be worse than reporting nothing.
     discrepancy_minor: int | None = None
+    #: Label of the recorded adjustment accounting for the discrepancy.
+    #: A break with a known cause is a different finding from one without.
+    explained_by: str | None = None
+
+    @property
+    def is_unexplained(self) -> bool:
+        """A discrepancy nobody can account for — the one to chase."""
+        return self.agrees is False and self.explained_by is None
 
     @property
     def agrees(self) -> bool | None:
@@ -62,6 +70,7 @@ class ReconResult:
     def summary(self) -> dict[str, Any]:
         total = len(self.matched) + len(self.unmatched_left)
         discrepant = [p for p in self.matched if p.agrees is False]
+        unexplained = [p for p in discrepant if p.explained_by is None]
         return {
             "reconciliation": self.name,
             "matched": len(self.matched),
@@ -69,7 +78,13 @@ class ReconResult:
             # Collapsing the two hides the discrepancy inside a success count.
             "matched_in_agreement": sum(1 for p in self.matched if p.agrees is True),
             "matched_with_discrepancy": len(discrepant),
+            # Split by whether the break has a recorded cause. An explained
+            # discrepancy is real but accounted for; an unexplained one is
+            # the finding that needs a human.
+            "matched_with_explained_discrepancy": len(discrepant) - len(unexplained),
+            "matched_with_unexplained_discrepancy": len(unexplained),
             "net_discrepancy_minor": sum(p.discrepancy_minor or 0 for p in discrepant),
+            "net_unexplained_minor": sum(p.discrepancy_minor or 0 for p in unexplained),
             "unmatched_left": len(self.unmatched_left),
             "unmatched_right": len(self.unmatched_right),
             # Records whose counterpart exists but cannot be identified.
@@ -83,10 +98,15 @@ class ReconResult:
         """Flat, view-shaped output — what the DuckDB view exposes."""
         out: list[Row] = [
             {
-                "status": "matched" if p.agrees is not False else "matched_discrepant",
+                "status": (
+                    "matched" if p.agrees is not False
+                    else "matched_explained" if p.explained_by
+                    else "matched_discrepant"
+                ),
                 "rule": p.rule,
                 "confidence": p.confidence,
                 "discrepancy": p.discrepancy_minor,
+                "explained_by": p.explained_by,
                 "left": p.left,
                 "right": p.right,
             }
@@ -260,6 +280,12 @@ def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
             pair.discrepancy_minor = int(l_amt) - int(r_amt)
         except (TypeError, ValueError):
             continue
+
+        for rule in spec.explains:
+            row = pair.left if rule.side == "left" else pair.right
+            if rule.accounts_for(dig(row, rule.path), pair.discrepancy_minor):
+                pair.explained_by = rule.label
+                break
 
 
 def match(spec: Reconciliation, left_rows: list[Row], right_rows: list[Row]) -> ReconResult:
