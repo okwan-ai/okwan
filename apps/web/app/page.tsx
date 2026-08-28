@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
 const GITHUB = "https://github.com/okwan-ai/okwan";
 const API = "https://okwan.onrender.com";
 
@@ -56,14 +60,52 @@ const RESULT: {
 ];
 
 function ReconResult() {
+  const [stage, setStage] = useState(-1);
+  const [started, setStarted] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) { setStage(RESULT.length); setStarted(true); return; }
+
+    const io = new IntersectionObserver(
+      ([e]) => { if (e.isIntersecting) { setStarted(true); io.disconnect(); } },
+      { threshold: 0.25 }
+    );
+    io.observe(node);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!started) return;
+    if (stage >= RESULT.length) return;
+    const t = setTimeout(() => setStage((s) => s + 1), stage < 0 ? 400 : 260);
+    return () => clearTimeout(t);
+  }, [started, stage]);
+
+  const done = stage >= RESULT.length;
+  const settled = RESULT.slice(0, Math.max(0, stage));
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface">
+    <div ref={ref} className="overflow-hidden rounded-2xl border border-line bg-surface">
       <div className="flex flex-wrap items-baseline justify-between gap-3 border-b border-line px-5 py-4 sm:px-7">
-        <p className="font-mono text-[12.5px] text-ink-soft">
+        <p className="flex items-center gap-2 font-mono text-[12.5px] text-ink-soft">
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full transition-colors duration-500 ${
+              done ? "bg-ink-soft" : "animate-pulse bg-volt-deep"
+            }`}
+            aria-hidden="true"
+          />
           reconcile · shopify.orders ↔ payment rail
         </p>
         <p className="font-mono text-[12.5px] text-ink-soft">
-          net unexplained <span className="font-medium text-ink">$0.00</span>
+          {done ? (
+            <>net unexplained <span className="font-medium text-ink">$0.00</span></>
+          ) : (
+            <span className="text-ink-soft">matching {settled.length}/{RESULT.length}…</span>
+          )}
         </p>
       </div>
 
@@ -77,21 +119,31 @@ function ReconResult() {
           </tr>
         </thead>
         <tbody>
-          {RESULT.map((r, i) => (
-            <tr key={i} className="border-b border-line last:border-0 align-top">
-              <td className="px-5 py-4 font-mono text-[13.5px] sm:px-7">{r.order}</td>
-              <td className="px-3 py-4 text-right font-mono text-[13.5px] text-ink-soft">{r.ledger}</td>
-              <td className="px-3 py-4 text-right font-mono text-[13.5px] text-ink-soft">{r.rail}</td>
-              <td className="px-5 py-4 sm:px-7">
-                <span className={`inline-block rounded-md border px-2 py-0.5 font-mono text-[11.5px] ${VERDICT[r.verdict].tone}`}>
-                  {VERDICT[r.verdict].label}
-                </span>
-                <p className="mt-1.5 max-w-[42ch] font-body text-[13px] leading-relaxed text-ink-soft">
-                  {r.note}
-                </p>
-              </td>
-            </tr>
-          ))}
+          {RESULT.map((r, i) => {
+            const shown = i < stage;
+            return (
+              <tr
+                key={i}
+                className="border-b border-line align-top transition-all duration-500 ease-out last:border-0"
+                style={{
+                  opacity: shown ? 1 : 0,
+                  transform: shown ? "translateY(0)" : "translateY(6px)",
+                }}
+              >
+                <td className="px-5 py-4 font-mono text-[13.5px] sm:px-7">{r.order}</td>
+                <td className="px-3 py-4 text-right font-mono text-[13.5px] text-ink-soft">{r.ledger}</td>
+                <td className="px-3 py-4 text-right font-mono text-[13.5px] text-ink-soft">{r.rail}</td>
+                <td className="px-5 py-4 sm:px-7">
+                  <span className={`inline-block rounded-md border px-2 py-0.5 font-mono text-[11.5px] ${VERDICT[r.verdict].tone}`}>
+                    {VERDICT[r.verdict].label}
+                  </span>
+                  <p className="mt-1.5 max-w-[42ch] font-body text-[13px] leading-relaxed text-ink-soft">
+                    {r.note}
+                  </p>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -157,18 +209,18 @@ export default function Home() {
 
       {/* hero */}
       <section className="mx-auto max-w-[920px] px-5 pb-12 pt-10 sm:pt-16">
-        <p className="mb-5 font-mono text-[13px] tracking-wide text-ink-soft">
+        <p className="rise mb-5 font-mono text-[13px] tracking-wide text-ink-soft" style={{ animationDelay: "0.05s" }}>
           Open core · Python · Apache-2.0
         </p>
-        <h1 className="max-w-[820px] font-display text-[44px] font-normal leading-[1.05] tracking-tight sm:text-[68px]">
+        <h1 style={{ animationDelay: "0.15s" }} className="rise max-w-[820px] font-display text-[44px] font-normal leading-[1.05] tracking-tight sm:text-[68px]">
           Reconciliation as an API<span className="text-volt-deep">.</span>
         </h1>
-        <p className="mt-6 max-w-[640px] font-body text-[17px] leading-relaxed text-ink-soft">
+        <p className="rise mt-6 max-w-[640px] font-body text-[17px] leading-relaxed text-ink-soft" style={{ animationDelay: "0.3s" }}>
           Your merchants collect money on rails that disagree with their own order
           ledger. Define the match once and Okwan gives you an API endpoint, a SQL
           view, and an MCP tool for your agents — from the same definition.
         </p>
-        <div className="mt-9 flex flex-wrap items-center gap-3">
+        <div className="rise mt-9 flex flex-wrap items-center gap-3" style={{ animationDelay: "0.45s" }}>
           <VoltButton href="#api">See the API</VoltButton>
           <GhostButton href={GITHUB}>Read the source</GhostButton>
         </div>
