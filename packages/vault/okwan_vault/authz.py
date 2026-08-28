@@ -12,7 +12,21 @@ has.
 """
 from __future__ import annotations
 
+import inspect
+
 MAX_DEPTH = 8
+
+
+async def _tenant(store, tenant_id: str):
+    """Read a tenant from either store implementation.
+
+    MemoryStore is synchronous, PostgresStore is not. Awaiting
+    conditionally keeps the memory store simple for tests; the Store
+    protocol should become async throughout before a fourth call site
+    needs this.
+    """
+    result = store.get_tenant(tenant_id)
+    return await result if inspect.isawaitable(result) else result
 
 
 class Forbidden(Exception):
@@ -24,7 +38,7 @@ async def ancestors(store, tenant_id: str) -> list[str]:
     out: list[str] = []
     current = tenant_id
     for _ in range(MAX_DEPTH):
-        tenant = await store.get_tenant(current)
+        tenant = await _tenant(store, current)
         if tenant is None or tenant.parent_id is None:
             break
         out.append(tenant.parent_id)
