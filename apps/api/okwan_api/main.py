@@ -11,6 +11,7 @@ everything flows from the SDK definition.
 from __future__ import annotations
 
 import inspect
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -32,13 +33,49 @@ from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.auth import close_store, current_tenant, load_credentials, open_store
+from okwan_query.mcp_http import build_server as build_mcp_server
 from okwan_query.rest import build_router as build_query_router
 from okwan_recon.emitters.rest import build_router
 
+def _transport_security():
+    """DNS-rebinding protection for the MCP endpoint.
+
+    There is no wildcard host value, so the boolean is the off switch.
+    Disabled when no hosts are named: behind Render the Host header is
+    terminated by the platform proxy before uvicorn sees it, and the
+    check would reject every request while guarding nothing. Set
+    OKWAN_ALLOWED_HOSTS once a domain is registered.
+    """
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    hosts = [
+        h.strip()
+        for h in os.environ.get("OKWAN_ALLOWED_HOSTS", "").split(",")
+        if h.strip()
+    ]
+    if not hosts:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=[f"https://{h}" for h in hosts],
+    )
+
+
+_mcp = build_mcp_server()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Open the vault, then run the MCP session manager.
+
+    Mounting an ASGI app does not run its lifespan, so the streamable
+    HTTP transport's task group has to be entered here or every MCP
+    request fails before reaching a handler.
+    """
     await open_store()
-    yield
+    async with _mcp.session_manager.run():
+        yield
     await close_store()
 
 
@@ -131,6 +168,17 @@ for _connector in all_connectors():
 # than per-connector routes. Registrations must be imported first.
 app.include_router(build_router())
 app.include_router(build_query_router())
+
+# Hosted MCP. Mounted rather than run as a separate service so agents
+# authenticate through the same vault the REST routes use — one tenant
+# model, not two.
+app.mount(
+    "/mcp",
+    _mcp.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=_transport_security(),
+    ),
+)
 
 
 @app.get("/healthz")
