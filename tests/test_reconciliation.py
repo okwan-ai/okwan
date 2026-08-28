@@ -434,3 +434,80 @@ def test_exact_reference_resolves_what_amount_alone_cannot():
     result = match(spec, left, right)
     assert result.summary["matched"] == 2
     assert result.summary["ambiguous"] == 0
+
+
+# ── explained discrepancies ─────────────────────────────────────────
+
+def test_refund_explains_a_matching_discrepancy():
+    """The rail carries no refund rows; the ledger knows why they differ."""
+    from okwan_recon import Explains
+
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref")],
+        "amount": AmountRef(left="amount", right="net_minor"),
+        "explains": [Explains(path="refunded_minor", side="right", label="refund")],
+    })
+    left = [{"reference": "#1001", "amount": 242300, "currency": "USD"}]
+    right = [{"order_ref": "#1001", "net_minor": 29900,
+              "refunded_minor": 212400, "currency": "USD"}]
+
+    result = match(spec, left, right)
+    pair = result.matched[0]
+    assert pair.discrepancy_minor == 212400
+    assert pair.explained_by == "refund"
+    assert pair.agrees is False
+    assert pair.is_unexplained is False
+    assert result.summary["matched_with_explained_discrepancy"] == 1
+    assert result.summary["matched_with_unexplained_discrepancy"] == 0
+    assert result.summary["net_unexplained_minor"] == 0
+
+
+def test_wrong_sized_refund_does_not_explain():
+    """Explanation must account for the full difference, not gesture at it."""
+    from okwan_recon import Explains
+
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref")],
+        "amount": AmountRef(left="amount", right="net_minor"),
+        "explains": [Explains(path="refunded_minor", side="right", label="refund")],
+    })
+    left = [{"reference": "#1", "amount": 242300, "currency": "USD"}]
+    right = [{"order_ref": "#1", "net_minor": 29900,
+              "refunded_minor": 200000, "currency": "USD"}]
+
+    pair = match(spec, left, right).matched[0]
+    assert pair.explained_by is None
+    assert pair.is_unexplained is True
+
+
+def test_discrepancy_without_explanation_stays_unexplained():
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref")],
+        "amount": AmountRef(left="amount", right="net_minor"),
+    })
+    left = [{"reference": "#1", "amount": 50000, "currency": "USD"}]
+    right = [{"order_ref": "#1", "net_minor": 45000, "currency": "USD"}]
+
+    result = match(spec, left, right)
+    assert result.matched[0].is_unexplained is True
+    assert result.summary["net_unexplained_minor"] == 5000
+
+
+def test_explanation_respects_sign():
+    """A right-side refund explains an over-collection, not a shortfall."""
+    from okwan_recon import Explains
+
+    spec = SPEC.model_copy(update={
+        "keys": [ExactRef(left="reference", right="order_ref")],
+        "amount": AmountRef(left="amount", right="net_minor"),
+        "explains": [Explains(path="refunded_minor", side="right",
+                              label="refund", sign="positive")],
+    })
+    # Rail collected LESS than the ledger expects — a refund cannot explain that.
+    left = [{"reference": "#1", "amount": 29900, "currency": "USD"}]
+    right = [{"order_ref": "#1", "net_minor": 242300,
+              "refunded_minor": 212400, "currency": "USD"}]
+
+    pair = match(spec, left, right).matched[0]
+    assert pair.discrepancy_minor == -212400
+    assert pair.explained_by is None

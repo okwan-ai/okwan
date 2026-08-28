@@ -6,7 +6,9 @@ adding a declaration here and nothing else.
 """
 from __future__ import annotations
 
-from .declaration import AmountRef, ExactRef, Fuzzy, MSISDN, Reconciliation, ResourceRef
+from .declaration import (
+    AmountRef, ExactRef, Explains, Fuzzy, MSISDN, Reconciliation, ResourceRef,
+)
 from .registry import register
 
 #: Payment rail against a live Shopify order ledger — two real systems,
@@ -55,6 +57,13 @@ shopify_orders = register(
             ),
         ],
         amount=AmountRef(left="amount", right="net_payment_minor"),
+        # The rail feed carries no refund rows, so a refunded order will
+        # always disagree with the charge that funded it. The ledger knows
+        # why. Reporting that as unexplained trains people to ignore the
+        # number; reporting it as explained keeps it visible and ranked.
+        explains=[
+            Explains(path="total_refunded_minor", side="right", label="refund"),
+        ],
     )
 )
 

@@ -162,6 +162,39 @@ class AmountRef(Frozen):
         return self.currency_right or self.currency
 
 
+class Explains(Frozen):
+    """A field whose value accounts for a discrepancy of the same size.
+
+    `side` names which record carries it. A refund is recorded on the
+    order ledger; a fee would be recorded on the rail. Sign follows the
+    discrepancy convention (left minus right), so a right-side refund
+    explains a positive difference.
+    """
+
+    path: str
+    side: Literal["left", "right"] = "right"
+    label: str = Field(
+        default="adjustment",
+        description="What this explains, surfaced in output: refund, fee, chargeback...",
+    )
+    sign: Literal["positive", "negative", "either"] = "positive"
+
+    def accounts_for(self, value: Any, discrepancy: int) -> bool:
+        if value is None or discrepancy == 0:
+            return False
+        try:
+            amount = int(value)
+        except (TypeError, ValueError):
+            return False
+        if amount == 0:
+            return False
+        if self.sign == "positive" and discrepancy < 0:
+            return False
+        if self.sign == "negative" and discrepancy > 0:
+            return False
+        return amount == abs(discrepancy)
+
+
 class Reconciliation(Frozen):
     name: str
     title: str | None = None
@@ -172,6 +205,10 @@ class Reconciliation(Frozen):
     amount: AmountRef | None = Field(
         default=None,
         description="Figure to compare on matched pairs; defaults to the first Fuzzy rule",
+    )
+    explains: list[Explains] = Field(
+        default_factory=list,
+        description="Known causes that reclassify a discrepancy as explained",
     )
     identity: MSISDN | None = None
     max_records: int = Field(default=500, ge=1, le=10_000)
