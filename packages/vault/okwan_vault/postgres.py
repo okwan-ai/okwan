@@ -20,6 +20,7 @@ from . import apikey
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import ApiKey, SealedCredential, Tenant
+from .usage import DEFAULT_PLAN, PLANS, hour_bucket
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 
@@ -184,6 +185,65 @@ class PostgresStore:
             "DELETE FROM credentials "
             "WHERE tenant_id = $1 AND connector = $2 AND field_name = $3",
             tenant_id, connector, field_name,
+        )
+
+    # ── usage ───────────────────────────────────────────────────────
+
+    async def record_request(self, tenant_id: str, surface: str) -> None:
+        """Increment the current hour's counter.
+
+        Upsert rather than insert-per-request: a row per API call is write
+        amplification the moment anyone has traffic, and no plan bills by
+        the second.
+        """
+        await self.pool.execute(
+            "INSERT INTO usage (tenant_id, hour, surface, requests) "
+            "VALUES ($1, $2, $3, 1) "
+            "ON CONFLICT (tenant_id, hour, surface) DO UPDATE SET "
+            "requests = usage.requests + 1",
+            tenant_id, hour_bucket(), surface,
+        )
+
+    async def usage_since(self, root_id: str, since) -> int:
+        """Requests across a tenant and everything it provisioned.
+
+        Recursive rather than a join on parent_id: the hierarchy is two
+        levels today but the query should not be the thing that breaks
+        when a reseller tier appears.
+        """
+        return await self.pool.fetchval(
+            """
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM tenants WHERE id = $1
+                UNION ALL
+                SELECT t.id FROM tenants t JOIN subtree s ON t.parent_id = s.id
+            )
+            SELECT COALESCE(SUM(u.requests), 0)
+            FROM usage u JOIN subtree s ON s.id = u.tenant_id
+            WHERE u.hour >= $2
+            """,
+            root_id, since,
+        )
+
+    async def get_plan(self, tenant_id: str) -> tuple[str, int]:
+        row = await self.pool.fetchrow(
+            "SELECT name, monthly_requests FROM plans WHERE tenant_id = $1",
+            tenant_id,
+        )
+        if row is None:
+            return DEFAULT_PLAN, PLANS[DEFAULT_PLAN]
+        return row["name"], row["monthly_requests"]
+
+    async def set_plan(self, tenant_id: str, name: str) -> None:
+        if name not in PLANS:
+            raise ValueError(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
+        await self.pool.execute(
+            "INSERT INTO plans (tenant_id, name, monthly_requests) "
+            "VALUES ($1, $2, $3) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "name = EXCLUDED.name, "
+            "monthly_requests = EXCLUDED.monthly_requests, updated_at = now()",
+            tenant_id, name, PLANS[name],
         )
 
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]:

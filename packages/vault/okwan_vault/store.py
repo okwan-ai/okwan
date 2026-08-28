@@ -19,6 +19,7 @@ from . import apikey
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import ApiKey, SealedCredential, Tenant
+from .usage import DEFAULT_PLAN, PLANS, hour_bucket
 
 
 class Store(Protocol):
@@ -45,6 +46,8 @@ class MemoryStore:
         self._tenants: dict[str, Tenant] = {}
         self._keys: dict[str, ApiKey] = {}
         self._creds: dict[tuple[str, str, str], SealedCredential] = {}
+        self._usage: dict[tuple, int] = {}
+        self._plans: dict[str, str] = {}
 
     def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -133,6 +136,33 @@ class MemoryStore:
                 data_key, record.ciphertext, aad=record.aad
             ).decode()
         return out
+
+    def record_request(self, tenant_id: str, surface: str) -> None:
+        key = (tenant_id, hour_bucket(), surface)
+        self._usage[key] = self._usage.get(key, 0) + 1
+
+    def usage_since(self, root_id: str, since) -> int:
+        subtree = {root_id}
+        changed = True
+        while changed:
+            changed = False
+            for t in self._tenants.values():
+                if t.parent_id in subtree and t.id not in subtree:
+                    subtree.add(t.id)
+                    changed = True
+        return sum(
+            n for (tid, hour, _), n in self._usage.items()
+            if tid in subtree and hour >= since
+        )
+
+    def get_plan(self, tenant_id: str) -> tuple[str, int]:
+        name = self._plans.get(tenant_id, DEFAULT_PLAN)
+        return name, PLANS[name]
+
+    def set_plan(self, tenant_id: str, name: str) -> None:
+        if name not in PLANS:
+            raise ValueError(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
+        self._plans[tenant_id] = name
 
     def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}

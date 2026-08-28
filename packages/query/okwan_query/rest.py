@@ -44,7 +44,7 @@ async def _tenant_resolver(tenant):
 
 
 def build_router() -> APIRouter:
-    from okwan_api.auth import current_tenant
+    from okwan_api.auth import check_quota, current_tenant, meter
 
     router = APIRouter(prefix="/v1/query", tags=["query"])
 
@@ -54,13 +54,15 @@ def build_router() -> APIRouter:
 
     @router.post("")
     async def run_query(
-        body: QueryIn, tenant=Depends(current_tenant)
+        body: QueryIn, tenant=Depends(check_quota)
     ) -> dict[str, Any]:
         session = QuerySession(
             resolver=await _tenant_resolver(tenant), max_records=body.limit
         )
         try:
-            return await session.query(body.sql)
+            result = await session.query(body.sql)
+            await meter(tenant, "rest:query")
+            return result
         except UnsafeStatement as exc:
             raise HTTPException(400, str(exc)) from exc
         except CredentialError as exc:
