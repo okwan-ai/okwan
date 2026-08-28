@@ -41,3 +41,23 @@ CREATE TABLE IF NOT EXISTS credentials (
     updated_at   timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, connector, field_name)
 );
+
+
+CREATE TABLE IF NOT EXISTS usage (
+    tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    hour        timestamptz NOT NULL,
+    surface     text NOT NULL,
+    requests    bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (tenant_id, hour, surface)
+);
+
+-- Billing reads a window across a subtree, so the range scan matters more
+-- than the point lookup the primary key already covers.
+CREATE INDEX IF NOT EXISTS usage_hour_idx ON usage (hour, tenant_id);
+
+CREATE TABLE IF NOT EXISTS plans (
+    tenant_id       text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    name            text NOT NULL,
+    monthly_requests bigint NOT NULL,
+    updated_at      timestamptz NOT NULL DEFAULT now()
+);

@@ -33,7 +33,9 @@ from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.admin import build_router as build_admin_router
-from okwan_api.auth import close_store, current_tenant, load_credentials, open_store
+from okwan_api.auth import (
+    check_quota, close_store, current_tenant, load_credentials, meter, open_store,
+)
 from okwan_query.mcp_http import build_server as build_mcp_server
 from okwan_query.rest import build_router as build_query_router
 from okwan_recon.emitters.rest import build_router
@@ -118,15 +120,17 @@ async def _credentials(connector: Connector, tenant) -> dict[str, str]:
 def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
     path = f"/v1/{connector.name}/{resource.name}/{op.name}"
 
-    async def endpoint(body: BaseModel, tenant=Depends(current_tenant)) -> Any:
+    async def endpoint(body: BaseModel, tenant=Depends(check_quota)) -> Any:
         credentials = await _credentials(connector, tenant)
         try:
             connector.auth.validate(credentials)
             ctx = connector.context(credentials)
             try:
-                return await op.handler(ctx, body)
+                result = await op.handler(ctx, body)
             finally:
                 await ctx.client.aclose()
+            await meter(tenant, f"rest:{connector.name}")
+            return result
         except CredentialError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
         except UpstreamError as exc:
@@ -145,7 +149,7 @@ def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
             inspect.Parameter(
                 "tenant",
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                default=Depends(current_tenant),
+                default=Depends(check_quota),
             ),
         ]
     )

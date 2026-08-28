@@ -13,14 +13,18 @@ never travel again.
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 from okwan_vault import (
     EnvMasterKey, MemoryStore, PostgresStore, Store, from_env, new_key, resolver_for,
 )
 from okwan_vault.models import Tenant
+from okwan_vault.usage import Quota, billing_root, month_start
+
+logger = logging.getLogger(__name__)
 
 _store: Store | None = None
 
@@ -97,6 +101,10 @@ async def current_tenant(
     return tenant
 
 
+async def _maybe(value):
+    return await value if inspect.isawaitable(value) else value
+
+
 async def load_credentials(tenant: Tenant, connector_name: str, fields: tuple[str, ...]):
     """Fetch this tenant's credentials for one connector, once per request."""
     store = get_store()
@@ -104,6 +112,47 @@ async def load_credentials(tenant: Tenant, connector_name: str, fields: tuple[st
     if inspect.isawaitable(result):
         result = await result
     return result
+
+
+async def quota_for(tenant: Tenant) -> Quota:
+    """Month-to-date usage against the paying account's plan.
+
+    An ISV's merchants roll up: the subtree shares one allowance, because
+    the ISV is the customer and the merchants are not.
+    """
+    store = get_store()
+    root = await billing_root(store, tenant.id)
+    plan, limit = await _maybe(store.get_plan(root))
+    used = await _maybe(store.usage_since(root, month_start()))
+    return Quota(plan=plan, limit=limit, used=used)
+
+
+async def check_quota(tenant: Tenant = Depends(current_tenant)) -> Tenant:
+    """Reject when the paying account is out of allowance.
+
+    402 rather than 429: this is not a rate limit that resolves by waiting,
+    it is a plan that needs upgrading.
+    """
+    quota = await quota_for(tenant)
+    if quota.exceeded:
+        raise HTTPException(
+            402,
+            f"monthly request limit reached — {quota.used}/{quota.limit} "
+            f"on the {quota.plan} plan",
+        )
+    return tenant
+
+
+async def meter(tenant: Tenant, surface: str) -> None:
+    """Record one request. Never fails the request it is counting.
+
+    A metering error is a billing problem, not a customer problem; losing
+    a count is strictly better than 500-ing a call that already worked.
+    """
+    try:
+        await _maybe(get_store().record_request(tenant.id, surface))
+    except Exception:  # noqa: BLE001
+        logger.warning("usage not recorded for %s", tenant.id, exc_info=True)
 
 
 def credentials_for(tenant: Tenant):
