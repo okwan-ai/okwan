@@ -19,7 +19,7 @@ from .guard import UnsafeStatement
 from .session import DEFAULT_LIMIT, QuerySession
 
 
-def catalog_payload() -> dict[str, Any]:
+def catalog_payload(resolver=None) -> dict[str, Any]:
     """Every table, flagged by whether this deployment can actually fetch it.
 
     An agent that cannot tell a configured table from an unconfigured one
@@ -31,7 +31,7 @@ def catalog_payload() -> dict[str, Any]:
     tables = []
     unavailable = 0
     for t in catalog():
-        missing = missing_credentials(t)
+        missing = missing_credentials(t, resolver)
         if missing:
             unavailable += 1
         tables.append(
