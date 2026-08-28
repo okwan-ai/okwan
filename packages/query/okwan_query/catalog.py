@@ -7,6 +7,7 @@ query, and Postgres already exposes SQL directly.
 """
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 
 from okwan_core import all_connectors
@@ -125,6 +126,11 @@ def missing_credentials(
 
     fields = connector.auth.required_fields
     supplied = resolve(connector.name, fields)
+    if inspect.isawaitable(supplied):
+        raise TypeError(
+            "missing_credentials needs a synchronous resolver; "
+            "await the credentials first and pass a dict-backed resolver"
+        )
     return tuple(f for f in fields if not supplied.get(f))
 
 
