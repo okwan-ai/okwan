@@ -11,6 +11,7 @@ everything flows from the SDK definition.
 from __future__ import annotations
 
 import inspect
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -30,14 +31,22 @@ from okwan_core import (
 from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
-from okwan_api.auth import credentials_for, current_tenant
+from okwan_api.auth import close_store, current_tenant, load_credentials, open_store
 from okwan_query.rest import build_router as build_query_router
 from okwan_recon.emitters.rest import build_router
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await open_store()
+    yield
+    await close_store()
+
 
 app = FastAPI(
     title="Okwan API",
     version="0.1.0",
     description="The data connectivity layer built for AI agents.",
+    lifespan=lifespan,
 )
 
 
@@ -61,17 +70,18 @@ async def list_connectors() -> list[ConnectorInfo]:
     ]
 
 
-def _credentials(connector: Connector, tenant) -> dict[str, str]:
+async def _credentials(connector: Connector, tenant) -> dict[str, str]:
     """Vault lookup for the authenticated tenant. Never from the request."""
-    resolve = credentials_for(tenant)
-    return resolve(connector.name, connector.auth.required_fields)
+    return await load_credentials(
+        tenant, connector.name, connector.auth.required_fields
+    )
 
 
 def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
     path = f"/v1/{connector.name}/{resource.name}/{op.name}"
 
     async def endpoint(body: BaseModel, tenant=Depends(current_tenant)) -> Any:
-        credentials = _credentials(connector, tenant)
+        credentials = await _credentials(connector, tenant)
         try:
             connector.auth.validate(credentials)
             ctx = connector.context(credentials)
