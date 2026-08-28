@@ -22,25 +22,11 @@ class QueryIn(BaseModel):
 
 
 async def _tenant_resolver(tenant):
-    """Load every connector credential this tenant has, once.
+    """A synchronous resolver over this tenant's stored credentials."""
+    from okwan_api.auth import get_store
+    from okwan_vault import resolver_for
 
-    Returns a synchronous resolver over a plain dict, which is the shape
-    the SDK expects everywhere below this point.
-    """
-    from okwan_api.auth import load_credentials
-
-    loaded: dict[tuple[str, str], str] = {}
-    for connector in all_connectors():
-        creds = await load_credentials(
-            tenant, connector.name, connector.auth.required_fields
-        )
-        for field, value in creds.items():
-            loaded[(connector.name, field)] = value
-
-    def resolve(connector_name: str, fields: tuple[str, ...]) -> dict[str, str]:
-        return {f: loaded.get((connector_name, f), "") for f in fields}
-
-    return resolve
+    return await resolver_for(get_store(), tenant.id)
 
 
 def build_router() -> APIRouter:

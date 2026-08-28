@@ -20,14 +20,14 @@ def store():
 
 
 @pytest.fixture
-def tree(store):
-    isv = store.create_tenant("Acme ISV")
+async def tree(store):
+    isv = await store.create_tenant("Acme ISV")
     return {
         "store": store,
         "isv": isv,
-        "m1": store.create_tenant("Merchant 1", parent_id=isv.id),
-        "m2": store.create_tenant("Merchant 2", parent_id=isv.id),
-        "solo": store.create_tenant("Solo Dev"),
+        "m1": await store.create_tenant("Merchant 1", parent_id=isv.id),
+        "m2": await store.create_tenant("Merchant 2", parent_id=isv.id),
+        "solo": await store.create_tenant("Solo Dev"),
     }
 
 
@@ -37,17 +37,17 @@ async def test_usage_rolls_up_to_the_paying_account(tree):
     """An ISV's merchants are not customers; the ISV is."""
     store = tree["store"]
     for _ in range(3):
-        store.record_request(tree["m1"].id, "rest:shopify")
-    store.record_request(tree["m2"].id, "rest:stripe")
+        await store.record_request(tree["m1"].id, "rest:shopify")
+    await store.record_request(tree["m2"].id, "rest:stripe")
 
-    assert store.usage_since(tree["m1"].id, month_start()) == 3
-    assert store.usage_since(tree["isv"].id, month_start()) == 4
+    assert await store.usage_since(tree["m1"].id, month_start()) == 3
+    assert await store.usage_since(tree["isv"].id, month_start()) == 4
 
 
 async def test_a_merchant_does_not_see_its_siblings_usage(tree):
     store = tree["store"]
-    store.record_request(tree["m2"].id, "rest:stripe")
-    assert store.usage_since(tree["m1"].id, month_start()) == 0
+    await store.record_request(tree["m2"].id, "rest:stripe")
+    assert await store.usage_since(tree["m1"].id, month_start()) == 0
 
 
 async def test_billing_root_of_a_merchant_is_the_isv(tree):
@@ -59,27 +59,27 @@ async def test_billing_root_of_a_root_is_itself(tree):
 
 
 async def test_one_isv_usage_does_not_reach_another(tree, store):
-    rival = store.create_tenant("Rival ISV")
-    store.record_request(tree["m1"].id, "rest:shopify")
-    assert store.usage_since(rival.id, month_start()) == 0
+    rival = await store.create_tenant("Rival ISV")
+    await store.record_request(tree["m1"].id, "rest:shopify")
+    assert await store.usage_since(rival.id, month_start()) == 0
 
 
 # ── plans ───────────────────────────────────────────────────────────
 
-def test_unset_plan_defaults_to_free(tree):
-    name, limit = tree["store"].get_plan(tree["isv"].id)
+async def test_unset_plan_defaults_to_free(tree):
+    name, limit = await tree["store"].get_plan(tree["isv"].id)
     assert name == DEFAULT_PLAN
     assert limit == PLANS["free"]
 
 
-def test_plan_can_be_changed(tree):
-    tree["store"].set_plan(tree["isv"].id, "pro")
-    assert tree["store"].get_plan(tree["isv"].id) == ("pro", PLANS["pro"])
+async def test_plan_can_be_changed(tree):
+    await tree["store"].set_plan(tree["isv"].id, "pro")
+    assert await tree["store"].get_plan(tree["isv"].id) == ("pro", PLANS["pro"])
 
 
-def test_unknown_plan_is_rejected(tree):
+async def test_unknown_plan_is_rejected(tree):
     with pytest.raises(ValueError, match="unknown plan"):
-        tree["store"].set_plan(tree["isv"].id, "platinum")
+        await tree["store"].set_plan(tree["isv"].id, "platinum")
 
 
 # ── quota arithmetic ────────────────────────────────────────────────
@@ -117,20 +117,20 @@ def test_hour_bucket_truncates():
     assert b.hour == 14
 
 
-def test_requests_in_one_hour_share_a_row(tree):
+async def test_requests_in_one_hour_share_a_row(tree):
     """Per-request rows are write amplification; nothing bills by the second."""
     store = tree["store"]
     for _ in range(50):
-        store.record_request(tree["m1"].id, "rest:shopify")
+        await store.record_request(tree["m1"].id, "rest:shopify")
 
     assert len(store._usage) == 1
-    assert store.usage_since(tree["m1"].id, month_start()) == 50
+    assert await store.usage_since(tree["m1"].id, month_start()) == 50
 
 
-def test_surfaces_are_counted_separately(tree):
+async def test_surfaces_are_counted_separately(tree):
     store = tree["store"]
-    store.record_request(tree["m1"].id, "rest:shopify")
-    store.record_request(tree["m1"].id, "rest:query")
+    await store.record_request(tree["m1"].id, "rest:shopify")
+    await store.record_request(tree["m1"].id, "rest:query")
 
     assert len(store._usage) == 2
-    assert store.usage_since(tree["m1"].id, month_start()) == 2
+    assert await store.usage_since(tree["m1"].id, month_start()) == 2

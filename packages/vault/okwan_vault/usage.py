@@ -11,7 +11,6 @@ root, because an ISV's merchants are not customers.
 """
 from __future__ import annotations
 
-import inspect
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -57,10 +56,6 @@ class Quota:
         return not self.unmetered and self.used >= self.limit
 
 
-async def _maybe(value):
-    return await value if inspect.isawaitable(value) else value
-
-
 async def billing_root(store, tenant_id: str) -> str:
     """The account that pays for this tenant's usage.
 
@@ -71,7 +66,7 @@ async def billing_root(store, tenant_id: str) -> str:
 
     current = tenant_id
     for _ in range(MAX_DEPTH):
-        tenant = await _maybe(store.get_tenant(current))
+        tenant = await store.get_tenant(current)
         if tenant is None or tenant.parent_id is None:
             return current
         current = tenant.parent_id

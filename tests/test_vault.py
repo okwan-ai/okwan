@@ -41,29 +41,29 @@ def test_master_key_must_be_32_bytes():
 
 # ── api keys ────────────────────────────────────────────────────────
 
-def test_key_is_never_stored(store):
-    tenant = store.create_tenant("Acme")
-    full, record = store.issue_key(tenant.id)
+async def test_key_is_never_stored(store):
+    tenant = await store.create_tenant("Acme")
+    full, record = await store.issue_key(tenant.id)
 
     assert full not in record.hash_hex
     assert record.prefix in full
     assert len(record.prefix) < len(full)
 
 
-def test_only_the_right_key_resolves(store):
-    tenant = store.create_tenant("Acme")
-    full, _ = store.issue_key(tenant.id)
+async def test_only_the_right_key_resolves(store):
+    tenant = await store.create_tenant("Acme")
+    full, _ = await store.issue_key(tenant.id)
 
-    assert store.tenant_for_key(full).id == tenant.id
-    assert store.tenant_for_key("okw_nonsense") is None
+    assert (await store.tenant_for_key(full)).id == tenant.id
+    assert await store.tenant_for_key("okw_nonsense") is None
 
 
-def test_revoked_key_stops_working(store):
-    tenant = store.create_tenant("Acme")
-    full, record = store.issue_key(tenant.id)
-    store.revoke_key(record.id)
+async def test_revoked_key_stops_working(store):
+    tenant = await store.create_tenant("Acme")
+    full, record = await store.issue_key(tenant.id)
+    await store.revoke_key(record.id)
 
-    assert store.tenant_for_key(full) is None
+    assert await store.tenant_for_key(full) is None
 
 
 def test_hash_comparison_is_constant_time():
@@ -74,58 +74,59 @@ def test_hash_comparison_is_constant_time():
 
 # ── tenancy ─────────────────────────────────────────────────────────
 
-def test_tenants_cannot_see_each_others_credentials(store):
-    a = store.create_tenant("Acme")
-    b = store.create_tenant("Rival")
-    store.put_credential(a.id, "stripe", "secret_key", "sk_acme")
-    store.put_credential(b.id, "stripe", "secret_key", "sk_rival")
+async def test_tenants_cannot_see_each_others_credentials(store):
+    a = await store.create_tenant("Acme")
+    b = await store.create_tenant("Rival")
+    await store.put_credential(a.id, "stripe", "secret_key", "sk_acme")
+    await store.put_credential(b.id, "stripe", "secret_key", "sk_rival")
 
-    assert store.credentials_for(a.id, "stripe", ("secret_key",)) == {"secret_key": "sk_acme"}
-    assert store.credentials_for(b.id, "stripe", ("secret_key",)) == {"secret_key": "sk_rival"}
+    assert await store.credentials_for(a.id, "stripe", ("secret_key",)) == {"secret_key": "sk_acme"}
+    assert await store.credentials_for(b.id, "stripe", ("secret_key",)) == {"secret_key": "sk_rival"}
 
 
-def test_missing_credential_reads_as_empty_not_error(store):
+async def test_missing_credential_reads_as_empty_not_error(store):
     """Matches the env resolver, so reachability checks work unchanged."""
-    tenant = store.create_tenant("Acme")
-    assert store.credentials_for(tenant.id, "stripe", ("secret_key",)) == {"secret_key": ""}
+    tenant = await store.create_tenant("Acme")
+    assert await store.credentials_for(tenant.id, "stripe", ("secret_key",)) == {"secret_key": ""}
 
 
-def test_credentials_for_unknown_tenant_are_empty(store):
-    assert store.credentials_for("ten_nobody", "stripe", ("secret_key",)) == {"secret_key": ""}
+async def test_credentials_for_unknown_tenant_are_empty(store):
+    assert await store.credentials_for("ten_nobody", "stripe", ("secret_key",)) == {"secret_key": ""}
 
 
-def test_multi_field_connector_round_trips(store):
+async def test_multi_field_connector_round_trips(store):
     """Shopify needs a token and a shop domain."""
-    tenant = store.create_tenant("Acme")
-    store.put_credential(tenant.id, "shopify", "access_token", "shpat_x")
-    store.put_credential(tenant.id, "shopify", "shop_domain", "acme.myshopify.com")
+    tenant = await store.create_tenant("Acme")
+    await store.put_credential(tenant.id, "shopify", "access_token", "shpat_x")
+    await store.put_credential(tenant.id, "shopify", "shop_domain", "acme.myshopify.com")
 
-    creds = store.credentials_for(tenant.id, "shopify", ("access_token", "shop_domain"))
+    creds = await store.credentials_for(tenant.id, "shopify", ("access_token", "shop_domain"))
     assert creds == {"access_token": "shpat_x", "shop_domain": "acme.myshopify.com"}
 
 
 # ── the SDK seam ────────────────────────────────────────────────────
 
-def test_resolver_matches_the_connector_sdk_shape(store):
+async def test_resolver_matches_the_connector_sdk_shape(store):
     """The vault replaces env vars without touching fetch_rows."""
-    tenant = store.create_tenant("Acme")
-    store.put_credential(tenant.id, "stripe", "secret_key", "sk_acme")
+    tenant = await store.create_tenant("Acme")
+    await store.put_credential(tenant.id, "stripe", "secret_key", "sk_acme")
 
-    resolve = resolver_for(store, tenant.id)
+    resolve = await resolver_for(store, tenant.id)
     connector = get("stripe")
     assert resolve(connector.name, connector.auth.required_fields) == {"secret_key": "sk_acme"}
 
 
-def test_reachability_works_against_the_vault(store):
+async def test_reachability_works_against_the_vault(store):
     """An unconfigured connector reports missing fields, same as env."""
     from okwan_query.catalog import find, missing_credentials
 
-    tenant = store.create_tenant("Acme")
-    resolve = resolver_for(store, tenant.id)
+    tenant = await store.create_tenant("Acme")
+    resolve = await resolver_for(store, tenant.id)
 
     assert "secret_key" in missing_credentials(find("stripe.charges"), resolve)
 
-    store.put_credential(tenant.id, "stripe", "secret_key", "sk_acme")
+    await store.put_credential(tenant.id, "stripe", "secret_key", "sk_acme")
+    resolve = await resolver_for(store, tenant.id)
     assert missing_credentials(find("stripe.charges"), resolve) == ()
 
 
@@ -154,20 +155,20 @@ def test_invalid_key_is_rejected(client):
     assert r.status_code == 401
 
 
-def test_revoked_key_is_rejected(client, store):
-    tenant = store.create_tenant("Acme")
-    full, record = store.issue_key(tenant.id)
-    store.revoke_key(record.id)
+async def test_revoked_key_is_rejected(client, store):
+    tenant = await store.create_tenant("Acme")
+    full, record = await store.issue_key(tenant.id)
+    await store.revoke_key(record.id)
 
     r = client.post("/v1/stripe/charges/list", json={"limit": 1},
                     headers={"Authorization": f"Bearer {full}"})
     assert r.status_code == 401
 
 
-def test_credentials_are_never_accepted_from_the_request(client, store):
+async def test_credentials_are_never_accepted_from_the_request(client, store):
     """The old X-Okwan-Credential header must not work any more."""
-    tenant = store.create_tenant("Acme")
-    full, _ = store.issue_key(tenant.id)
+    tenant = await store.create_tenant("Acme")
+    full, _ = await store.issue_key(tenant.id)
 
     r = client.post(
         "/v1/stripe/charges/list",
@@ -181,9 +182,9 @@ def test_credentials_are_never_accepted_from_the_request(client, store):
     assert "missing credential fields" in r.json()["detail"]
 
 
-def test_x_okwan_key_header_also_authenticates(client, store):
-    tenant = store.create_tenant("Acme")
-    full, _ = store.issue_key(tenant.id)
+async def test_x_okwan_key_header_also_authenticates(client, store):
+    tenant = await store.create_tenant("Acme")
+    full, _ = await store.issue_key(tenant.id)
 
     r = client.post("/v1/stripe/charges/list", json={"limit": 1},
                     headers={"X-Okwan-Key": full})

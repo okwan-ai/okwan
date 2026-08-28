@@ -93,25 +93,15 @@ async def current_tenant(
             401, "missing API key — send Authorization: Bearer okw_… or X-Okwan-Key"
         )
 
-    tenant = get_store().tenant_for_key(key)
-    if inspect.isawaitable(tenant):
-        tenant = await tenant
+    tenant = await get_store().tenant_for_key(key)
     if tenant is None:
         raise HTTPException(401, "invalid or revoked API key")
     return tenant
 
 
-async def _maybe(value):
-    return await value if inspect.isawaitable(value) else value
-
-
 async def load_credentials(tenant: Tenant, connector_name: str, fields: tuple[str, ...]):
     """Fetch this tenant's credentials for one connector, once per request."""
-    store = get_store()
-    result = store.credentials_for(tenant.id, connector_name, fields)
-    if inspect.isawaitable(result):
-        result = await result
-    return result
+    return await get_store().credentials_for(tenant.id, connector_name, fields)
 
 
 async def quota_for(tenant: Tenant) -> Quota:
@@ -122,8 +112,8 @@ async def quota_for(tenant: Tenant) -> Quota:
     """
     store = get_store()
     root = await billing_root(store, tenant.id)
-    plan, limit = await _maybe(store.get_plan(root))
-    used = await _maybe(store.usage_since(root, month_start()))
+    plan, limit = await store.get_plan(root)
+    used = await store.usage_since(root, month_start())
     return Quota(plan=plan, limit=limit, used=used)
 
 
@@ -150,7 +140,7 @@ async def meter(tenant: Tenant, surface: str) -> None:
     a count is strictly better than 500-ing a call that already worked.
     """
     try:
-        await _maybe(get_store().record_request(tenant.id, surface))
+        await get_store().record_request(tenant.id, surface)
     except Exception:  # noqa: BLE001
         logger.warning("usage not recorded for %s", tenant.id, exc_info=True)
 

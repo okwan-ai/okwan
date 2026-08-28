@@ -25,17 +25,17 @@ def store():
 
 
 @pytest.fixture
-def tree(store):
+async def tree(store):
     """Two ISVs, each with two merchants. The shape the product has."""
-    acme = store.create_tenant("Acme ISV")
-    rival = store.create_tenant("Rival ISV")
+    acme = await store.create_tenant("Acme ISV")
+    rival = await store.create_tenant("Rival ISV")
     return {
         "store": store,
         "acme": acme,
         "rival": rival,
-        "a1": store.create_tenant("Acme Merchant 1", parent_id=acme.id),
-        "a2": store.create_tenant("Acme Merchant 2", parent_id=acme.id),
-        "r1": store.create_tenant("Rival Merchant 1", parent_id=rival.id),
+        "a1": await store.create_tenant("Acme Merchant 1", parent_id=acme.id),
+        "a2": await store.create_tenant("Acme Merchant 2", parent_id=acme.id),
+        "r1": await store.create_tenant("Rival Merchant 1", parent_id=rival.id),
     }
 
 
@@ -53,9 +53,9 @@ async def test_a_parent_may_administer_its_child(tree):
 
 async def test_a_grandparent_may_administer_a_grandchild(store):
     """Depth is not limited to one level."""
-    root = store.create_tenant("Platform")
-    mid = store.create_tenant("Reseller", parent_id=root.id)
-    leaf = store.create_tenant("Merchant", parent_id=mid.id)
+    root = await store.create_tenant("Platform")
+    mid = await store.create_tenant("Reseller", parent_id=root.id)
+    leaf = await store.create_tenant("Merchant", parent_id=mid.id)
 
     assert await may_administer(store, root.id, leaf.id)
     assert await may_administer(store, mid.id, leaf.id)
@@ -110,18 +110,18 @@ async def test_root_has_no_ancestors(tree):
 
 
 async def test_ancestors_are_ordered_upward(store):
-    root = store.create_tenant("Platform")
-    mid = store.create_tenant("Reseller", parent_id=root.id)
-    leaf = store.create_tenant("Merchant", parent_id=mid.id)
+    root = await store.create_tenant("Platform")
+    mid = await store.create_tenant("Reseller", parent_id=root.id)
+    leaf = await store.create_tenant("Merchant", parent_id=mid.id)
 
     assert await ancestors(store, leaf.id) == [mid.id, root.id]
 
 
 async def test_walk_is_bounded(store):
     """An unbounded walk over adversarial data is a hang, not an error."""
-    current = store.create_tenant("root")
+    current = await store.create_tenant("root")
     for i in range(MAX_DEPTH + 5):
-        current = store.create_tenant(f"level-{i}", parent_id=current.id)
+        current = await store.create_tenant(f"level-{i}", parent_id=current.id)
 
     chain = await ancestors(store, current.id)
     assert len(chain) <= MAX_DEPTH
@@ -150,7 +150,7 @@ async def test_forbidden_message_does_not_leak_the_target_name(tree):
 
 async def test_parent_must_exist(store):
     with pytest.raises(KeyError):
-        store.create_tenant("Orphan", parent_id="ten_nobody")
+        await store.create_tenant("Orphan", parent_id="ten_nobody")
 
 
 async def test_root_tenants_report_as_root(tree):
