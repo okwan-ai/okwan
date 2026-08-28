@@ -165,3 +165,52 @@ def test_declared_tables_ship_with_the_server():
     assert t.connector == "rail"
     assert dict(t.columns)["amount"] == "BIGINT"
     assert "recon_payments" in t.params["sql"]
+
+
+# ── reachability ────────────────────────────────────────────────────
+
+def test_catalog_flags_unconfigured_tables():
+    """An agent must be able to tell configured from unconfigured."""
+    from okwan_query.mcp import catalog_payload
+
+    payload = catalog_payload()
+    assert "queryable_count" in payload
+    assert all("queryable" in t for t in payload["tables"])
+    assert all("missing_credentials" in t for t in payload["tables"])
+
+
+def test_missing_credentials_names_the_field():
+    from okwan_query.catalog import find, missing_credentials
+
+    def nothing_configured(name, fields):
+        return {f: "" for f in fields}
+
+    missing = missing_credentials(find("stripe.charges"), nothing_configured)
+    assert "secret_key" in missing
+
+
+def test_configured_table_reports_no_missing():
+    from okwan_query.catalog import find, missing_credentials
+
+    def all_configured(name, fields):
+        return {f: "x" for f in fields}
+
+    assert missing_credentials(find("stripe.charges"), all_configured) == ()
+
+
+def test_query_fails_before_calling_an_unconfigured_upstream():
+    """Fail with a reason, not a timeout or an opaque 401."""
+    import asyncio
+
+    from okwan_core import CredentialError
+    from okwan_query import QuerySession
+
+    def nothing_configured(name, fields):
+        return {f: "" for f in fields}
+
+    s = QuerySession(resolver=nothing_configured)
+    try:
+        with pytest.raises(CredentialError, match="not configured"):
+            asyncio.run(s.query("SELECT * FROM stripe.charges"))
+    finally:
+        s.close()

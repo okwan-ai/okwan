@@ -12,21 +12,41 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-from .catalog import catalog
+from .catalog import catalog, missing_credentials
+from okwan_core import CredentialError
+
 from .guard import UnsafeStatement
 from .session import DEFAULT_LIMIT, QuerySession
 
 
 def catalog_payload() -> dict[str, Any]:
-    return {
-        "tables": [
+    """Every table, flagged by whether this deployment can actually fetch it.
+
+    An agent that cannot tell a configured table from an unconfigured one
+    has to discover the difference by failing, which teaches it to avoid
+    the tool entirely. That is not hypothetical: the first live run listed
+    stripe.charges, the fetch died on a missing secret_key, and the agent
+    hand-wrote SQL against a connector it trusted instead.
+    """
+    tables = []
+    unavailable = 0
+    for t in catalog():
+        missing = missing_credentials(t)
+        if missing:
+            unavailable += 1
+        tables.append(
             {
                 "name": t.qualified,
                 "source": f"{t.connector}.{t.resource}.{t.operation}",
+                "queryable": not missing,
+                "missing_credentials": list(missing),
                 "columns": [{"name": n, "type": k} for n, k in t.columns],
             }
-            for t in catalog()
-        ]
+        )
+    return {
+        "tables": tables,
+        "queryable_count": len(tables) - unavailable,
+        "unavailable_count": unavailable,
     }
 
 
@@ -49,14 +69,15 @@ def _query_tool(max_records: int):
     async def okwan_query(sql: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
         """Run a read-only SQL query across connectors.
 
-        Tables are `connector.resource` — call okwan_describe_tables first.
+        Tables are `connector.resource` — call okwan_describe_tables first
+        and use only tables marked queryable.
         Referenced tables are fetched live at query time; unreferenced ones
         are not called at all. SELECT and WITH only.
         """
         session = QuerySession(max_records=min(limit, max_records))
         try:
             return await session.query(sql)
-        except UnsafeStatement as exc:
+        except (UnsafeStatement, CredentialError) as exc:
             return {"error": str(exc), "rows": [], "row_count": 0}
         finally:
             session.close()
