@@ -22,7 +22,9 @@ from .models import ApiKey, SealedCredential, Tenant
 
 
 class Store(Protocol):
-    def create_tenant(self, name: str) -> Tenant: ...
+    def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
+    def get_tenant(self, tenant_id: str) -> Tenant | None: ...
+    def children_of(self, tenant_id: str) -> list[Tenant]: ...
     def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]: ...
     def revoke_key(self, key_id: str) -> None: ...
     def tenant_for_key(self, full_key: str) -> Tenant | None: ...
@@ -44,10 +46,20 @@ class MemoryStore:
         self._keys: dict[str, ApiKey] = {}
         self._creds: dict[tuple[str, str, str], SealedCredential] = {}
 
-    def create_tenant(self, name: str) -> Tenant:
-        tenant = Tenant(id=f"ten_{uuid.uuid4().hex[:16]}", name=name)
+    def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
+        if parent_id is not None and parent_id not in self._tenants:
+            raise KeyError(f"unknown parent tenant {parent_id!r}")
+        tenant = Tenant(
+            id=f"ten_{uuid.uuid4().hex[:16]}", name=name, parent_id=parent_id
+        )
         self._tenants[tenant.id] = tenant
         return tenant
+
+    def get_tenant(self, tenant_id: str) -> Tenant | None:
+        return self._tenants.get(tenant_id)
+
+    def children_of(self, tenant_id: str) -> list[Tenant]:
+        return [t for t in self._tenants.values() if t.parent_id == tenant_id]
 
     def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
         if tenant_id not in self._tenants:
