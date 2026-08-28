@@ -1,17 +1,19 @@
 """Okwan API gateway — REST interface auto-generated from connectors.
 
 Route shape: POST /v1/{connector}/{resource}/{operation}
-Credentials arrive per-request via X-Okwan-Credential-{field} headers
-in v0; vault-backed credential storage replaces this in P1. No
-connector may register a bespoke route — everything flows from the
-SDK definition.
+
+Callers authenticate with an Okwan API key. Upstream credentials are
+read from the vault server-side and never appear in a request: an ISV
+supplies them once at onboarding rather than transmitting a live secret
+key on every call. No connector may register a bespoke route —
+everything flows from the SDK definition.
 """
 from __future__ import annotations
 
 import inspect
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 import okwan_paystack.connector  # noqa: F401  (registers the connector)
@@ -28,6 +30,7 @@ from okwan_core import (
 from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
+from okwan_api.auth import credentials_for, current_tenant
 from okwan_query.rest import build_router as build_query_router
 from okwan_recon.emitters.rest import build_router
 
@@ -58,20 +61,17 @@ async def list_connectors() -> list[ConnectorInfo]:
     ]
 
 
-def _credentials(connector: Connector, request: Request) -> dict[str, str]:
-    return {
-        field: request.headers.get(
-            f"X-Okwan-Credential-{field.replace('_', '-')}", ""
-        )
-        for field in connector.auth.required_fields
-    }
+def _credentials(connector: Connector, tenant) -> dict[str, str]:
+    """Vault lookup for the authenticated tenant. Never from the request."""
+    resolve = credentials_for(tenant)
+    return resolve(connector.name, connector.auth.required_fields)
 
 
 def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
     path = f"/v1/{connector.name}/{resource.name}/{op.name}"
 
-    async def endpoint(request: Request, body: BaseModel) -> Any:
-        credentials = _credentials(connector, request)
+    async def endpoint(body: BaseModel, tenant=Depends(current_tenant)) -> Any:
+        credentials = _credentials(connector, tenant)
         try:
             connector.auth.validate(credentials)
             ctx = connector.context(credentials)
@@ -90,14 +90,14 @@ def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
     endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         [
             inspect.Parameter(
-                "request",
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=Request,
-            ),
-            inspect.Parameter(
                 "body",
                 inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 annotation=op.input_model,
+            ),
+            inspect.Parameter(
+                "tenant",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=Depends(current_tenant),
             ),
         ]
     )
