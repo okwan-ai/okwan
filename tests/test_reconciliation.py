@@ -511,3 +511,47 @@ def test_explanation_respects_sign():
     pair = match(spec, left, right).matched[0]
     assert pair.discrepancy_minor == -212400
     assert pair.explained_by is None
+
+
+# ── window defaults ─────────────────────────────────────────────────
+
+def test_default_window_is_wide_not_narrow():
+    """Too wide reports ambiguity; too narrow drops matches silently."""
+    rule = Fuzzy(amount="amount", currency="currency")
+    assert rule.window == "7d"
+    assert rule.window_delta.total_seconds() == 7 * 24 * 3600
+
+
+def test_settlement_lag_beyond_old_default_still_matches():
+    """77h lag was observed live and would have missed under the 48h default."""
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency")],
+        "amount": None,
+    })
+    left = [{"payment_id": "P1", "amount": 45000, "currency": "USD",
+             "created_at": "2026-08-01T10:00:00Z"}]
+    right = [{"order_ref": "A", "amount": 45000, "currency": "USD",
+              "created_at": "2026-08-04T15:00:00Z"}]  # +77 hours
+
+    assert match(spec, left, right).summary["matched"] == 1
+
+
+def test_narrow_window_is_a_deliberate_choice():
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency", window="24h")],
+        "amount": None,
+    })
+    left = [{"payment_id": "P1", "amount": 45000, "currency": "USD",
+             "created_at": "2026-08-01T10:00:00Z"}]
+    right = [{"order_ref": "A", "amount": 45000, "currency": "USD",
+              "created_at": "2026-08-04T15:00:00Z"}]
+
+    assert match(spec, left, right).summary["matched"] == 0
+
+
+def test_tool_metadata_names_the_window():
+    import okwan_recon.declarations  # noqa: F401
+    from okwan_recon import get
+
+    meta = tool_metadata(get("shopify_orders"))
+    assert meta["match_windows"] == [{"rule": "fuzzy", "window": "7d"}]

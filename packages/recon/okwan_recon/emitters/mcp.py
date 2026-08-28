@@ -29,7 +29,11 @@ def tool_metadata(spec: Reconciliation) -> dict[str, Any]:
         "left": spec.left.qualified,
         "right": spec.right.qualified,
         "rules": [k.kind for k in spec.keys],
-        "windows": [k.window for k in spec.keys if isinstance(k, Fuzzy)],
+        "match_windows": [
+            {"rule": k.kind, "window": k.window}
+            for k in spec.keys
+            if isinstance(k, Fuzzy)
+        ],
         "view": spec.view_name,
         "read_only": True,
     }

@@ -75,7 +75,14 @@ class Fuzzy(Frozen):
     )
     timestamp_left: str = "created_at"
     timestamp_right: str = "created_at"
-    window: str = "48h"
+    window: str = Field(
+        default="7d",
+        description=(
+            "Time window for amount matching. Wide is safer than narrow: "
+            "surplus candidates report as ambiguous, while a short window "
+            "silently drops real matches. Narrow deliberately."
+        ),
+    )
     amount_tolerance_minor: int = 0
 
     @property
