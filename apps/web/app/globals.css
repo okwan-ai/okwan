@@ -28,6 +28,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.rise {
+  opacity: 0;
+  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise { animation: none; opacity: 1; }
+}
+
 /* Signature: data dots traveling the hub-and-spoke rails */
 @keyframes travel-in {
   0% { offset-distance: 0%; opacity: 0; }
