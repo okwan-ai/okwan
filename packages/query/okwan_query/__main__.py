@@ -10,6 +10,7 @@ import okwan_shopify.connector   # noqa: F401
 import okwan_stripe.connector    # noqa: F401
 import okwan_whatsapp.connector  # noqa: F401
 
+from . import declarations  # noqa: F401  (registers declared tables)
 from .mcp import run_stdio
 
 if __name__ == "__main__":

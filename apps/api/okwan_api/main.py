@@ -27,6 +27,7 @@ from okwan_core import (
 )
 from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
+import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_query.rest import build_router as build_query_router
 from okwan_recon.emitters.rest import build_router
 

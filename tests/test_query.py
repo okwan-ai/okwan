@@ -155,3 +155,13 @@ def test_catalog_payload_names_every_table():
     names = {t["name"] for t in payload["tables"]}
     assert "shopify.orders" in names
     assert all(t["columns"] for t in payload["tables"])
+
+
+def test_declared_tables_ship_with_the_server():
+    """A named SQL query needs its shape stated; a resource does not."""
+    import okwan_query.declarations  # noqa: F401
+
+    t = find("rail.payments")
+    assert t.connector == "rail"
+    assert dict(t.columns)["amount"] == "BIGINT"
+    assert "recon_payments" in t.params["sql"]
