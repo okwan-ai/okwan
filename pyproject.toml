@@ -22,7 +22,7 @@ dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.6"]
 okwan_vault = ["*.sql"]
 
 [tool.setuptools]
-packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/connectors/paystack", "packages/connectors/postgres", "packages/connectors/shopify", "packages/connectors/stripe", "packages/vault", "packages/query", "packages/recon", "packages/mcp_gen", "apps/api"] } }
+packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", "packages/connectors/paystack", "packages/connectors/paypal", "packages/connectors/postgres", "packages/connectors/shopify", "packages/connectors/stripe", "packages/vault", "packages/query", "packages/recon", "packages/mcp_gen", "apps/api"] } }
 
 [tool.ruff]
 line-length = 90

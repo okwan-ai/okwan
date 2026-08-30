@@ -19,6 +19,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 import okwan_paystack.connector  # noqa: F401  (registers the connector)
+import okwan_paypal.connector  # noqa: F401  (registers the connector)
 import okwan_postgres.connector  # noqa: F401  (registers the connector)
 import okwan_shopify.connector  # noqa: F401  (registers the connector)
 import okwan_stripe.connector  # noqa: F401  (registers the connector)
