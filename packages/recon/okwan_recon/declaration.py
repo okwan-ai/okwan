@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
-from typing import Annotated, Any, Literal, Union
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Annotated, Any, Literal
 
 from okwan_core import get as get_connector
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _DURATION = re.compile(r"^(\d+)([smhd])$")
 _UNIT = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -104,7 +103,7 @@ class Fuzzy(Frozen):
         return parse_window(self.window)
 
 
-MatchRule = Annotated[Union[ExactRef, Fuzzy], Field(discriminator="kind")]
+MatchRule = Annotated[ExactRef | Fuzzy, Field(discriminator="kind")]
 
 
 class MSISDN(Frozen):
@@ -199,7 +198,14 @@ class Explains(Frozen):
             return False
         if self.sign == "negative" and discrepancy > 0:
             return False
-        return amount == abs(discrepancy)
+        # Compare magnitudes. Rails report adjustments with their own
+        # sign convention — Shopify states a refund positive, PayPal
+        # states a fee negative — and both describe the same size of
+        # difference. `sign` above already constrains direction, so
+        # requiring the raw value to match as well would mean only
+        # rails that happen to agree with our convention can explain
+        # anything.
+        return abs(amount) == abs(discrepancy)
 
 
 class Reconciliation(Frozen):
