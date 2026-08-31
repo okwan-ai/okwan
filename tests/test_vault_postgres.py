@@ -9,7 +9,6 @@ import os
 import uuid
 
 import pytest
-
 from okwan_vault import EnvMasterKey, PostgresStore, new_key
 
 DSN = os.environ.get("OKWAN_VAULT_DATABASE_URL", "")

@@ -1,13 +1,12 @@
 """Federated SQL over connector definitions."""
 from __future__ import annotations
 
-import pytest
-
 import okwan_paystack.connector  # noqa: F401
 import okwan_postgres.connector  # noqa: F401
-import okwan_shopify.connector   # noqa: F401
-import okwan_stripe.connector    # noqa: F401
-from okwan_query import QuerySession, catalog, columns_for, find
+import okwan_shopify.connector  # noqa: F401
+import okwan_stripe.connector  # noqa: F401
+import pytest
+from okwan_query import QuerySession, catalog, find
 from okwan_query.types import column_type
 
 

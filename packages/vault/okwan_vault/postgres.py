@@ -42,7 +42,7 @@ class PostgresStore:
         self._master = master
         self._pool: asyncpg.Pool | None = None
 
-    async def connect(self, migrate: bool = True) -> "PostgresStore":
+    async def connect(self, migrate: bool = True) -> PostgresStore:
         self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
         if migrate:
             async with self._pool.acquire() as con:

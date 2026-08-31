@@ -19,11 +19,11 @@ def minor_unit_factor(currency: str | None) -> int:
     return 1 if (currency or "").upper() in ZERO_DECIMAL_CURRENCIES else 100
 
 
-def to_major(amount_minor: int | float, currency: str | None) -> float:
+def to_major(amount_minor: float, currency: str | None) -> float:
     """Minor units -> human-facing major amount."""
     return float(amount_minor) / minor_unit_factor(currency)
 
 
-def to_minor(amount_major: int | float, currency: str | None) -> int:
+def to_minor(amount_major: float, currency: str | None) -> int:
     """Major amount -> integer minor units."""
     return int(round(float(amount_major) * minor_unit_factor(currency)))

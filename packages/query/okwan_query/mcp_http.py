@@ -17,10 +17,9 @@ import inspect
 from typing import Any
 
 from mcp.server.mcpserver.context import Context
-
-from okwan_core import all_connectors
-
-from okwan_recon import all_reconciliations, get as get_reconciliation, run as run_recon
+from okwan_recon import all_reconciliations
+from okwan_recon import get as get_reconciliation
+from okwan_recon import run as run_recon
 from okwan_recon.declaration import Reconciliation
 
 from .catalog import missing_credentials

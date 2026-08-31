@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import Any
 
 import asyncpg
-
 from okwan_core import (
     ConnectionStringAuth,
     Connector,

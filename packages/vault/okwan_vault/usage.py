@@ -12,7 +12,7 @@ root, because an ISV's merchants are not customers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 #: Requests per calendar month. Free is deliberately usable — the point is
 #: for an ISV to reach a real integration before deciding, not to hit a
@@ -28,12 +28,12 @@ DEFAULT_PLAN = "free"
 
 
 def hour_bucket(when: datetime | None = None) -> datetime:
-    now = when or datetime.now(timezone.utc)
+    now = when or datetime.now(UTC)
     return now.replace(minute=0, second=0, microsecond=0)
 
 
 def month_start(when: datetime | None = None) -> datetime:
-    now = when or datetime.now(timezone.utc)
+    now = when or datetime.now(UTC)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 

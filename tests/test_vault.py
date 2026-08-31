@@ -1,12 +1,19 @@
 """Credential vault: envelope encryption, tenancy, API keys."""
 from __future__ import annotations
 
-import pytest
-
 import okwan_shopify.connector  # noqa: F401
-import okwan_stripe.connector   # noqa: F401
+import okwan_stripe.connector  # noqa: F401
+import pytest
 from okwan_core import get
-from okwan_vault import EnvMasterKey, MemoryStore, apikey, new_key, open_sealed, resolver_for, seal
+from okwan_vault import (
+    EnvMasterKey,
+    MemoryStore,
+    apikey,
+    new_key,
+    open_sealed,
+    resolver_for,
+    seal,
+)
 
 
 @pytest.fixture
@@ -135,7 +142,6 @@ async def test_reachability_works_against_the_vault(store):
 @pytest.fixture
 def client(store):
     from fastapi.testclient import TestClient
-
     from okwan_api.auth import set_store
     from okwan_api.main import app
 

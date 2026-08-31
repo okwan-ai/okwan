@@ -18,11 +18,9 @@ import re
 from typing import Any
 
 import duckdb
-
 from okwan_core import CredentialError
-
-from okwan_recon.fetch import CredentialResolver, env_credentials, fetch_rows
 from okwan_recon.declaration import ResourceRef
+from okwan_recon.fetch import CredentialResolver, env_credentials, fetch_rows
 
 from .catalog import Table, catalog, missing_credentials
 from .guard import check as check_statement
@@ -71,9 +69,7 @@ class QuerySession:
             value = row.get(name)
             if value is None:
                 out.append(None)
-            elif kind == "JSON":
-                out.append(json.dumps(value, default=str))
-            elif isinstance(value, (dict, list)):
+            elif kind == "JSON" or isinstance(value, (dict, list)):
                 out.append(json.dumps(value, default=str))
             else:
                 out.append(value)

@@ -11,9 +11,8 @@ credentials exist only inside a single function's stack frame.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 from typing import Protocol
-
-from okwan_core import CredentialError
 
 from . import apikey
 from .crypto import new_key, open_sealed, seal
@@ -82,7 +81,7 @@ class MemoryStore:
         return full, record
 
     async def revoke_key(self, key_id: str) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         record = self._keys.get(key_id)
         if record is None:
@@ -93,7 +92,7 @@ class MemoryStore:
             prefix=record.prefix,
             hash_hex=record.hash_hex,
             created_at=record.created_at,
-            revoked_at=datetime.now(timezone.utc),
+            revoked_at=datetime.now(UTC),
         )
 
     async def tenant_for_key(self, full_key: str) -> Tenant | None:

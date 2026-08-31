@@ -15,7 +15,6 @@ from typing import Any
 
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
-
 from okwan_core import Connector
 from okwan_core.connector import Operation
 

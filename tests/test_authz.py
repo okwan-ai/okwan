@@ -8,7 +8,6 @@ than quietly widening access.
 from __future__ import annotations
 
 import pytest
-
 from okwan_vault import EnvMasterKey, MemoryStore, new_key
 from okwan_vault.authz import (
     MAX_DEPTH,
