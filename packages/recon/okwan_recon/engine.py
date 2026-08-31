@@ -7,12 +7,12 @@ records it already paired.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from okwan_core.currency import to_minor
 
-from .declaration import ExactRef, Fuzzy, MSISDN, Reconciliation
+from .declaration import MSISDN, ExactRef, Fuzzy, Reconciliation
 from .paths import dig
 
 Row = dict[str, Any]
@@ -135,14 +135,14 @@ def _as_dt(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        return datetime.fromtimestamp(float(value), tz=UTC)
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _ref_key(value: Any, case_sensitive: bool) -> str | None:

@@ -16,10 +16,9 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field
-
 from okwan_core.currency import minor_unit_factor, to_major
 from okwan_core.pagination import CursorPage, CursorPageIn
+from pydantic import BaseModel, Field, computed_field
 
 
 def money_to_minor(amount: Any, currency: str | None) -> int:

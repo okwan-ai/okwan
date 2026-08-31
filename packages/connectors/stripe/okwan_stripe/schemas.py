@@ -5,10 +5,9 @@ them; currency conversion is presentation-layer concern.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, computed_field
-
 from okwan_core.currency import to_major
 from okwan_core.pagination import CursorPage, CursorPageIn
+from pydantic import BaseModel, Field, computed_field
 
 
 class Customer(BaseModel):

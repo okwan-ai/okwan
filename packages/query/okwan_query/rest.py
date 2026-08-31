@@ -4,13 +4,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from okwan_core import CredentialError, OkwanError, UpstreamError
 from pydantic import BaseModel, Field
 
-from okwan_core import CredentialError, OkwanError, UpstreamError
-
-from okwan_core import all_connectors
-
-from .catalog import catalog
 from .guard import UnsafeStatement
 from .mcp import catalog_payload
 from .session import DEFAULT_LIMIT, QuerySession

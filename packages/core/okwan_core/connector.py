@@ -7,7 +7,6 @@ auto-generates: (a) REST endpoints, (b) SQL-queryable tables (v2),
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -117,7 +116,7 @@ class Connector:
     rate_limit: RateLimitProfile
     docs_url: str = ""
     resources: dict[str, Resource] = field(default_factory=dict)
-    context_factory: Callable[["Connector", dict[str, str]], ConnectorContext] | None = None
+    context_factory: Callable[[Connector, dict[str, str]], ConnectorContext] | None = None
 
     def resource(
         self, name: str, schema: type[BaseModel], description: str = ""

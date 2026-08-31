@@ -1,8 +1,9 @@
 """Metering and plan enforcement."""
 from __future__ import annotations
 
-import pytest
+from datetime import UTC
 
+import pytest
 from okwan_vault import EnvMasterKey, MemoryStore, new_key
 from okwan_vault.usage import (
     DEFAULT_PLAN,
@@ -110,9 +111,9 @@ def test_zero_limit_means_unmetered():
 # ── bucketing ───────────────────────────────────────────────────────
 
 def test_hour_bucket_truncates():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    b = hour_bucket(datetime(2026, 8, 28, 14, 37, 22, tzinfo=timezone.utc))
+    b = hour_bucket(datetime(2026, 8, 28, 14, 37, 22, tzinfo=UTC))
     assert (b.minute, b.second, b.microsecond) == (0, 0, 0)
     assert b.hour == 14
 

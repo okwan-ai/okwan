@@ -12,9 +12,9 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-from .catalog import catalog, missing_credentials
 from okwan_core import CredentialError
 
+from .catalog import catalog, missing_credentials
 from .guard import UnsafeStatement
 from .session import DEFAULT_LIMIT, QuerySession
 

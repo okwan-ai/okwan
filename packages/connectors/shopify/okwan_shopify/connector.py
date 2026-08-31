@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-
 from okwan_core import (
     AuthAdapter,
     Connector,
