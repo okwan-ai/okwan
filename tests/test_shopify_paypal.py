@@ -108,9 +108,11 @@ def test_reference_match_pairs_by_order_name():
     assert pair.discrepancy_minor == 0
 
 
-def test_fee_shows_as_a_discrepancy_not_agreement():
-    """The merchant is owed 999.00 and receives 989.00. A reconciliation
-    reporting that as clean has answered the wrong question."""
+def test_fee_is_a_discrepancy_with_a_known_cause():
+    """The merchant is owed 999.00 and receives 989.00. Reporting that
+    as clean answers the wrong question; reporting it as a mystery fills
+    the chase-list with the one difference present on every row. It is a
+    real discrepancy with a recorded cause."""
     result = match(
         SPEC,
         [order("#1002", 99900)],
@@ -119,6 +121,35 @@ def test_fee_shows_as_a_discrepancy_not_agreement():
     pair = result.matched[0]
     assert pair.agrees is False
     assert pair.discrepancy_minor == -PAYPAL_FEE_MINOR
+    assert pair.explained_by == "rail_fee"
+    assert pair.is_unexplained is False
+
+
+def test_fee_explanation_matches_on_magnitude_not_sign():
+    """PayPal states a fee negative and Shopify states a refund
+    positive. Both describe the same size of difference, so a rail whose
+    sign convention differs from ours must still be able to explain."""
+    result = match(
+        SPEC,
+        [order("#1002", 99900)],
+        [payment("#1002", 99900, fee=PAYPAL_FEE_MINOR)],
+    )
+    assert result.matched[0].right["fee_minor"] < 0
+    assert result.matched[0].discrepancy_minor > 0
+
+
+def test_a_shortfall_beyond_the_fee_stays_unexplained():
+    """#1006 was seeded 5.00 short of its order on top of the fee. The
+    fee accounts for part of the gap and not the whole of it, so the
+    pair must not come back clean."""
+    result = match(
+        SPEC,
+        [order("#1006", 7500)],
+        [payment("#1006", 7000, fee=-293)],
+    )
+    pair = result.matched[0]
+    assert pair.discrepancy_minor == 793
+    assert pair.explained_by is None
     assert pair.is_unexplained is True
 
 
@@ -192,13 +223,20 @@ def test_summary_separates_agreement_from_matching():
     assert s["matched_with_discrepancy"] == 1
 
 
-def test_net_unexplained_is_the_actionable_figure():
+def test_net_unexplained_excludes_explained_breaks():
+    """The figure a merchant acts on is what nobody can account for.
+    Fees are known and drop out; a genuine shortfall does not."""
     result = match(
         SPEC,
-        [order("#1006", 7500)],
-        [payment("#1006", 7500, fee=PAYPAL_FEE_MINOR)],
+        [order("#1002", 99900), order("#1006", 7500)],
+        [payment("#1002", 99900, fee=PAYPAL_FEE_MINOR),
+         payment("#1006", 7000, fee=-293)],
     )
-    assert result.summary["net_unexplained_minor"] == -PAYPAL_FEE_MINOR
+    s = result.summary
+    assert s["matched_with_discrepancy"] == 2
+    assert s["matched_with_explained_discrepancy"] == 1
+    assert s["matched_with_unexplained_discrepancy"] == 1
+    assert s["net_unexplained_minor"] == 793
 
 
 def test_unpaid_orders_lower_the_match_rate():

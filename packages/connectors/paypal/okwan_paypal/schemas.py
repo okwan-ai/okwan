@@ -19,9 +19,11 @@ from okwan_core.currency import minor_unit_factor, to_major
 from okwan_core.pagination import CursorPage, CursorPageIn
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-#: Event codes for money movement that represents a customer payment.
-#: T0xxx are payments; T1900 is a general account adjustment, which is
-#: what sandbox seed funding arrives as.
+#: Event codes for money moving *in* from a customer. A capture is
+#: T0006; T0001 is a mass-payout send and T1900 a balance adjustment,
+#: and neither is a sale. The prefix alone cannot separate them, since
+#: T0001 and T0006 share a family — direction settles it, so a payment
+#: is a T0-family code carrying a positive amount.
 PAYMENT_EVENT_PREFIXES = ("T00", "T01", "T03", "T04", "T05", "T07")
 
 
@@ -146,7 +148,11 @@ class Transaction(BaseModel):
         transfers. Sandbox seed funding is T1900 and would otherwise read
         as an unmatched break forever."""
         code = self.event_code or ""
-        return code.startswith(PAYMENT_EVENT_PREFIXES)
+        if not code.startswith(PAYMENT_EVENT_PREFIXES):
+            return False
+        # Same code family covers money in and money out. A payout is a
+        # T0001 with a negative amount and would otherwise read as a sale.
+        return (self.amount_minor or 0) > 0
 
 
 class ListTransactionsIn(CursorPageIn):

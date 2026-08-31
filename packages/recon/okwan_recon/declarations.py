@@ -122,7 +122,13 @@ shopify_paypal = register(
         # funded it, because the PayPal feed carries the refund as its
         # own row rather than adjusting the original. The ledger knows
         # why. Unexplained, it trains people to ignore the number.
+        # A rail fee is a known cause, not a mystery: the merchant is
+        # owed the order total and receives it less PayPal's cut. Left
+        # unexplained it fills the chase-list with the one discrepancy
+        # that appears on every single row, and a list that always fires
+        # is a list nobody reads.
         explains=[
+            Explains(path="fee_minor", side="right", label="rail_fee"),
             Explains(path="total_refunded_minor", side="left", label="refund"),
         ],
     )

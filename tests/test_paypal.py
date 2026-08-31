@@ -11,9 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
-
 import okwan_paypal.connector  # noqa: F401  (registers the connector)
+import pytest
 from okwan_paypal.connector import (
     WINDOW_DAYS,
     _decode,
@@ -104,9 +103,36 @@ def test_account_adjustments_are_not_payments():
 
 
 @pytest.mark.parametrize("code", ["T0006", "T0000", "T0300", "T0400"])
-def test_payment_codes_are_payments(code):
-    row = {"transaction_info": {"transaction_id": "X", "transaction_event_code": code}}
+def test_inbound_payment_codes_are_payments(code):
+    """A capture arrives as T0006 with a positive amount."""
+    row = {
+        "transaction_info": {
+            "transaction_id": "X",
+            "transaction_event_code": code,
+            "transaction_amount": {"currency_code": "USD", "value": "99.00"},
+        }
+    }
     assert Transaction.model_validate(row).is_payment is True
+
+
+def test_outbound_payout_is_not_a_payment():
+    """T0001 is a payout send and shares the T0 family with a capture.
+    Counted as a sale it becomes revenue the merchant never earned."""
+    row = {
+        "transaction_info": {
+            "transaction_id": "X",
+            "transaction_event_code": "T0001",
+            "transaction_amount": {"currency_code": "USD", "value": "-299.00"},
+        }
+    }
+    assert Transaction.model_validate(row).is_payment is False
+
+
+def test_amountless_row_is_not_a_payment():
+    """Direction is part of the definition, so a row with no amount
+    cannot be classified as one."""
+    row = {"transaction_info": {"transaction_id": "X", "transaction_event_code": "T0006"}}
+    assert Transaction.model_validate(row).is_payment is False
 
 
 # --- cursor ------------------------------------------------------------
