@@ -156,9 +156,10 @@ def test_a_truncated_ledger_makes_every_orphan_payment_unverifiable():
     assert result.summary["unverifiable_right"] == 1
 
 
-def test_unverifiable_orders_leave_the_match_rate():
+def test_any_unverifiable_record_withholds_the_match_rate():
     """One order paid, one unpaid inside coverage, one placed after the
-    rail's horizon. The rate is over the two that could be judged."""
+    rail's horizon. The true denominator is unknown, so there is no rate,
+    and the counts still say what is known."""
     late = (HORIZON + timedelta(hours=2)).isoformat()
     result = match(
         SPEC,
@@ -166,14 +167,27 @@ def test_unverifiable_orders_leave_the_match_rate():
         [payment("#1004")],
         COMPLETE_LEDGER, PAYPAL_READ,
     )
+    s = result.summary
+    assert s["match_rate"] is None
+    assert (s["matched"], s["unmatched_left"], s["unverifiable_left"]) == (1, 1, 1)
+
+
+def test_unverifiable_on_the_right_alone_also_withholds_the_rate():
+    """An orphan payment the ledger did not read for may belong to an
+    order outside the read, so the order count is uncertain too."""
+    cut = cov("shopify.orders.list", records=1, cap=1, truncated=True)
+    result = match(SPEC, [order("#1004")], [payment("#1004"), payment("#9999")],
+                   cut, PAYPAL_READ)
+    assert result.summary["unverifiable_right"] == 1
+    assert result.summary["match_rate"] is None
+
+
+def test_fully_verifiable_runs_keep_their_rate():
+    result = match(
+        SPEC, [order("#1004"), order("#1003")], [payment("#1004")],
+        COMPLETE_LEDGER, PAYPAL_READ,
+    )
     assert result.summary["match_rate"] == 0.5
-
-
-def test_all_unverifiable_is_a_zero_rate_not_a_division():
-    cut = cov("paypal.transactions.list", records=1, cap=1, truncated=True)
-    result = match(SPEC, [order("#1003")], [], COMPLETE_LEDGER, cut)
-    assert result.summary["match_rate"] == 0.0
-    assert result.summary["unverifiable_left"] == 1
 
 
 def test_matched_and_unmatched_rows_carry_no_reason():
