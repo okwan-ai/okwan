@@ -144,3 +144,23 @@ class Connector:
             for res in self.resources.values()
             for op in res.operations.values()
         ]
+
+    def probe(self) -> tuple[Resource, Operation, BaseModel] | None:
+        """The cheapest real read this connector can make: a list call.
+
+        Derived from the definition rather than declared per connector:
+        the first list operation, in declaration order, whose input can be
+        built with nothing but `limit=1`. None when every list operation
+        needs an argument only the caller knows (WhatsApp's `waba_id`),
+        in which case a credential test cannot be run blind.
+        """
+        for res, op in self.iter_operations():
+            if op.op_type is not OpType.LIST:
+                continue
+            fields = op.input_model.model_fields
+            params = {"limit": 1} if "limit" in fields else {}
+            try:
+                return res, op, op.input_model(**params)
+            except ValueError:
+                continue
+        return None

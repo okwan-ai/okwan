@@ -16,3 +16,26 @@ services:
         sync: false
       - key: OKWAN_VAULT_DATABASE_URL
         sync: false
+      # Where verification links point. Signup answers 503 outside dev
+      # until a mail provider is wired (okwan_api/mail.py).
+      - key: OKWAN_DASHBOARD_URL
+        value: https://okwan-dashboard.onrender.com
+
+  # Signup, connections and key issue. Server routes, not a static export:
+  # the session token and every credential stay server-side.
+  - type: web
+    name: okwan-dashboard
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    rootDir: apps/dashboard
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: OKWAN_API_URL
+        value: https://okwan.onrender.com

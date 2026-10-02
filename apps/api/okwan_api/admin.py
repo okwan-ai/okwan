@@ -4,23 +4,27 @@ An ISV holds one account and provisions a tenant per merchant. These
 routes are the API version of what the CLI does, scoped by the same
 boundary: a tenant may act on itself and its descendants, nothing else.
 
-Deliberately absent: a route to create a root tenant. Signing up an ISV
-is a commercial act, not an anonymous one, and an endpoint that mints
-root accounts is an open door with no user until self-serve billing
-exists. Root tenants come from the CLI.
+Root tenants are created by self-serve signup (`signup.py`), gated on
+a verified email. They were CLI-only until §9 2026-10-02: an endpoint
+that mints root accounts was an open door with no user. Once there are
+users, the open door is the point, and hand-run onboarding is what stood
+between the product and the first ISV.
+
+Every route here accepts an API key or a dashboard session. Anything
+outside the caller's subtree answers 404, never 403.
 """
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from okwan_core import all_connectors, get as get_connector
+from okwan_core import OkwanError, UpstreamError, all_connectors
+from okwan_core import get as get_connector
 from okwan_vault.authz import Forbidden, require_administer
 
-from .auth import current_tenant, get_store
+from .auth import admin_actor, get_store, meter
 
 
 class CreateTenantIn(BaseModel):
@@ -57,14 +61,14 @@ def build_router() -> APIRouter:
     router = APIRouter(prefix="/v1/tenants", tags=["tenants"])
 
     @router.get("")
-    async def list_tenants(actor=Depends(current_tenant)) -> dict[str, Any]:
+    async def list_tenants(actor=Depends(admin_actor)) -> dict[str, Any]:
         """The caller's own record and the tenants it has provisioned."""
         children = await get_store().children_of(actor.id)
         return {"self": _public(actor), "children": [_public(c) for c in children]}
 
     @router.post("", status_code=201)
     async def create_tenant(
-        body: CreateTenantIn, actor=Depends(current_tenant)
+        body: CreateTenantIn, actor=Depends(admin_actor)
     ) -> dict[str, Any]:
         """Provision a tenant beneath the caller."""
         tenant = await get_store().create_tenant(body.name, parent_id=actor.id)
@@ -72,7 +76,7 @@ def build_router() -> APIRouter:
 
     @router.post("/{tenant_id}/keys", status_code=201)
     async def issue_key(
-        tenant_id: str, actor=Depends(current_tenant)
+        tenant_id: str, actor=Depends(admin_actor)
     ) -> dict[str, Any]:
         """Issue an API key for a tenant in the caller's subtree.
 
@@ -88,17 +92,23 @@ def build_router() -> APIRouter:
         }
 
     @router.delete("/keys/{key_id}", status_code=204)
-    async def revoke_key(key_id: str, actor=Depends(current_tenant)) -> None:
+    async def revoke_key(key_id: str, actor=Depends(admin_actor)) -> None:
         """Revoke a key. Effective immediately on the next request."""
         store = get_store()
+        owner = await store.key_owner(key_id)
+        missing = HTTPException(404, f"no such key: {key_id}")
+        if owner is None:
+            raise missing
         try:
+            await _guard(actor, owner)
             await store.revoke_key(key_id)
-        except KeyError as exc:
-            raise HTTPException(404, f"no such key: {key_id}") from exc
+        except (HTTPException, KeyError) as exc:
+            # Someone else's key reads exactly like a key that never existed.
+            raise missing from exc
 
     @router.put("/{tenant_id}/credentials", status_code=204)
     async def put_credential(
-        tenant_id: str, body: CredentialIn, actor=Depends(current_tenant)
+        tenant_id: str, body: CredentialIn, actor=Depends(admin_actor)
     ) -> None:
         """Store an upstream credential for a tenant in the caller's subtree.
 
@@ -106,11 +116,7 @@ def build_router() -> APIRouter:
         here rather than surfacing later as an unexplained auth error.
         """
         await _guard(actor, tenant_id)
-        try:
-            connector = get_connector(body.connector)
-        except KeyError:
-            known = ", ".join(sorted(c.name for c in all_connectors()))
-            raise HTTPException(400, f"unknown connector; known: {known}") from None
+        connector = _connector(body.connector, status=400)
         if body.field not in connector.auth.required_fields:
             raise HTTPException(
                 400,
@@ -123,11 +129,103 @@ def build_router() -> APIRouter:
 
     @router.get("/{tenant_id}/credentials")
     async def list_credentials(
-        tenant_id: str, actor=Depends(current_tenant)
+        tenant_id: str, actor=Depends(admin_actor)
     ) -> dict[str, Any]:
         """Which connectors are configured. Names only — never values."""
         await _guard(actor, tenant_id)
         configured = await get_store().connectors_configured(tenant_id)
         return {"tenant_id": tenant_id, "configured": configured}
 
+    @router.post("/{tenant_id}/connectors/{connector_name}/test")
+    async def test_connector(
+        tenant_id: str, connector_name: str, actor=Depends(admin_actor)
+    ) -> dict[str, Any]:
+        """Prove the stored credentials work: one real list call, limit=1.
+
+        Reads from the vault, not the request, so a pass also proves the
+        write landed and the round trip opens. The result says whether
+        rows came back and never carries a credential, even inside an
+        upstream error message.
+        """
+        await _guard(actor, tenant_id)
+        connector = _connector(connector_name, status=404)
+        return await _probe(tenant_id, connector)
+
     return router
+
+
+def _connector(name: str, status: int):
+    try:
+        return get_connector(name)
+    except KeyError:
+        known = ", ".join(sorted(c.name for c in all_connectors()))
+        raise HTTPException(status, f"unknown connector; known: {known}") from None
+
+
+async def _probe(tenant_id: str, connector) -> dict[str, Any]:
+    out: dict[str, Any] = {"connector": connector.name}
+    probe = connector.probe()
+    if probe is None:
+        return {**out, "status": "untestable",
+                "detail": "every list operation needs an argument only you know, "
+                          "so there is no blind read to test with"}
+    resource, op, params = probe
+    out["operation"] = f"{connector.name}.{resource.name}.{op.name}"
+
+    fields = connector.auth.required_fields
+    creds = await get_store().credentials_for(tenant_id, connector.name, fields)
+    missing = [f for f in fields if not creds.get(f)]
+    if missing:
+        return {**out, "status": "missing", "missing": missing,
+                "detail": f"not stored yet: {', '.join(missing)}"}
+    secrets = [v for v in creds.values() if v]
+    try:
+        ctx = connector.context(creds)
+        try:
+            result = await op.handler(ctx, params)
+        finally:
+            await ctx.client.aclose()
+    except UpstreamError as exc:
+        return {**out, "status": "failed", "upstream_status": exc.status,
+                "detail": _scrub(str(exc), secrets)}
+    except OkwanError as exc:
+        return {**out, "status": "failed", "detail": _scrub(str(exc), secrets)}
+    except Exception as exc:  # noqa: BLE001 — transport errors are a result here
+        return {**out, "status": "failed",
+                "detail": _scrub(f"{type(exc).__name__}: {exc}", secrets)}
+    finally:
+        del creds, secrets
+    await meter_test(tenant_id, connector.name)
+    rows = len(getattr(result, "items", None) or [])
+    start, end = getattr(result, "span_start", None), getattr(result, "span_end", None)
+    if start is not None and end is not None:
+        # A windowed rail (PayPal reads 30 days by default) can be empty
+        # because the window is, not because the account is. Say which.
+        out["span"] = {"start": start.isoformat(), "end": end.isoformat()}
+    if rows:
+        detail = "real rows came back"
+    elif "span" in out:
+        detail = (f"the credentials work; no rows between {start:%Y-%m-%d} "
+                  f"and {end:%Y-%m-%d}, the window this list reads by default")
+    else:
+        detail = "the credentials work, but this list returned no rows"
+    return {**out, "status": "rows" if rows else "empty", "rows": rows, "detail": detail}
+
+
+async def meter_test(tenant_id: str, connector: str) -> None:
+    tenant = await get_store().get_tenant(tenant_id)
+    if tenant is not None:
+        await meter(tenant, f"test:{connector}")
+
+
+def _scrub(text: str, secrets: list[str]) -> str:
+    """Remove any credential an upstream error echoed back.
+
+    Some rails quote the key they rejected; a connection error can carry
+    a DSN. The value must not leave through an error message any more
+    than through a success.
+    """
+    for value in secrets:
+        if len(value) >= 4:
+            text = text.replace(value, "[redacted]")
+    return text[:300]
