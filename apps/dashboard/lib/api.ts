@@ -69,19 +69,12 @@ export async function api<T>(
 async function forwardedClient(): Promise<Record<string, string>> {
   const secret = process.env.OKWAN_DASHBOARD_SECRET;
   const h = await incoming();
-  const raw = h.get("x-forwarded-for");
   const cloudflare = address(h.get("cf-connecting-ip"));
   const hops = Number(process.env.OKWAN_DASHBOARD_PROXY_HOPS ?? "3");
-  const chain = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const chain = (h.get("x-forwarded-for") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const counted = hops > 0 && chain.length >= hops ? chain[chain.length - hops] : "";
   const ip = cloudflare || counted;
-  const source = cloudflare ? "cf-connecting-ip" : counted ? "chain" : null;
-  const out: Record<string, string> =
-    secret && ip ? { "X-Okwan-Client-IP": ip, "X-Okwan-Dashboard-Secret": secret } : {};
-  if (process.env.OKWAN_LOG_FORWARDED === "1") {
-    logForwarded(raw, chain, h, hops, source, out["X-Okwan-Client-IP"] ?? null, Boolean(secret));
-  }
-  return out;
+  return secret && ip ? { "X-Okwan-Client-IP": ip, "X-Okwan-Dashboard-Secret": secret } : {};
 }
 
 /** An IPv4 or IPv6 literal, or "". A malformed header is not trusted. */
@@ -90,31 +83,6 @@ function address(value: string | null): string {
   const v4 = /^(\d{1,3})(\.\d{1,3}){3}$/.test(v);
   const v6 = v.includes(":") && /^[0-9a-fA-F:.]+$/.test(v);
   return v4 || v6 ? v : "";
-}
-
-// TEMPORARY DIAGNOSTIC — remove with the API's (§10 item 1). One line per
-// API call: the raw X-Forwarded-For string as this route handler sees it,
-// the parsed chain, the hop count, the address passed on (never the secret,
-// only whether one is configured), and the two client addresses Cloudflare
-// sets independently of the chain. Addresses only: no other header, cookie
-// or body.
-function logForwarded(
-  raw: string | null, chain: string[], h: Headers, hops: number,
-  source: string | null, passed: string | null, secretConfigured: boolean,
-): void {
-  console.info(
-    "okwan_dashboard.forwarded " +
-      JSON.stringify({
-        raw_x_forwarded_for: raw,
-        chain,
-        hops,
-        source,
-        passes_on: passed,
-        secret_configured: secretConfigured,
-        cf_connecting_ip: h.get("cf-connecting-ip"),
-        true_client_ip: h.get("true-client-ip"),
-      }),
-  );
 }
 
 /** FastAPI errors are a string or a list of {loc, msg}. Never an input value:
