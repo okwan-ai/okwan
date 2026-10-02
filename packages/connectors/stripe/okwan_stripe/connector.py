@@ -109,10 +109,11 @@ async def get_customer(ctx: ConnectorContext, params: GetCustomerIn) -> Customer
     ),
 )
 async def list_charges(ctx: ConnectorContext, params: ListChargesIn) -> ChargePage:
-    data = await ctx.client.get(
-        "/charges",
-        params=_page_params(params.limit, params.cursor, customer=params.customer_id),
-    )
+    query = _page_params(params.limit, params.cursor, customer=params.customer_id)
+    # The fee lives on the balance transaction, not the charge. Without it a
+    # reconciliation reports Stripe's cut as an unexplained break on every row.
+    query["expand[]"] = "data.balance_transaction"
+    data = await ctx.client.get("/charges", params=query)
     items, cursor, more = _page(data, Charge)
     return ChargePage(items=items, next_cursor=cursor, has_more=more)
 
