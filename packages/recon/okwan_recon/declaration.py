@@ -276,6 +276,16 @@ class Reconciliation(Frozen):
         return None
 
     @property
+    def timestamp_paths(self) -> tuple[str | None, str | None]:
+        """Where each side dates its records — the first Fuzzy rule's
+        paths. None when no rule says, so coverage cannot place a record
+        in time and a bounded counterpart cannot vouch for it."""
+        for rule in self.keys:
+            if isinstance(rule, Fuzzy):
+                return rule.timestamp_left, rule.timestamp_right
+        return None, None
+
+    @property
     def display_title(self) -> str:
         return self.title or self.name.replace("_", " ").title()
 

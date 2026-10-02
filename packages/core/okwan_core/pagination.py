@@ -7,6 +7,8 @@ connector the same way.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -28,3 +30,19 @@ class CursorPage[T](BaseModel):
         default=None, description="Pass as `cursor` to fetch the next page"
     )
     has_more: bool = False
+    # What the walk actually covered, for lists bounded in time. None on
+    # a list that pages over everything; set by a connector whose upstream
+    # reads a window, so a caller can tell "none exist" from "not read".
+    span_start: datetime | None = Field(
+        default=None, description="Earliest instant this walk reads from"
+    )
+    span_end: datetime | None = Field(
+        default=None, description="Latest instant this walk reads to"
+    )
+    horizon: datetime | None = Field(
+        default=None,
+        description=(
+            "How current the upstream ledger says it is. Records after this "
+            "have not landed yet; span_end is clamped to it"
+        ),
+    )

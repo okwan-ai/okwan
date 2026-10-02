@@ -13,6 +13,7 @@ from typing import Any
 
 from okwan_core import get as get_connector
 
+from .coverage import Coverage
 from .declaration import ResourceRef
 
 Row = dict[str, Any]
@@ -58,6 +59,18 @@ async def fetch_rows(
     max_records: int = 500,
     overrides: dict[str, Any] | None = None,
 ) -> list[Row]:
+    rows, _ = await fetch_side(ref, resolver, max_records, overrides)
+    return rows
+
+
+async def fetch_side(
+    ref: ResourceRef,
+    resolver: CredentialResolver = env_credentials,
+    max_records: int = 500,
+    overrides: dict[str, Any] | None = None,
+) -> tuple[list[Row], Coverage]:
+    """Rows plus what was read to get them: the span the connector
+    walked, and whether the cap cut the walk short."""
     connector = get_connector(ref.connector)
     op = connector.resources[ref.resource].operations[ref.operation]
     fields = op.input_model.model_fields
@@ -65,6 +78,8 @@ async def fetch_rows(
     ctx = connector.context(resolver(connector.name, connector.auth.required_fields))
     rows: list[Row] = []
     cursor: str | None = None
+    last_page: Any = None
+    more = False
     try:
         while True:
             payload: dict[str, Any] = {**ref.params, **(overrides or {})}
@@ -82,13 +97,28 @@ async def fetch_rows(
                     rows.append(result.model_dump(mode="json"))
                 else:
                     rows.extend(container)
+                # A container cannot say whether upstream held more, so
+                # reaching the cap is treated as having been cut by it.
+                more = len(rows) >= max_records
                 break
 
+            last_page = result
             rows.extend(item.model_dump(mode="json") for item in result.items)
             cursor = result.next_cursor
-            if not cursor or not result.has_more or len(rows) >= max_records:
+            more = bool(cursor and result.has_more)
+            if not more or len(rows) >= max_records:
                 break
     finally:
         await ctx.client.aclose()
 
-    return rows[:max_records]
+    truncated = len(rows) > max_records or (len(rows) >= max_records and more)
+    coverage = Coverage(
+        source=ref.qualified,
+        records=min(len(rows), max_records),
+        cap=max_records,
+        truncated=truncated,
+        span_start=getattr(last_page, "span_start", None),
+        span_end=getattr(last_page, "span_end", None),
+        horizon=getattr(last_page, "horizon", None),
+    )
+    return rows[:max_records], coverage

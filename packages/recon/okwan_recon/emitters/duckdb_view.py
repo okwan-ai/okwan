@@ -15,6 +15,10 @@ _COLUMNS = (
     ("status", "VARCHAR"),
     ("rule", "VARCHAR"),
     ("confidence", "DOUBLE"),
+    # False on an unmatched row whose counterpart side did not read its
+    # date: not a finding. Filter on it before calling anything unpaid.
+    ("counterpart_read", "BOOLEAN"),
+    ("caveat", "VARCHAR"),
     ("left_record", "JSON"),
     ("right_record", "JSON"),
 )
@@ -34,6 +38,8 @@ def materialize_view(con: Any, spec: Reconciliation, result: ReconResult) -> str
             row["status"],
             row["rule"],
             row["confidence"],
+            row["counterpart_read"],
+            row["caveat"],
             json.dumps(row["left"], default=str) if row["left"] is not None else None,
             json.dumps(row["right"], default=str) if row["right"] is not None else None,
         )
@@ -47,7 +53,7 @@ def materialize_view(con: Any, spec: Reconciliation, result: ReconResult) -> str
 
     con.execute(
         f'CREATE OR REPLACE VIEW "{schema}"."{table}" AS '
-        f"SELECT status, rule, confidence, left_record, right_record "
+        f"SELECT {', '.join(n for n, _ in _COLUMNS)} "
         f'FROM "{schema}"."{backing}"'
     )
     return spec.view_name
