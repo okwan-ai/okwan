@@ -17,11 +17,14 @@ from typing import Any
 
 import okwan_shopify.connector  # noqa: F401  (registers the connector)
 import okwan_stripe.connector  # noqa: F401
+from okwan_core import ConnectorContext
 from okwan_recon import declarations  # noqa: F401  (registers declarations)
 from okwan_recon.declaration import ExactRef, Explains, Fuzzy
 from okwan_recon.emitters.mcp import tool_metadata
 from okwan_recon.engine import match
+from okwan_recon.fetch import fetch_rows
 from okwan_recon.registry import all_reconciliations
+from okwan_stripe.connector import stripe
 
 SPEC = next(r for r in all_reconciliations() if r.name == "shopify_stripe")
 PAYPAL = next(r for r in all_reconciliations() if r.name == "shopify_paypal")
@@ -203,6 +206,61 @@ def test_order_with_no_charge_is_unmatched_left():
 def test_charge_with_no_order_is_unmatched_right():
     result = match(SPEC, [], [charge("#9999", 5000)])
     assert len(result.unmatched_right) == 1
+
+
+# --- failed attempts ---------------------------------------------------
+
+def test_declaration_reads_succeeded_charges_only():
+    assert SPEC.right.params == {"status": "succeeded"}
+
+
+def test_unfiltered_a_failed_attempt_can_take_the_reference_join():
+    """Why the filter exists. The exact rule takes the first charge
+    carrying the reference, so list order alone decides — and a failed
+    attempt listed first wins, leaving the real payment an orphan."""
+    failed = {**charge("#1002", 99900), "id": "ch_failed", "status": "failed"}
+    paid = {**charge("#1002", 99900), "id": "ch_paid"}
+    result = match(SPEC, [order("#1002", 99900)], [failed, paid])
+    assert result.matched[0].right["id"] == "ch_failed"
+
+
+class _FakeClient:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    async def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._payload
+
+    async def aclose(self) -> None:
+        pass
+
+
+async def test_a_failed_attempt_never_reaches_the_join(monkeypatch):
+    """Through the real fetch path, with the failure listed first: the
+    declaration's filter removes it before the engine sees it."""
+    base = {
+        "amount": 99900, "currency": "usd", "created": CHARGED_AT,
+        "metadata": {"order_id": "#1002"},
+        "balance_transaction": {"fee": 2927},
+    }
+    payload = {
+        "data": [
+            {**base, "id": "ch_failed", "status": "failed", "balance_transaction": None},
+            {**base, "id": "ch_paid", "status": "succeeded"},
+        ],
+        "has_more": False,
+    }
+    monkeypatch.setattr(
+        stripe, "context_factory",
+        lambda conn, creds: ConnectorContext(client=_FakeClient(payload), credentials=creds),
+    )
+    rows = await fetch_rows(SPEC.right, lambda name, fields: {f: "" for f in fields})
+    assert [r["id"] for r in rows] == ["ch_paid"]
+
+    result = match(SPEC, [order("#1002", 99900)], rows)
+    assert result.matched[0].right["id"] == "ch_paid"
+    assert result.matched[0].explained_by == "rail_fee"
+    assert result.unmatched_right == []
 
 
 # --- fuzzy fallback ----------------------------------------------------

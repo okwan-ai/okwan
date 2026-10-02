@@ -126,6 +126,14 @@ class ListChargesIn(CursorPageIn):
     customer_id: str | None = Field(
         default=None, description="Only charges for this customer"
     )
+    status: str | None = Field(
+        default=None,
+        description=(
+            "Only charges with this status: succeeded, pending or failed. "
+            "Stripe's list takes no status filter, so this is applied to each "
+            "page after fetching; a page may hold fewer than `limit` items."
+        ),
+    )
 
 
 class ListSubscriptionsIn(CursorPageIn):

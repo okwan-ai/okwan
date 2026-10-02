@@ -90,6 +90,28 @@ def test_fuzzy_is_the_fallback_not_the_first_rule():
     assert isinstance(SPEC.keys[-1], Fuzzy)
 
 
+def test_fuzzy_compares_gross_to_gross():
+    """PayPal's net is the payment less its fee, so net to net never
+    equals an order total and the fallback could not fire."""
+    fuzzy = next(k for k in SPEC.keys if isinstance(k, Fuzzy))
+    assert (fuzzy.amount, fuzzy.right_amount) == ("total_received_minor", "amount_minor")
+
+
+def test_unreferenced_payment_with_a_fee_still_pairs():
+    """Every real PayPal payment carries a fee. Under net to net this
+    pair was unreachable; on gross it matches, and the fee then explains
+    the net discrepancy."""
+    result = match(
+        SPEC,
+        [order("#1002", 99900)],
+        [payment(None, 99900, fee=PAYPAL_FEE_MINOR)],
+    )
+    pair = result.matched[0]
+    assert pair.rule == "fuzzy"
+    assert pair.discrepancy_minor == -PAYPAL_FEE_MINOR
+    assert pair.explained_by == "rail_fee"
+
+
 def test_comparison_is_net_of_fees():
     """Gross agrees with the order total on every row and hides the fee.
     Net surfaces it as a discrepancy the ledger can account for."""

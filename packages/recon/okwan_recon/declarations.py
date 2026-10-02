@@ -87,6 +87,11 @@ shopify_orders = register(
 #: 450.00 USD, so without a reference they are genuinely
 #: indistinguishable and the engine must say so.
 #:
+#: The fallback compares gross to gross, as `shopify_stripe` does.
+#: PayPal's net is the payment less its fee, so net to net never equals
+#: an order total: against the live ledger not one payment's net met
+#: any order's, and the rule could not fire.
+#:
 #: Compares `net_minor`, not `amount_minor`. PayPal reports its fee as
 #: a separate negative figure, so the gross charge never equals what
 #: the merchant receives. Reconciling gross against the order total
@@ -109,9 +114,9 @@ shopify_paypal = register(
         keys=[
             ExactRef(left="name", right="invoice_id"),
             Fuzzy(
-                amount="net_payment_minor",
+                amount="total_received_minor",
                 currency="currency",
-                amount_right="net_minor",
+                amount_right="amount_minor",
                 timestamp_left="created_at",
                 timestamp_right="initiated_at",
                 window="7d",
@@ -168,7 +173,15 @@ shopify_stripe = register(
             "with no order, and pairs whose figures disagree."
         ),
         left=ResourceRef(connector="shopify", resource="orders", operation="list"),
-        right=ResourceRef(connector="stripe", resource="charges", operation="list"),
+        # A failed attempt carries the same order_ref as the retry that
+        # succeeded. Left in, it can take the reference join — Stripe's
+        # newest-first order only usually puts the success ahead of it.
+        right=ResourceRef(
+            connector="stripe",
+            resource="charges",
+            operation="list",
+            params={"status": "succeeded"},
+        ),
         keys=[
             ExactRef(left="name", right="order_ref"),
             Fuzzy(
