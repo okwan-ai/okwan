@@ -1,15 +1,21 @@
 """Read-only REST routes generated from the reconciliation registry.
 
-Credentials arrive per connector as
-X-Okwan-{CONNECTOR}-Credential-{field}, extending the gateway's v0
-header convention to the two-sided case; falls back to environment
-variables when a header is absent.
+Authenticated like every other data route: the caller presents an Okwan
+API key, and both sides' credentials are read from that tenant's vault —
+the same resolution the hosted MCP uses. Nothing is read from request
+headers or from this server's environment. Until 2026-10-02 these routes
+took per-connector credential headers and fell back to the server's own
+OKWAN_<CONNECTOR>_* variables, the last survivor of the per-request model
+the vault replaced.
+
+A run is metered and quota-gated like a query: one request however many
+upstream calls the two sides make.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from okwan_core import CredentialError, OkwanError, UpstreamError
 
 from ..across import OUTCOMES, run_across
@@ -28,25 +34,20 @@ def _rest(out: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _header_resolver(request: Request):
-    def resolve(connector_name: str, fields: tuple[str, ...]) -> dict[str, str]:
-        from ..fetch import env_credentials
+async def _vault_resolver(tenant):
+    from okwan_api.auth import get_store
+    from okwan_vault import resolver_for
 
-        fallback = env_credentials(connector_name, fields)
-        out: dict[str, str] = {}
-        for f in fields:
-            header = f"X-Okwan-{connector_name.title()}-Credential-{f.replace('_', '-')}"
-            out[f] = request.headers.get(header) or fallback.get(f, "")
-        return out
-
-    return resolve
+    return await resolver_for(get_store(), tenant.id)
 
 
 def build_router() -> APIRouter:
+    from okwan_api.auth import check_quota, current_tenant, meter
+
     router = APIRouter(prefix="/v1/reconciliations", tags=["reconciliations"])
 
     @router.get("")
-    async def list_reconciliations() -> dict[str, Any]:
+    async def list_reconciliations(_=Depends(current_tenant)) -> dict[str, Any]:
         return {
             "data": [tool_metadata(s) for s in all_reconciliations()],
             "across": [across_metadata(s) for s in all_across()],
@@ -54,46 +55,48 @@ def build_router() -> APIRouter:
 
     @router.get("/across/{name}")
     async def read_across(
-        request: Request,
         name: str,
         limit: int = Query(DEFAULT_ROWS, ge=1, le=MAX_ROWS),
         outcome: str = Query("all", pattern=f"^(all|{'|'.join(OUTCOMES)})$"),
         cursor: str | None = None,
+        tenant=Depends(check_quota),
     ) -> dict[str, Any]:
         try:
             spec = get_across(name)
         except KeyError:
             raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
         try:
-            result = await run_across(spec, _header_resolver(request))
+            result = await run_across(spec, await _vault_resolver(tenant))
         except CredentialError as exc:
             raise HTTPException(401, str(exc)) from exc
         except UpstreamError as exc:
             raise HTTPException(exc.status, exc.body) from exc
         except OkwanError as exc:
             raise HTTPException(502, str(exc)) from exc
+        await meter(tenant, "rest:across")
         return _rest(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
 
     @router.get("/{name}")
     async def read_reconciliation(
-        request: Request,
         name: str,
         limit: int = Query(DEFAULT_ROWS, ge=1, le=MAX_ROWS),
         status: str = Query("all", pattern=f"^(all|{'|'.join(STATUSES)})$"),
         cursor: str | None = None,
+        tenant=Depends(check_quota),
     ) -> dict[str, Any]:
         try:
             spec = get(name)
         except KeyError:
             raise HTTPException(404, f"unknown reconciliation '{name}'") from None
         try:
-            result = await run(spec, _header_resolver(request))
+            result = await run(spec, await _vault_resolver(tenant))
         except CredentialError as exc:
             raise HTTPException(401, str(exc)) from exc
         except UpstreamError as exc:
             raise HTTPException(exc.status, exc.body) from exc
         except OkwanError as exc:
             raise HTTPException(502, str(exc)) from exc
+        await meter(tenant, "rest:reconcile")
         return _rest(paged(result.summary, result.rows(), "status", status, limit, cursor))
 
     return router

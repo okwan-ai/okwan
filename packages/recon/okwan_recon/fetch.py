@@ -2,8 +2,10 @@
 
 Pages through the SDK's CursorPage envelope, which every connector
 speaks regardless of how its upstream actually pages. Credentials are
-resolved per connector by an injected resolver so the same fetch path
-serves MCP (env vars) and REST (request headers).
+resolved per connector by an injected resolver: the tenant's vault on
+every hosted surface (REST, hosted MCP, SQL), environment variables for
+the local stdio servers and CLI. No hosted path reads a credential from
+a request.
 """
 from __future__ import annotations
 
