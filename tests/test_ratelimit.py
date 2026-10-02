@@ -211,3 +211,72 @@ async def test_a_foreign_tenant_is_404_even_when_limited(client, store, account)
         client.post(f"/v1/tenants/{account.id}/connectors/whatsapp/test", headers=auth)
     r = client.post(f"/v1/tenants/{rival.id}/connectors/whatsapp/test", headers=auth)
     assert r.status_code == 404
+
+
+# ── forwarded-IP diagnostic (temporary) ─────────────────────────────
+
+@pytest.fixture
+def forwarded_log():
+    """Records from the diagnostic's own logger, which does not propagate."""
+    import logging
+
+    records: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    log = logging.getLogger("okwan_api.forwarded")
+    handler = Capture()
+    log.addHandler(handler)
+    yield records
+    log.removeHandler(handler)
+
+
+def test_the_diagnostic_is_off_by_default(client, forwarded_log, monkeypatch):
+    monkeypatch.delenv("OKWAN_LOG_FORWARDED", raising=False)
+    _sign_in(client, "a@x.test", "9.9.9.9")
+    assert forwarded_log == []
+
+
+def test_the_diagnostic_logs_the_four_facts_and_nothing_else(
+    client, forwarded_log, monkeypatch
+):
+    secret = "s3cret-shared-by-render"
+    monkeypatch.setenv("OKWAN_LOG_FORWARDED", "1")
+    monkeypatch.setenv("OKWAN_DASHBOARD_SECRET", secret)
+    client.post(
+        "/v1/sessions",
+        json={"email": "victim@x.test", "password": "hunter2-correct-horse"},
+        headers={"X-Forwarded-For": "1.1.1.1, 2.2.2.2",
+                 "X-Okwan-Client-IP": "5.6.7.8",
+                 "X-Okwan-Dashboard-Secret": secret,
+                 "Authorization": "Bearer okw_should_never_appear",
+                 "Cookie": "okwan_session=oks_should_never_appear"},
+    )
+    [line] = forwarded_log
+    assert line == ("x-forwarded-for=['1.1.1.1', '2.2.2.2'] x-okwan-client-ip=present "
+                    "dashboard-secret=matched chose='5.6.7.8'")
+    for private in (secret, "victim@x.test", "hunter2", "okw_", "oks_"):
+        assert private not in line
+
+
+def test_the_diagnostic_shows_a_mismatched_secret_falling_back(
+    client, forwarded_log, monkeypatch
+):
+    monkeypatch.setenv("OKWAN_LOG_FORWARDED", "1")
+    monkeypatch.setenv("OKWAN_DASHBOARD_SECRET", "s3cret-shared-by-render")
+    _sign_in(client, "a@x.test", "1.1.1.1, 2.2.2.2",
+             **{"X-Okwan-Client-IP": "5.6.7.8", "X-Okwan-Dashboard-Secret": "wrong"})
+    assert forwarded_log == [(
+        "x-forwarded-for=['1.1.1.1', '2.2.2.2'] "
+        "x-okwan-client-ip=present dashboard-secret=not-matched chose='2.2.2.2'"
+    )]
+
+
+def test_a_non_ascii_secret_header_is_a_mismatch_not_a_500(client, monkeypatch):
+    monkeypatch.setenv("OKWAN_DASHBOARD_SECRET", "s3cret-shared-by-render")
+    r = _sign_in(client, "a@x.test", "9.9.9.9",
+                 **{"X-Okwan-Client-IP": "5.6.7.8",
+                    "X-Okwan-Dashboard-Secret": "s3cr\xe9t".encode("latin-1")})
+    assert r.status_code == 401

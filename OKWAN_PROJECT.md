@@ -344,7 +344,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 ## 10. IMMEDIATE NEXT ACTIONS
 
 **Launch path, in order** *(each gates the next; item 3 waits on none of them)*
-1. **Deploy the dashboard; confirm the forwarded-IP hop.** `render.yaml` declares the service and the shared secret. Check on a real request which `X-Forwarded-For` entry Render appends, and set `OKWAN_TRUSTED_PROXY_HOPS` if it is not the last (§11)
+1. **Deploy the dashboard; confirm the forwarded-IP hop.** `render.yaml` declares the service and the shared secret. Check on a real request which `X-Forwarded-For` entry Render appends, and set `OKWAN_TRUSTED_PROXY_HOPS` if it is not the last (§11). Set `OKWAN_LOG_FORWARDED=1` on the API, sign in once through the dashboard and once directly, and read the `okwan_api.forwarded` lines: the chain, whether the forwarded-IP header arrived, whether the secret matched, and the address chosen. Then unset it and delete the diagnostic (`_log_forwarded` in `ratelimit.py`), which is temporary
 2. **Wire a mail provider.** Signup answers 503 in production until verification mail can be sent (`okwan_api/mail.py`). The provider sees every verification link, so it is a security choice as well as a vendor one. Its other gates are closed (egress bounds, rate limits, §9)
 
 **Revenue**
