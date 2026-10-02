@@ -134,4 +134,57 @@ shopify_paypal = register(
     )
 )
 
-__all__ = ["shopify_orders", "shopify_paypal"]
+
+#: The same order ledger against the other half of the US merchant
+#: stack. With `shopify_paypal` beside it, each order can be traced to
+#: the rail that collected it — and an order neither rail knows about is
+#: unpaid.
+#:
+#: Joins on `order_ref`, which the Stripe schema lifts out of charge
+#: metadata — where Shopify Payments writes the order name.
+#:
+#: The fuzzy fallback compares gross to gross: what the ledger says it
+#: received against what Stripe charged. Net to net cannot work here.
+#: Stripe's net is the charge less its fee, so it never equals an order
+#: total and the rule would never fire on a real charge. Gross to net
+#: pairs on coincidence — a refunded order's remainder can equal an
+#: unrelated small charge.
+#:
+#: Compares `net_minor` once paired. Stripe nets refunds on the charge
+#: itself, as Shopify does on the order, so a refund cancels on both
+#: sides and needs no explanation of its own — declaring one would only
+#: let an unrelated figure of the same size explain a real break. What
+#: remains is the fee, which Stripe reports positive where PayPal
+#: reports it negative. `Explains` compares magnitude, so either works.
+shopify_stripe = register(
+    Reconciliation(
+        name="shopify_stripe",
+        title="Stripe vs Shopify orders",
+        description=(
+            "Match Stripe charges against a live Shopify order ledger. Joins "
+            "on the order name carried in charge metadata, falling back to "
+            "gross amount and currency inside a 7-day window when the charge "
+            "carried no reference. Reports orders with no charge, charges "
+            "with no order, and pairs whose figures disagree."
+        ),
+        left=ResourceRef(connector="shopify", resource="orders", operation="list"),
+        right=ResourceRef(connector="stripe", resource="charges", operation="list"),
+        keys=[
+            ExactRef(left="name", right="order_ref"),
+            Fuzzy(
+                amount="total_received_minor",
+                currency="currency",
+                amount_right="amount",
+                timestamp_left="created_at",
+                timestamp_right="created",
+                window="7d",
+            ),
+        ],
+        amount=AmountRef(left="net_payment_minor", right="net_minor"),
+        explains=[
+            Explains(path="fee_minor", side="right", label="rail_fee"),
+        ],
+    )
+)
+
+__all__ = ["shopify_orders", "shopify_paypal", "shopify_stripe"]
