@@ -114,7 +114,11 @@ async def list_charges(ctx: ConnectorContext, params: ListChargesIn) -> ChargePa
     # reconciliation reports Stripe's cut as an unexplained break on every row.
     query["expand[]"] = "data.balance_transaction"
     data = await ctx.client.get("/charges", params=query)
+    # The cursor is taken before filtering: it must be the last charge
+    # Stripe returned, or the next page would replay the filtered tail.
     items, cursor, more = _page(data, Charge)
+    if params.status:
+        items = [c for c in items if c.status == params.status]
     return ChargePage(items=items, next_cursor=cursor, has_more=more)
 
 

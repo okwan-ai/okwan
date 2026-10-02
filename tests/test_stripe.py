@@ -167,6 +167,30 @@ async def test_list_charges_pages_from_the_last_id():
     assert page.next_cursor == CHARGE["id"]
 
 
+async def test_status_filter_drops_other_statuses():
+    failed = _charge(id="ch_failed", status="failed")
+    client = _FakeClient({"data": [failed, CHARGE], "has_more": False})
+    page = await list_charges(_FakeContext(client), ListChargesIn(status="succeeded"))
+    assert [c.id for c in page.items] == [CHARGE["id"]]
+
+
+async def test_status_is_not_sent_upstream():
+    """Stripe's list has no status parameter and rejects unknown ones."""
+    client = _FakeClient({"data": [CHARGE], "has_more": False})
+    await list_charges(_FakeContext(client), ListChargesIn(status="succeeded"))
+    assert "status" not in client.calls[0][1]
+
+
+async def test_cursor_is_the_last_charge_stripe_returned_not_the_last_kept():
+    """Paging from the last kept charge would replay the filtered tail
+    on the next page, and loop when a whole page is filtered out."""
+    failed = _charge(id="ch_failed_tail", status="failed")
+    client = _FakeClient({"data": [CHARGE, failed], "has_more": True})
+    page = await list_charges(_FakeContext(client), ListChargesIn(status="succeeded"))
+    assert [c.id for c in page.items] == [CHARGE["id"]]
+    assert page.next_cursor == "ch_failed_tail"
+
+
 # --- one-definition rule ----------------------------------------------
 
 def test_lifted_and_computed_fields_became_sql_columns():
