@@ -21,6 +21,7 @@ else it would be a way to pick a fresh IP per request.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 import secrets
@@ -106,16 +107,55 @@ def client_ip(request: Request) -> str:
     secret = os.environ.get("OKWAN_DASHBOARD_SECRET", "")
     forwarded = request.headers.get("x-okwan-client-ip", "").strip()
     presented = request.headers.get("x-okwan-dashboard-secret", "")
-    if secret and forwarded and secrets.compare_digest(presented, secret):
-        return forwarded
+    # Bytes, not str: compare_digest raises on non-ASCII str, and header
+    # values arrive latin-1 decoded, so a crafted header would be a 500.
+    matched = bool(secret) and secrets.compare_digest(
+        presented.encode("latin-1"), secret.encode("latin-1", "replace")
+    )
     # The proxy in front of us appends the address it saw; entries to the
     # left of that were written by the client and prove nothing.
     hops = int(os.environ.get("OKWAN_TRUSTED_PROXY_HOPS", "1"))
     chain = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")
              if p.strip()]
-    if hops and len(chain) >= hops:
-        return chain[-hops]
-    return request.client.host if request.client else "unknown"
+    if matched and forwarded:
+        chosen = forwarded
+    elif hops and len(chain) >= hops:
+        chosen = chain[-hops]
+    else:
+        chosen = request.client.host if request.client else "unknown"
+    if os.environ.get("OKWAN_LOG_FORWARDED") == "1":
+        _log_forwarded(chain, bool(forwarded), matched, chosen)
+    return chosen
+
+
+# TEMPORARY DIAGNOSTIC — remove once the Render hop is confirmed (§10 item 1).
+# Logs exactly four things: the X-Forwarded-For chain, whether
+# X-Okwan-Client-IP was present (not its value), whether the dashboard
+# secret matched (never the secret), and the address chosen. Nothing else
+# from the request. Its own handler, because uvicorn leaves the root
+# logger at WARNING and an INFO record from this module would be dropped.
+_forwarded_log: logging.Logger | None = None
+
+
+def _log_forwarded(chain: list[str], header_present: bool, matched: bool,
+                   chosen: str) -> None:
+    global _forwarded_log
+    if _forwarded_log is None:
+        log = logging.getLogger("okwan_api.forwarded")
+        log.setLevel(logging.INFO)
+        if not log.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+            log.addHandler(handler)
+        log.propagate = False
+        _forwarded_log = log
+    # %r on the chain: header values are client-written, and repr keeps
+    # one request on one log line whatever they contain.
+    _forwarded_log.info(
+        "x-forwarded-for=%r x-okwan-client-ip=%s dashboard-secret=%s chose=%r",
+        chain, "present" if header_present else "absent",
+        "matched" if matched else "not-matched", chosen,
+    )
 
 
 def enforce(request: Request, *checks: tuple[Rule, str]) -> None:
