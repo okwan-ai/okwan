@@ -20,13 +20,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from okwan_vault import accounts
 
 from .auth import admin_actor, get_store
 from .mail import dashboard_url, get_mailer
+from .ratelimit import (
+    SIGNIN_ADDRESS, SIGNIN_IP, SIGNUP_ADDRESS, SIGNUP_IP, VERIFY_IP, client_ip, enforce,
+    off_loop,
+)
 
 _EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 _ACCEPTED = {
@@ -61,16 +65,19 @@ def build_router() -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["accounts"])
 
     @router.post("/signup", status_code=202)
-    async def signup(body: SignupIn) -> dict[str, Any]:
+    async def signup(body: SignupIn, request: Request) -> dict[str, Any]:
         """Start a signup. The account exists only once the email is verified."""
         mailer = get_mailer()
         if mailer is None:
             raise HTTPException(503, "signup is not open yet: email verification "
                                      "has no mail provider configured")
         email = accounts.normalize_email(body.email)
+        # Limited by address whether or not it is registered, so a 429 is
+        # not an existence oracle either.
+        enforce(request, (SIGNUP_IP, client_ip(request)), (SIGNUP_ADDRESS, email))
         store = get_store()
         # Hash before the existence check so both branches cost the same.
-        password_hash = accounts.hash_password(body.password)
+        password_hash = await off_loop(accounts.hash_password, body.password)
         if await store.account_exists(email):
             return _ACCEPTED
         full, token_hash = accounts.new_token(accounts.VERIFY_PREFIX)
@@ -81,19 +88,21 @@ def build_router() -> APIRouter:
         return _ACCEPTED
 
     @router.post("/signup/verify", status_code=201)
-    async def verify(body: VerifyIn) -> dict[str, Any]:
+    async def verify(body: VerifyIn, request: Request) -> dict[str, Any]:
         """Create the root tenant and open a session.
 
         The password must be the one this signup was made with, so a link
         from a signup someone else started for this address does not
         produce an account they can sign into.
         """
+        enforce(request, (VERIFY_IP, client_ip(request)))
         store = get_store()
         token_hash = accounts.hash_token(body.token)
         pending = await store.signup_for(token_hash)
         invalid = HTTPException(400, "this link is invalid, expired or already used "
                                      "— sign in, or sign up again")
-        if not accounts.check_password(body.password, pending and pending[1]):
+        if not await off_loop(accounts.check_password, body.password,
+                              pending and pending[1]):
             raise invalid
         tenant = await store.complete_signup(token_hash)
         if tenant is None:
@@ -102,9 +111,12 @@ def build_router() -> APIRouter:
                 **await _session(tenant.id)}
 
     @router.post("/sessions", status_code=201)
-    async def sign_in(body: SessionIn) -> dict[str, Any]:
-        found = await get_store().account_login(accounts.normalize_email(body.email))
-        if not accounts.check_password(body.password, found and found[1]):
+    async def sign_in(body: SessionIn, request: Request) -> dict[str, Any]:
+        email = accounts.normalize_email(body.email)
+        enforce(request, (SIGNIN_IP, client_ip(request)), (SIGNIN_ADDRESS, email))
+        found = await get_store().account_login(email)
+        if not await off_loop(accounts.check_password, body.password,
+                              found and found[1]):
             raise HTTPException(401, "invalid email or password")
         return await _session(found[0])
 

@@ -1,5 +1,5 @@
 import "server-only";
-import { cookies } from "next/headers";
+import { cookies, headers as incoming } from "next/headers";
 
 /**
  * The dashboard's only route to the Okwan API. Server-side by construction:
@@ -24,7 +24,10 @@ export async function api<T>(
   path: string,
   init: { method?: string; body?: unknown; session?: string | null } = {},
 ): Promise<ApiResult<T>> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(await forwardedClient()),
+  };
   if (init.session) headers.Authorization = `Bearer ${init.session}`;
   let res: Response;
   try {
@@ -41,6 +44,25 @@ export async function api<T>(
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, status: res.status, detail: describe(payload) };
   return { ok: true, status: res.status, data: payload as T };
+}
+
+/**
+ * Every call reaches the API from this server's address, so the API's
+ * per-IP limits would see one client. Forward the browser's address, with
+ * the shared secret that makes the API believe it (okwan_api/ratelimit.py).
+ * Without the secret the header is ignored, so leaving it unset in dev is
+ * harmless.
+ */
+async function forwardedClient(): Promise<Record<string, string>> {
+  const secret = process.env.OKWAN_DASHBOARD_SECRET;
+  if (!secret) return {};
+  const h = await incoming();
+  // Render's proxy appends the address it saw; anything left of it was
+  // written by the client.
+  const hops = Number(process.env.OKWAN_TRUSTED_PROXY_HOPS ?? "1");
+  const chain = (h.get("x-forwarded-for") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const ip = hops > 0 && chain.length >= hops ? chain[chain.length - hops] : "";
+  return ip ? { "X-Okwan-Client-IP": ip, "X-Okwan-Dashboard-Secret": secret } : {};
 }
 
 /** FastAPI errors are a string or a list of {loc, msg}. Never an input value:

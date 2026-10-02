@@ -1,0 +1,147 @@
+"""Limits on the routes that cost the server more than they cost a caller.
+
+Sign-in and verification run scrypt, which is slow on purpose; the same
+slowness that makes guessing expensive makes a flood of guesses a way to
+occupy the one uvicorn worker. Signup sends mail. The credential test
+makes a real upstream call per click. Each is limited per client IP and
+per subject (the address, or the tenant), so neither rotating addresses
+from one IP nor rotating IPs against one address gets far.
+
+Fixed windows, in memory, per instance. Render runs one instance today;
+more instances multiply the effective limit by their count, which is
+acceptable for abuse control and not acceptable for billing — metering
+stays in the vault.
+
+Behind the dashboard every request arrives from the dashboard's own
+address, so the dashboard forwards the browser's IP in
+`X-Okwan-Client-IP`. That header is believed only alongside
+`X-Okwan-Dashboard-Secret` matching OKWAN_DASHBOARD_SECRET; from anyone
+else it would be a way to pick a fresh IP per request.
+"""
+from __future__ import annotations
+
+import asyncio
+import math
+import os
+import secrets
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from fastapi import HTTPException, Request
+
+MAX_KEYS = 100_000
+
+
+@dataclass(frozen=True, slots=True)
+class Rule:
+    name: str
+    limit: int
+    window: float  # seconds
+
+
+SIGNUP_IP = Rule("signup:ip", 10, 3600)
+SIGNUP_ADDRESS = Rule("signup:address", 3, 3600)
+VERIFY_IP = Rule("verify:ip", 20, 900)
+SIGNIN_IP = Rule("signin:ip", 20, 900)
+SIGNIN_ADDRESS = Rule("signin:address", 10, 900)
+TEST_IP = Rule("test:ip", 30, 600)
+TEST_TENANT = Rule("test:tenant", 20, 600)
+
+
+class Limiter:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._hits: dict[tuple[str, str], tuple[float, int]] = {}
+
+    def take(self, *checks: tuple[Rule, str]) -> float | None:
+        """Count one attempt against every check, or none of them.
+
+        Returns seconds until the earliest refusing window resets, or None
+        when the attempt is allowed. A refused attempt is not counted, so a
+        client that backs off is not punished for the refusal itself.
+        """
+        now = self._clock()
+        current: list[tuple[tuple[str, str], float, int]] = []
+        wait = 0.0
+        for rule, subject in checks:
+            key = (rule.name, subject)
+            start, n = self._hits.get(key, (now, 0))
+            if now - start >= rule.window:
+                start, n = now, 0
+            if n >= rule.limit:
+                wait = max(wait, start + rule.window - now)
+            current.append((key, start, n))
+        if wait:
+            return wait
+        for key, start, n in current:
+            self._hits[key] = (start, n + 1)
+        if len(self._hits) > MAX_KEYS:
+            self._sweep(now)
+        return None
+
+    def _sweep(self, now: float) -> None:
+        """Bound memory under a flood of distinct keys."""
+        windows = {r.name: r.window for r in _RULES}
+        self._hits = {
+            k: v for k, v in self._hits.items()
+            if now - v[0] < windows.get(k[0], 0)
+        }
+        if len(self._hits) > MAX_KEYS:
+            oldest = sorted(self._hits.items(), key=lambda kv: kv[1][0])
+            self._hits = dict(oldest[len(oldest) // 2:])
+
+    def reset(self) -> None:
+        self._hits.clear()
+
+
+_RULES = (SIGNUP_IP, SIGNUP_ADDRESS, VERIFY_IP, SIGNIN_IP, SIGNIN_ADDRESS,
+          TEST_IP, TEST_TENANT)
+
+limiter = Limiter()
+
+
+def client_ip(request: Request) -> str:
+    secret = os.environ.get("OKWAN_DASHBOARD_SECRET", "")
+    forwarded = request.headers.get("x-okwan-client-ip", "").strip()
+    presented = request.headers.get("x-okwan-dashboard-secret", "")
+    if secret and forwarded and secrets.compare_digest(presented, secret):
+        return forwarded
+    # The proxy in front of us appends the address it saw; entries to the
+    # left of that were written by the client and prove nothing.
+    hops = int(os.environ.get("OKWAN_TRUSTED_PROXY_HOPS", "1"))
+    chain = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")
+             if p.strip()]
+    if hops and len(chain) >= hops:
+        return chain[-hops]
+    return request.client.host if request.client else "unknown"
+
+
+def enforce(request: Request, *checks: tuple[Rule, str]) -> None:
+    """429 with Retry-After. One message for every rule, so a limit on an
+    address says nothing about whether the address is registered."""
+    wait = limiter.take(*((rule, s) for rule, s in checks))
+    if wait is not None:
+        seconds = math.ceil(wait)
+        raise HTTPException(
+            429,
+            f"too many attempts — try again in {math.ceil(seconds / 60)} min",
+            headers={"Retry-After": str(seconds)},
+        )
+
+
+# One scrypt hash is ~50 ms and 16 MiB, and hashlib releases the GIL while
+# it runs. Hashing in a thread keeps the event loop serving other requests;
+# a thread-side cap of two makes a burst queue rather than exhaust memory.
+# Threading, not asyncio, so the cap is not bound to one event loop.
+_HASHING = threading.BoundedSemaphore(2)
+
+
+def _capped[T](fn: Callable[..., T], *args) -> T:
+    with _HASHING:
+        return fn(*args)
+
+
+async def off_loop[T](fn: Callable[..., T], *args) -> T:
+    return await asyncio.to_thread(_capped, fn, *args)

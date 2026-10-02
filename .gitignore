@@ -9,3 +9,4 @@ okwan.egg-info/
 node_modules/
 .next/
 out/
+tsconfig.tsbuildinfo
