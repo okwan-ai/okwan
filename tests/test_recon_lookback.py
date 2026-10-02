@@ -19,6 +19,7 @@ import pytest
 from okwan_core import ConnectorContext
 from okwan_paypal.connector import paypal
 from okwan_recon import declarations, runner
+from okwan_recon.coverage import Coverage
 from okwan_recon.declaration import ExactRef, Reconciliation, ResourceRef
 from okwan_recon.emitters.mcp import tool_metadata
 from okwan_recon.fetch import fetch_rows
@@ -126,9 +127,9 @@ async def test_both_sides_get_the_same_instant(monkeypatch):
 
     async def record(ref, resolver, cap, overrides):
         seen.append(overrides)
-        return []
+        return [], Coverage(source=ref.qualified, records=0, cap=cap, truncated=False)
 
-    monkeypatch.setattr(runner, "fetch_rows", record)
+    monkeypatch.setattr(runner, "fetch_side", record)
     await runner.run(spec("90d"))
     assert seen[0] == seen[1]
     assert seen[0]["end_date"] - seen[0]["start_date"] == timedelta(days=90)

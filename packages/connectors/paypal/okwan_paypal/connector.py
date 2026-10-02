@@ -137,7 +137,10 @@ async def list_transactions(
     while True:
         window_end = min(window_start + timedelta(days=WINDOW_DAYS), requested_end)
         if window_start >= requested_end:
-            return TransactionPage(items=[], next_cursor=None, has_more=False)
+            return TransactionPage(
+                items=[], next_cursor=None, has_more=False,
+                span_start=walk_start, span_end=requested_end,
+            )
 
         payload: dict[str, Any] = await ctx.client.get(
             "/v1/reporting/transactions",
@@ -158,6 +161,13 @@ async def list_transactions(
             _parse(payload.get("last_refreshed_datetime")), requested_end
         )
         effective_end = min(requested_end, horizon)
+        # Every page states the whole walk's span, so a caller that stops
+        # early still knows what the walk it abandoned would have read.
+        span = {
+            "span_start": walk_start,
+            "span_end": effective_end,
+            "horizon": horizon if horizon < requested_end else None,
+        }
 
         rows = payload.get("transaction_details") or []
         items = [Transaction.model_validate(row) for row in rows]
@@ -168,18 +178,22 @@ async def list_transactions(
                 items=items,
                 next_cursor=_encode(window_start, page + 1),
                 has_more=True,
+                **span,
             )
 
         next_window = window_end
         if next_window >= effective_end:
-            return TransactionPage(items=items, next_cursor=None, has_more=False)
+            return TransactionPage(
+                items=items, next_cursor=None, has_more=False, **span
+            )
 
         # Window exhausted. Hand back a cursor into the next one; only
         # walk on inline when this window was empty, so a caller paging
         # a quiet year is not handed a run of empty pages.
         if items:
             return TransactionPage(
-                items=items, next_cursor=_encode(next_window, 1), has_more=True
+                items=items, next_cursor=_encode(next_window, 1), has_more=True,
+                **span,
             )
         window_start, page = next_window, 1
 

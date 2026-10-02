@@ -7,7 +7,7 @@ from typing import Any
 
 from .declaration import Reconciliation, ResourceRef
 from .engine import ReconResult, match
-from .fetch import CredentialResolver, env_credentials, fetch_rows
+from .fetch import CredentialResolver, env_credentials, fetch_side
 
 
 def resolve_window(
@@ -45,10 +45,10 @@ async def run(
     spec.validate_against_registry()
     cap = max_records or spec.max_records
     window = resolve_window(spec)
-    left = await fetch_rows(
+    left, left_cov = await fetch_side(
         spec.left, resolver, cap, side_overrides(spec.left, window, overrides)
     )
-    right = await fetch_rows(
+    right, right_cov = await fetch_side(
         spec.right, resolver, cap, side_overrides(spec.right, window, overrides)
     )
-    return match(spec, left, right)
+    return match(spec, left, right, left_cov, right_cov)
