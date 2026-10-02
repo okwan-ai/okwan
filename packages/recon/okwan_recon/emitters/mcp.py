@@ -11,6 +11,7 @@ from typing import Any
 
 from ..across import OUTCOMES, AcrossRails, run_across
 from ..declaration import Fuzzy, Reconciliation
+from ..paging import DEFAULT_ROWS, StaleCursor, page_rows
 from ..registry import all_across, all_reconciliations
 from ..runner import run
 
@@ -41,27 +42,36 @@ def tool_metadata(spec: Reconciliation) -> dict[str, Any]:
     }
 
 
+def paged(summary: dict[str, Any], rows: list[dict[str, Any]], key: str,
+          view: str, limit: int, cursor: str | None) -> dict[str, Any]:
+    """Filter to `view` on `key`, then page. Shared by every surface."""
+    if view != "all":
+        rows = [r for r in rows if r[key] == view]
+    try:
+        page = page_rows(rows, limit, cursor, view)
+    except StaleCursor as exc:
+        return {"error": str(exc), "summary": summary, "rows": [],
+                "has_more": False, "next_cursor": None}
+    return {"summary": summary, **page}
+
+
+def _signature(filter_name: str) -> inspect.Signature:
+    kw = inspect.Parameter.KEYWORD_ONLY
+    return inspect.Signature([
+        inspect.Parameter("limit", kw, annotation=int, default=DEFAULT_ROWS),
+        inspect.Parameter(filter_name, kw, annotation=str, default="all"),
+        inspect.Parameter("cursor", kw, annotation=str | None, default=None),
+    ])
+
+
 def _make_tool_fn(spec: Reconciliation):
     async def tool_fn(
-        limit: int = 100,
-        status: str = "all",
+        limit: int = DEFAULT_ROWS, status: str = "all", cursor: str | None = None
     ) -> dict[str, Any]:
-        result = await run(spec, max_records=limit)
-        rows = result.rows()
-        if status != "all":
-            rows = [r for r in rows if r["status"] == status]
-        return {"summary": result.summary, "rows": rows}
+        result = await run(spec)
+        return paged(result.summary, result.rows(), "status", status, limit, cursor)
 
-    tool_fn.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-        [
-            inspect.Parameter(
-                "limit", inspect.Parameter.KEYWORD_ONLY, annotation=int, default=100
-            ),
-            inspect.Parameter(
-                "status", inspect.Parameter.KEYWORD_ONLY, annotation=str, default="all"
-            ),
-        ]
-    )
+    tool_fn.__signature__ = _signature("status")  # type: ignore[attr-defined]
     tool_fn.__doc__ = tool_metadata(spec)["description"]
     return tool_fn
 
@@ -84,23 +94,13 @@ def across_metadata(spec: AcrossRails) -> dict[str, Any]:
 
 
 def _make_across_tool_fn(spec: AcrossRails):
-    async def tool_fn(limit: int = 100, outcome: str = "all") -> dict[str, Any]:
-        result = await run_across(spec, max_records=limit)
-        rows = result.rows()
-        if outcome != "all":
-            rows = [r for r in rows if r["outcome"] == outcome]
-        return {"summary": result.summary, "rows": rows}
+    async def tool_fn(
+        limit: int = DEFAULT_ROWS, outcome: str = "all", cursor: str | None = None
+    ) -> dict[str, Any]:
+        result = await run_across(spec)
+        return paged(result.summary, result.rows(), "outcome", outcome, limit, cursor)
 
-    tool_fn.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-        [
-            inspect.Parameter(
-                "limit", inspect.Parameter.KEYWORD_ONLY, annotation=int, default=100
-            ),
-            inspect.Parameter(
-                "outcome", inspect.Parameter.KEYWORD_ONLY, annotation=str, default="all"
-            ),
-        ]
-    )
+    tool_fn.__signature__ = _signature("outcome")  # type: ignore[attr-defined]
     tool_fn.__doc__ = across_metadata(spec)["description"]
     return tool_fn
 

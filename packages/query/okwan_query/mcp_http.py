@@ -20,7 +20,11 @@ from mcp.server.mcpserver.context import Context
 from okwan_recon import all_reconciliations
 from okwan_recon import get as get_reconciliation
 from okwan_recon import run as run_recon
+from okwan_recon.across import OUTCOMES, AcrossRails, run_across
 from okwan_recon.declaration import Reconciliation
+from okwan_recon.emitters.mcp import paged
+from okwan_recon.engine import STATUSES
+from okwan_recon.registry import all_across, get_across
 
 from .catalog import missing_credentials
 from .guard import UnsafeStatement
@@ -98,21 +102,43 @@ def _recon_metadata(spec: Reconciliation, resolver) -> dict[str, Any]:
     }
 
 
+def _fold_metadata(spec: AcrossRails, resolver) -> dict[str, Any]:
+    """A fold runs only if every member can: it needs every rail."""
+    blockers: list[str] = []
+    for member in spec.members():
+        for entry in _recon_blockers(member, resolver):
+            if entry not in blockers:
+                blockers.append(entry)
+    return {
+        "name": spec.name,
+        "title": spec.display_title,
+        "description": spec.description,
+        "rails": [r.reconciliation for r in spec.rails],
+        "outcomes": list(OUTCOMES),
+        "runnable": not blockers,
+        "missing_credentials": blockers,
+    }
+
+
 def _list_recon_tool():
     async def okwan_list_reconciliations(ctx: Context) -> dict[str, Any]:
         """List the reconciliations available and whether they can run.
 
-        A reconciliation marked not runnable needs credentials this
+        `reconciliations` pair two systems; `across` folds several rails
+        against one order ledger into one verdict per order, which is how
+        to find an order collected twice. Either runs through
+        okwan_reconcile by name. One not runnable needs credentials this
         account has not configured; the response names the fields.
         """
         try:
             resolver = await _tenant_resolver(ctx)
         except Unauthenticated as exc:
-            return {"error": str(exc), "reconciliations": []}
+            return {"error": str(exc), "reconciliations": [], "across": []}
         return {
             "reconciliations": [
                 _recon_metadata(s, resolver) for s in all_reconciliations()
-            ]
+            ],
+            "across": [_fold_metadata(s, resolver) for s in all_across()],
         }
 
     okwan_list_reconciliations.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
@@ -121,32 +147,55 @@ def _list_recon_tool():
     return okwan_list_reconciliations
 
 
-def _reconcile_tool(max_records: int):
+def _reconcile_tool():
     async def okwan_reconcile(
-        ctx: Context, name: str, limit: int = 200, status: str = "all"
+        ctx: Context, name: str, limit: int = 200, status: str = "all",
+        cursor: str | None = None,
     ) -> dict[str, Any]:
-        """Run a named reconciliation across two live systems.
+        """Run a named reconciliation or across-rails fold over live systems.
 
-        Call okwan_list_reconciliations first. Reports seven outcomes, not
-        two: agrees, differs with a known cause, differs unexplained,
-        ambiguous, unmatched on either side, and unverifiable — the other
-        side could not have read the record, so its absence proves
-        nothing. `net_unexplained_minor` is the figure to act on — an
-        explained difference is accounted for. `match_rate` is null while
-        anything is unverifiable.
+        Call okwan_list_reconciliations first. A reconciliation reports
+        seven outcomes, not two: agrees, differs with a known cause,
+        differs unexplained, ambiguous, unmatched on either side, and
+        unverifiable — the other side could not have read the record, so
+        its absence proves nothing. `net_unexplained_minor` is the figure
+        to act on. `match_rate` is null while anything is unverifiable.
+
+        A fold reports one outcome per order: collected_twice,
+        split_tender, collected_inconsistent, collected, unverifiable,
+        uncollected. `status` filters on the row status of a
+        reconciliation or the outcome of a fold.
+
+        Every record is read; `limit` bounds the rows returned. When
+        `has_more` is true, pass `next_cursor` back as `cursor` for the
+        next page. The summary always covers the whole result.
         """
         try:
             resolver = await _tenant_resolver(ctx)
         except Unauthenticated as exc:
             return {"error": str(exc), "rows": [], "summary": {}}
 
+        spec: Reconciliation | AcrossRails
         try:
             spec = get_reconciliation(name)
+            blockers = _recon_blockers(spec, resolver)
+            key, vocabulary = "status", STATUSES
         except KeyError:
-            known = ", ".join(s.name for s in all_reconciliations())
-            return {"error": f"unknown reconciliation {name!r}; known: {known}"}
+            try:
+                spec = get_across(name)
+            except KeyError:
+                known = ", ".join(
+                    [s.name for s in all_reconciliations()] + [s.name for s in all_across()]
+                )
+                return {"error": f"unknown reconciliation {name!r}; known: {known}"}
+            blockers = _fold_metadata(spec, resolver)["missing_credentials"]
+            key, vocabulary = "outcome", OUTCOMES
 
-        blockers = _recon_blockers(spec, resolver)
+        if status != "all" and status not in vocabulary:
+            return {
+                "error": f"{name} has no {key} {status!r}; one of {', '.join(vocabulary)}",
+                "rows": [], "summary": {},
+            }
         if blockers:
             return {
                 "error": f"{name} needs {', '.join(blockers)} — not configured",
@@ -154,30 +203,23 @@ def _reconcile_tool(max_records: int):
             }
 
         try:
-            result = await run_recon(
-                spec, resolver, max_records=min(limit, max_records)
-            )
+            if isinstance(spec, AcrossRails):
+                result = await run_across(spec, resolver)
+            else:
+                result = await run_recon(spec, resolver)
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as data
             return {"error": f"{type(exc).__name__}: {exc}", "rows": [], "summary": {}}
 
-        rows = result.rows()
-        if status != "all":
-            rows = [r for r in rows if r["status"] == status]
-        return {
-            "summary": result.summary,
-            "ambiguous": [
-                {"left": a.left, "candidates": a.candidates, "rule": a.rule}
-                for a in result.ambiguous
-            ],
-            "rows": rows,
-        }
+        return paged(result.summary, result.rows(), key, status, limit, cursor)
 
+    kw = inspect.Parameter.KEYWORD_ONLY
     okwan_reconcile.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
         [
-            inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY, annotation=Context),
-            inspect.Parameter("name", inspect.Parameter.KEYWORD_ONLY, annotation=str),
-            inspect.Parameter("limit", inspect.Parameter.KEYWORD_ONLY, annotation=int, default=200),
-            inspect.Parameter("status", inspect.Parameter.KEYWORD_ONLY, annotation=str, default="all"),
+            inspect.Parameter("ctx", kw, annotation=Context),
+            inspect.Parameter("name", kw, annotation=str),
+            inspect.Parameter("limit", kw, annotation=int, default=200),
+            inspect.Parameter("status", kw, annotation=str, default="all"),
+            inspect.Parameter("cursor", kw, annotation=str | None, default=None),
         ]
     )
     return okwan_reconcile
@@ -258,9 +300,12 @@ def build_server(max_records: int = DEFAULT_LIMIT):
         structured_output=False,
     )
     server.add_tool(
-        _reconcile_tool(max_records),
+        _reconcile_tool(),
         name="okwan_reconcile",
-        description="[okwan] Run a named reconciliation across two live systems.",
+        description=(
+            "[okwan] Run a named reconciliation, or an across-rails fold, over "
+            "live systems. Paged: limit bounds rows returned, not records read."
+        ),
         annotations=read_only,
         structured_output=False,
     )

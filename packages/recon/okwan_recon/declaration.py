@@ -233,7 +233,16 @@ class Reconciliation(Frozen):
             "does not is read as it would be without it."
         ),
     )
-    max_records: int = Field(default=500, ge=1, le=10_000)
+    max_records: int = Field(
+        default=5_000,
+        ge=1,
+        le=10_000,
+        description=(
+            "Records read per side before the read stops and is reported "
+            "truncated. A fetch bound, not a page size: callers page the "
+            "result rows separately."
+        ),
+    )
 
     @field_validator("lookback")
     @classmethod

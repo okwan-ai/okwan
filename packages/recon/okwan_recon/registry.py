@@ -13,6 +13,9 @@ _ACROSS: dict[str, AcrossRails] = {}
 
 
 def register(spec: Reconciliation) -> Reconciliation:
+    # One name space across both kinds, so a name dispatches to one thing.
+    if spec.name in _ACROSS:
+        raise ValueError(f"'{spec.name}' already names an across-rails fold")
     existing = _REGISTRY.get(spec.name)
     if existing is not None and existing != spec:
         raise ValueError(
@@ -36,6 +39,8 @@ def register_across(spec: AcrossRails) -> AcrossRails:
         raise ValueError(
             f"across-rails fold '{spec.name}' already registered with a different definition"
         )
+    if spec.name in _REGISTRY:
+        raise ValueError(f"'{spec.name}' already names a reconciliation")
     # Views share the recon schema: recon.across_<name> must not shadow a
     # two-sided reconciliation's recon.<name>.
     if f"across_{spec.name}" in _REGISTRY:
