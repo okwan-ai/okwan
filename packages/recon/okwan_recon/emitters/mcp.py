@@ -9,8 +9,9 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from ..across import OUTCOMES, AcrossRails, run_across
 from ..declaration import Fuzzy, Reconciliation
-from ..registry import all_reconciliations
+from ..registry import all_across, all_reconciliations
 from ..runner import run
 
 
@@ -65,6 +66,45 @@ def _make_tool_fn(spec: Reconciliation):
     return tool_fn
 
 
+def across_metadata(spec: AcrossRails) -> dict[str, Any]:
+    """Declaration-derived descriptor for an across-rails fold."""
+    return {
+        "name": spec.name,
+        "tool_name": spec.tool_name,
+        "path": spec.rest_path,
+        "title": spec.display_title,
+        "description": spec.description
+        or "Fold several rails against one order ledger, one verdict per order.",
+        "rails": [r.reconciliation for r in spec.rails],
+        "outcomes": list(OUTCOMES),
+        "tolerance_bps": spec.tolerance_bps,
+        "view": spec.view_name,
+        "read_only": True,
+    }
+
+
+def _make_across_tool_fn(spec: AcrossRails):
+    async def tool_fn(limit: int = 100, outcome: str = "all") -> dict[str, Any]:
+        result = await run_across(spec, max_records=limit)
+        rows = result.rows()
+        if outcome != "all":
+            rows = [r for r in rows if r["outcome"] == outcome]
+        return {"summary": result.summary, "rows": rows}
+
+    tool_fn.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [
+            inspect.Parameter(
+                "limit", inspect.Parameter.KEYWORD_ONLY, annotation=int, default=100
+            ),
+            inspect.Parameter(
+                "outcome", inspect.Parameter.KEYWORD_ONLY, annotation=str, default="all"
+            ),
+        ]
+    )
+    tool_fn.__doc__ = across_metadata(spec)["description"]
+    return tool_fn
+
+
 def build_server():
     """One MCP server exposing every registered reconciliation.
 
@@ -87,6 +127,15 @@ def build_server():
         meta = tool_metadata(spec)
         server.add_tool(
             _make_tool_fn(spec),
+            name=meta["tool_name"],
+            description=f"[reconciliation] {meta['description']}",
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+            structured_output=False,
+        )
+    for spec in all_across():
+        meta = across_metadata(spec)
+        server.add_tool(
+            _make_across_tool_fn(spec),
             name=meta["tool_name"],
             description=f"[reconciliation] {meta['description']}",
             annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
