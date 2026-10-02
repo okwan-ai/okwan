@@ -53,29 +53,43 @@ export async function api<T>(
  * Without the secret the header is ignored, so leaving it unset in dev is
  * harmless.
  *
- * The browser's address is taken OKWAN_DASHBOARD_PROXY_HOPS entries from the
- * right of X-Forwarded-For. Separate from the API's OKWAN_TRUSTED_PROXY_HOPS:
- * the two services do not see the same chain (§11). The default of 1 is the
- * value that produced 10.30.203.20 on 2026-10-02 and is NOT known to be right.
- * It stays until the diagnostic below shows what this service receives.
- *
- * Note what "X-Forwarded-For" is here: Next.js fills the header with the
- * socket's remote address when the request arrived without one
- * (base-server.js, `??=`), so a single entry may be Next's, not a proxy's.
+ * The browser's address, in order of preference:
+ * 1. CF-Connecting-IP. Cloudflare sets it to the address it accepted the
+ *    connection from and overwrites anything the client sent. It does not
+ *    depend on how many hops Render adds, which has differed before.
+ * 2. X-Forwarded-For, counted OKWAN_DASHBOARD_PROXY_HOPS from the right.
+ *    Observed 2026-10-02: "<client>, <Cloudflare edge>, <Render internal>",
+ *    so three. Counted from the right because a client's own entries land to
+ *    the left of what a proxy appends; the leftmost entry is whatever the
+ *    client chose to send.
+ * Both trust that requests reach Render only through Cloudflare. When
+ * neither yields an address nothing is forwarded, and the API limits on
+ * what it sees.
  */
 async function forwardedClient(): Promise<Record<string, string>> {
   const secret = process.env.OKWAN_DASHBOARD_SECRET;
   const h = await incoming();
   const raw = h.get("x-forwarded-for");
-  const hops = Number(process.env.OKWAN_DASHBOARD_PROXY_HOPS ?? "1");
+  const cloudflare = address(h.get("cf-connecting-ip"));
+  const hops = Number(process.env.OKWAN_DASHBOARD_PROXY_HOPS ?? "3");
   const chain = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const ip = hops > 0 && chain.length >= hops ? chain[chain.length - hops] : "";
+  const counted = hops > 0 && chain.length >= hops ? chain[chain.length - hops] : "";
+  const ip = cloudflare || counted;
+  const source = cloudflare ? "cf-connecting-ip" : counted ? "chain" : null;
   const out: Record<string, string> =
     secret && ip ? { "X-Okwan-Client-IP": ip, "X-Okwan-Dashboard-Secret": secret } : {};
   if (process.env.OKWAN_LOG_FORWARDED === "1") {
-    logForwarded(raw, chain, h, hops, out["X-Okwan-Client-IP"] ?? null, Boolean(secret));
+    logForwarded(raw, chain, h, hops, source, out["X-Okwan-Client-IP"] ?? null, Boolean(secret));
   }
   return out;
+}
+
+/** An IPv4 or IPv6 literal, or "". A malformed header is not trusted. */
+function address(value: string | null): string {
+  const v = (value ?? "").trim();
+  const v4 = /^(\d{1,3})(\.\d{1,3}){3}$/.test(v);
+  const v6 = v.includes(":") && /^[0-9a-fA-F:.]+$/.test(v);
+  return v4 || v6 ? v : "";
 }
 
 // TEMPORARY DIAGNOSTIC — remove with the API's (§10 item 1). One line per
@@ -86,7 +100,7 @@ async function forwardedClient(): Promise<Record<string, string>> {
 // or body.
 function logForwarded(
   raw: string | null, chain: string[], h: Headers, hops: number,
-  passed: string | null, secretConfigured: boolean,
+  source: string | null, passed: string | null, secretConfigured: boolean,
 ): void {
   console.info(
     "okwan_dashboard.forwarded " +
@@ -94,6 +108,7 @@ function logForwarded(
         raw_x_forwarded_for: raw,
         chain,
         hops,
+        source,
         passes_on: passed,
         secret_configured: secretConfigured,
         cf_connecting_ip: h.get("cf-connecting-ip"),
