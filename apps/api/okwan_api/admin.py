@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from okwan_core import OkwanError, UpstreamError, all_connectors
@@ -25,6 +25,7 @@ from okwan_core import get as get_connector
 from okwan_vault.authz import Forbidden, require_administer
 
 from .auth import admin_actor, get_store, meter
+from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
 
 
 class CreateTenantIn(BaseModel):
@@ -138,7 +139,8 @@ def build_router() -> APIRouter:
 
     @router.post("/{tenant_id}/connectors/{connector_name}/test")
     async def test_connector(
-        tenant_id: str, connector_name: str, actor=Depends(admin_actor)
+        tenant_id: str, connector_name: str, request: Request,
+        actor=Depends(admin_actor),
     ) -> dict[str, Any]:
         """Prove the stored credentials work: one real list call, limit=1.
 
@@ -149,6 +151,8 @@ def build_router() -> APIRouter:
         """
         await _guard(actor, tenant_id)
         connector = _connector(connector_name, status=404)
+        # After the guard: a tenant outside the subtree is a 404, never a 429.
+        enforce(request, (TEST_IP, client_ip(request)), (TEST_TENANT, tenant_id))
         return await _probe(tenant_id, connector)
 
     return router

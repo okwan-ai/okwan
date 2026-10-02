@@ -9,10 +9,16 @@ Safety model (enforced, not documented):
 - raw SQL is restricted to a single statement
 - identifiers (tables/columns) are validated against pg_catalog
   before interpolation; values always travel as bind parameters
+- the DSN is caller-chosen, so the host is resolved and checked before
+  connecting and the connection goes to the checked address
+  (okwan_core.egress); only query keys that cannot read server-local
+  files or name other hosts are accepted
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 import asyncpg
 from okwan_core import (
@@ -24,6 +30,7 @@ from okwan_core import (
     UpstreamError,
     register,
 )
+from okwan_core.egress import EgressRefused, PinnedLoop, resolve_public
 
 from .schemas import (
     Column,
@@ -37,6 +44,41 @@ from .schemas import (
     TableSchema,
 )
 
+#: Query keys a DSN may carry. Everything else is refused: asyncpg reads
+#: `passfile`, `service`/`servicefile` and `sslrootcert`/`sslcert`/`sslkey`
+#: from this server's filesystem, and `host`/`port` would name a second,
+#: unchecked destination.
+DSN_QUERY_KEYS = frozenset({
+    "sslmode", "channel_binding", "application_name", "connect_timeout",
+})
+DEFAULT_PORT = 5432
+
+
+def parse_dsn(dsn: str) -> tuple[str, int, bool]:
+    """Return (host, port, has_password) for a DSN that may be dialed.
+
+    One TCP host, named in the DSN itself: an absent host would fall back
+    to this server's PGHOST or a local socket, and a comma list would be
+    several destinations of which only one was checked.
+    """
+    parts = urlsplit(dsn.strip())
+    if parts.scheme not in ("postgres", "postgresql"):
+        raise EgressRefused("connection_string must be a postgres:// URL")
+    hostport = parts.netloc.rpartition("@")[2]
+    host = unquote(parts.hostname or "")
+    if not host or "," in hostport or host.startswith("/"):
+        raise EgressRefused("connection_string must name exactly one network host")
+    try:
+        port = parts.port or DEFAULT_PORT
+    except ValueError:
+        raise EgressRefused("connection_string has an invalid port") from None
+    extra = {k for k, _ in parse_qsl(parts.query, keep_blank_values=True)}
+    if extra - DSN_QUERY_KEYS:
+        raise EgressRefused(
+            f"connection_string option not allowed: {', '.join(sorted(extra - DSN_QUERY_KEYS))}"
+        )
+    return host, port, parts.password is not None
+
 
 class PgTransport:
     """Lazy asyncpg connection bound to one request context."""
@@ -48,7 +90,18 @@ class PgTransport:
     async def conn(self) -> asyncpg.Connection:
         if self._conn is None:
             try:
-                self._conn = await asyncpg.connect(self._dsn, timeout=10)
+                host, port, has_password = parse_dsn(self._dsn)
+                ip = await resolve_public(host, port)
+                # Without a password in the DSN, asyncpg falls back to this
+                # server's PGPASSWORD and ~/.pgpass — and would send whatever
+                # it found to the caller's host. An explicit empty one stops it.
+                extra = {} if has_password else {"password": ""}
+                self._conn = await asyncpg.connect(
+                    self._dsn, timeout=10,
+                    loop=PinnedLoop(asyncio.get_running_loop(), host, ip), **extra,
+                )
+            except EgressRefused as exc:
+                raise UpstreamError(status=403, body=f"postgres connect refused: {exc}")
             except (OSError, asyncpg.PostgresError) as exc:
                 raise UpstreamError(status=502, body=f"postgres connect failed: {exc}")
         return self._conn

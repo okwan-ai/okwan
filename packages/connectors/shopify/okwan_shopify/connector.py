@@ -17,6 +17,7 @@ already the opaque cursor `CursorPage` expects.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -26,6 +27,7 @@ from okwan_core import (
     AuthAdapter,
     Connector,
     ConnectorContext,
+    CredentialError,
     OkwanClient,
     OpType,
     RateLimitProfile,
@@ -79,12 +81,29 @@ class _ShopifyTokenAuth(httpx.Auth):
         yield request
 
 
+#: The Admin API is served only on the store's myshopify.com name, in a
+#: zone Shopify controls. Requiring that form removes the caller's choice of
+#: host rather than filtering it: no IP literal, port, userinfo or path can
+#: ride in on `shop_domain` and turn the base URL into a request elsewhere.
+SHOP_DOMAIN = re.compile(r"[a-z0-9][a-z0-9-]{0,62}\.myshopify\.com")
+
+
+def shop_host(raw: str) -> str:
+    domain = raw.strip().lower().removeprefix("https://").removeprefix("http://")
+    domain = domain.rstrip("/")
+    if not SHOP_DOMAIN.fullmatch(domain):
+        raise CredentialError(
+            "shop_domain must be the store's <store>.myshopify.com name, "
+            "not a custom domain or address"
+        )
+    return domain
+
+
 def _shopify_context(
     connector: Connector, credentials: dict[str, str]
 ) -> ConnectorContext:
     connector.auth.validate(credentials)
-    domain = credentials["shop_domain"].strip().rstrip("/")
-    domain = domain.removeprefix("https://").removeprefix("http://")
+    domain = shop_host(credentials["shop_domain"])
     client = OkwanClient(
         base_url=f"https://{domain}/admin/api/{API_VERSION}",
         auth=connector.auth.bind(credentials),
