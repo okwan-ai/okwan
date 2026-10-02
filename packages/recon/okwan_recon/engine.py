@@ -60,62 +60,41 @@ class Ambiguity:
 
 
 @dataclass(slots=True)
+class Unverifiable:
+    """A record whose counterpart side could not have read its match.
+
+    Neither matched nor unmatched: the other side stopped at its record
+    cap, or its span does not reach this record's date, so absence there
+    proves nothing. Reported with the reason rather than as a miss —
+    "no payment was read" is not "no payment exists".
+    """
+
+    record: Row
+    reason: str
+
+
+@dataclass(slots=True)
 class ReconResult:
     name: str
     matched: list[MatchedPair] = field(default_factory=list)
     unmatched_left: list[Row] = field(default_factory=list)
     unmatched_right: list[Row] = field(default_factory=list)
     ambiguous: list[Ambiguity] = field(default_factory=list)
-    #: What each side read. None when the caller supplied no coverage —
-    #: then nothing is claimed either way about unmatched records.
+    unverifiable_left: list[Unverifiable] = field(default_factory=list)
+    unverifiable_right: list[Unverifiable] = field(default_factory=list)
+    #: What each side read. None when the caller supplied no coverage, in
+    #: which case nothing can be classed unverifiable.
     left_coverage: Coverage | None = None
     right_coverage: Coverage | None = None
-    #: Where each side dates its records, for placing an unmatched record
-    #: inside the other side's span.
-    left_timestamp: str | None = None
-    right_timestamp: str | None = None
-
-    def counterpart_read(self, row: Row, side: str) -> tuple[bool | None, str | None]:
-        """Whether the other side would have read this record's
-        counterpart, had one existed. An unmatched record is a finding
-        only when this is True; otherwise its counterpart may simply not
-        have been fetched. None when coverage is unknown."""
-        other = self.right_coverage if side == "left" else self.left_coverage
-        if other is None:
-            return None, None
-        path = self.left_timestamp if side == "left" else self.right_timestamp
-        return other.reads(_as_dt(dig(row, path)) if path else None)
-
-    def _unread(self, rows: list[Row], side: str) -> int:
-        return sum(1 for r in rows if self.counterpart_read(r, side)[0] is False)
-
-    def _caveats(self, unread_left: int, unread_right: int) -> list[str]:
-        out: list[str] = []
-        for n, side, kind, cov in (
-            (unread_left, "unmatched_left", "left", self.right_coverage),
-            (unread_right, "unmatched_right", "right", self.left_coverage),
-        ):
-            if not n or cov is None:
-                continue
-            cause = (
-                f"{cov.source} hit the {cov.cap}-record cap with more available"
-                if cov.truncated
-                else f"{cov.source} was not read for their dates"
-            )
-            out.append(
-                f"{n} {side} record(s) are not findings: {cause}, so a "
-                f"counterpart may exist unread. See counterpart_read on each "
-                f"{kind}-side row."
-            )
-        return out
 
     @property
     def summary(self) -> dict[str, Any]:
+        # Over orders whose payment could have been read. An order whose
+        # rail was not read for its date is neither collected nor unpaid,
+        # and counting it either way moves the rate on no evidence.
         total = len(self.matched) + len(self.unmatched_left)
         discrepant = [p for p in self.matched if p.agrees is False]
         unexplained = [p for p in discrepant if p.explained_by is None]
-        unread_left = self._unread(self.unmatched_left, "left")
-        unread_right = self._unread(self.unmatched_right, "right")
         return {
             "reconciliation": self.name,
             "matched": len(self.matched),
@@ -130,17 +109,18 @@ class ReconResult:
             "matched_with_unexplained_discrepancy": len(unexplained),
             "net_discrepancy_minor": sum(p.discrepancy_minor or 0 for p in discrepant),
             "net_unexplained_minor": sum(p.discrepancy_minor or 0 for p in unexplained),
+            # Findings: the counterpart side read this record's date and
+            # holds nothing for it.
             "unmatched_left": len(self.unmatched_left),
             "unmatched_right": len(self.unmatched_right),
-            # Of those, the ones whose counterpart side did not read their
-            # date, or stopped short at the cap. These are not findings:
-            # "no payment was read" is not "no payment exists".
-            "unmatched_left_counterpart_unread": unread_left,
-            "unmatched_right_counterpart_unread": unread_right,
             # Records whose counterpart exists but cannot be identified.
             # Counted apart from both matches and misses: reporting these
             # as either would overstate what the data supports.
             "ambiguous": len(self.ambiguous),
+            # Records whose counterpart side was not read for them. Not
+            # findings, and outside match_rate. Each row carries why.
+            "unverifiable_left": len(self.unverifiable_left),
+            "unverifiable_right": len(self.unverifiable_right),
             "match_rate": round(len(self.matched) / total, 4) if total else 0.0,
             "coverage": (
                 None
@@ -150,7 +130,6 @@ class ReconResult:
                     "right": self.right_coverage.as_dict() if self.right_coverage else None,
                 }
             ),
-            "caveats": self._caveats(unread_left, unread_right),
         }
 
     def rows(self) -> list[Row]:
@@ -166,27 +145,37 @@ class ReconResult:
                 "confidence": p.confidence,
                 "discrepancy": p.discrepancy_minor,
                 "explained_by": p.explained_by,
-                "counterpart_read": True,
-                "caveat": None,
+                "reason": None,
                 "left": p.left,
                 "right": p.right,
             }
             for p in self.matched
         ]
-        for side, records in (("left", self.unmatched_left), ("right", self.unmatched_right)):
-            for r in records:
-                read, caveat = self.counterpart_read(r, side)
-                out.append({
-                    "status": f"unmatched_{side}", "rule": None, "confidence": 0.0,
-                    "discrepancy": None, "counterpart_read": read, "caveat": caveat,
-                    "left": r if side == "left" else None,
-                    "right": r if side == "right" else None,
-                })
+        out += [
+            {"status": "unmatched_left", "rule": None, "confidence": 0.0,
+             "discrepancy": None, "reason": None, "left": r, "right": None}
+            for r in self.unmatched_left
+        ]
+        out += [
+            {"status": "unmatched_right", "rule": None, "confidence": 0.0,
+             "discrepancy": None, "reason": None, "left": None, "right": r}
+            for r in self.unmatched_right
+        ]
         out += [
             {"status": "ambiguous", "rule": a.rule, "confidence": 0.0,
-             "discrepancy": None, "counterpart_read": True, "caveat": None,
-             "left": a.left, "right": None, "candidates": a.candidates}
+             "discrepancy": None, "reason": None, "left": a.left, "right": None,
+             "candidates": a.candidates}
             for a in self.ambiguous
+        ]
+        out += [
+            {"status": "unverifiable_left", "rule": None, "confidence": 0.0,
+             "discrepancy": None, "reason": u.reason, "left": u.record, "right": None}
+            for u in self.unverifiable_left
+        ]
+        out += [
+            {"status": "unverifiable_right", "rule": None, "confidence": 0.0,
+             "discrepancy": None, "reason": u.reason, "left": None, "right": u.record}
+            for u in self.unverifiable_right
         ]
         return out
 
@@ -355,13 +344,8 @@ def match(
     left_coverage: Coverage | None = None,
     right_coverage: Coverage | None = None,
 ) -> ReconResult:
-    left_ts, right_ts = spec.timestamp_paths
     result = ReconResult(
-        name=spec.name,
-        left_coverage=left_coverage,
-        right_coverage=right_coverage,
-        left_timestamp=left_ts,
-        right_timestamp=right_ts,
+        name=spec.name, left_coverage=left_coverage, right_coverage=right_coverage
     )
     left, right = list(left_rows), list(right_rows)
 
@@ -373,7 +357,33 @@ def match(
         elif isinstance(rule, Fuzzy):
             left, right = _apply_fuzzy(rule, spec.identity, left, right, result)
 
-    result.unmatched_left = left
-    result.unmatched_right = right
+    left_ts, right_ts = spec.timestamp_paths
+    result.unmatched_left, result.unverifiable_left = _split_unread(
+        left, left_ts, right_coverage
+    )
+    result.unmatched_right, result.unverifiable_right = _split_unread(
+        right, right_ts, left_coverage
+    )
     _score_discrepancies(spec, result)
     return result
+
+
+def _split_unread(
+    rows: list[Row], timestamp: str | None, counterpart: Coverage | None
+) -> tuple[list[Row], list[Unverifiable]]:
+    """Separate real misses from records the other side never read for.
+
+    Without coverage nothing is known about what was read, so every
+    record stays unmatched — the behaviour before coverage existed.
+    """
+    if counterpart is None:
+        return rows, []
+    missed: list[Row] = []
+    unread: list[Unverifiable] = []
+    for r in rows:
+        read, reason = counterpart.reads(_as_dt(dig(r, timestamp)) if timestamp else None)
+        if read:
+            missed.append(r)
+        else:
+            unread.append(Unverifiable(r, reason or "counterpart side not read"))
+    return missed, unread

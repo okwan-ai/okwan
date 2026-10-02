@@ -5,8 +5,8 @@ read had it existed. A side truncated at the record cap, bounded to a
 window, or clamped to a rail's ledger horizon can leave a real payment
 unfetched, and the order then reads unpaid with nothing to say why.
 These tests pin the property an agent depends on: the output states
-what was read, and an unmatched record outside it says it is not a
-finding.
+what was read, and a record whose counterpart side never read its date
+is reported unverifiable, with why, rather than unmatched.
 """
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ import duckdb
 import okwan_paypal.connector  # noqa: F401  (registers the connector)
 import okwan_shopify.connector  # noqa: F401
 import okwan_stripe.connector  # noqa: F401
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from okwan_core import ConnectorContext
 from okwan_paypal.connector import paypal
 from okwan_recon import declarations, runner
@@ -24,6 +26,7 @@ from okwan_recon.coverage import Coverage
 from okwan_recon.declaration import ResourceRef
 from okwan_recon.emitters import mcp
 from okwan_recon.emitters.duckdb_view import materialize_view
+from okwan_recon.emitters.rest import build_router
 from okwan_recon.engine import match
 from okwan_recon.fetch import fetch_side
 from okwan_stripe.connector import stripe
@@ -99,59 +102,86 @@ def test_a_bounded_side_cannot_vouch_for_an_undated_record():
     assert "no timestamp" in why
 
 
-# --- the property ------------------------------------------------------
+# --- the outcome -------------------------------------------------------
 
-def test_unpaid_order_inside_coverage_is_a_finding():
+def _statuses(result) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for r in result.rows():
+        rec = r["left"] or r["right"]
+        out.setdefault(r["status"], []).append(rec.get("name") or rec.get("invoice_id"))
+    return out
+
+
+def test_unpaid_order_inside_coverage_is_unmatched():
+    """The rail read this order's date and holds nothing for it. That is
+    the finding."""
     result = match(SPEC, [order("#1003")], [], COMPLETE_LEDGER, PAYPAL_READ)
-    [row] = [r for r in result.rows() if r["status"] == "unmatched_left"]
-    assert row["counterpart_read"] is True
-    assert row["caveat"] is None
-    assert result.summary["unmatched_left_counterpart_unread"] == 0
-    assert result.summary["caveats"] == []
+    assert _statuses(result) == {"unmatched_left": ["#1003"]}
+    assert result.summary["unmatched_left"] == 1
+    assert result.summary["unverifiable_left"] == 0
 
 
-def test_unpaid_order_after_the_horizon_is_not_a_finding():
+def test_unpaid_order_after_the_horizon_is_unverifiable():
     late = (HORIZON + timedelta(hours=2)).isoformat()
     result = match(SPEC, [order("#1007", at=late)], [], COMPLETE_LEDGER, PAYPAL_READ)
-    [row] = [r for r in result.rows() if r["status"] == "unmatched_left"]
-    assert row["counterpart_read"] is False
-    assert "ledger horizon" in row["caveat"]
+    assert _statuses(result) == {"unverifiable_left": ["#1007"]}
+    [row] = result.rows()
+    assert "ledger horizon" in row["reason"]
     s = result.summary
-    assert s["unmatched_left"] == 1
-    assert s["unmatched_left_counterpart_unread"] == 1
-    assert "not findings" in s["caveats"][0]
+    assert s["unmatched_left"] == 0
+    assert s["unverifiable_left"] == 1
 
 
-def test_a_truncated_payment_side_voids_every_unpaid_order():
-    """The stated property: if the rail truncated, no unmatched order is
-    a finding, however its date falls."""
+def test_a_truncated_payment_side_makes_every_unpaid_order_unverifiable():
+    """If the rail truncated, no unmatched order is a finding, however
+    its date falls."""
     cut = cov("paypal.transactions.list", records=100, cap=100, truncated=True)
     result = match(
         SPEC, [order("#1003"), order("#1005")],
         [payment("#1004", at="2026-07-10T00:00:00Z")],
         COMPLETE_LEDGER, cut,
     )
-    unmatched = [r for r in result.rows() if r["status"] == "unmatched_left"]
-    assert len(unmatched) == 2
-    assert all(r["counterpart_read"] is False for r in unmatched)
-    assert result.summary["unmatched_left_counterpart_unread"] == 2
-    assert "cap" in result.summary["caveats"][0]
+    assert sorted(_statuses(result)["unverifiable_left"]) == ["#1003", "#1005"]
+    assert "unmatched_left" not in _statuses(result)
+    assert all("cap" in r["reason"] for r in result.rows()
+               if r["status"] == "unverifiable_left")
 
 
-def test_a_truncated_ledger_voids_every_orphan_payment():
-    """Symmetric: a payment with no order is not a finding when the
-    order side stopped short."""
+def test_a_truncated_ledger_makes_every_orphan_payment_unverifiable():
+    """Symmetric: a payment with no order is not a finding when the order
+    side stopped short."""
     cut = cov("shopify.orders.list", records=100, cap=100, truncated=True)
     result = match(SPEC, [], [payment("#9999")], cut, PAYPAL_READ)
-    [row] = [r for r in result.rows() if r["status"] == "unmatched_right"]
-    assert row["counterpart_read"] is False
-    assert result.summary["unmatched_right_counterpart_unread"] == 1
+    assert _statuses(result) == {"unverifiable_right": ["#9999"]}
+    assert result.summary["unverifiable_right"] == 1
 
 
-def test_matched_rows_need_no_caveat():
-    result = match(SPEC, [order("#1004")], [payment("#1004")], COMPLETE_LEDGER, PAYPAL_READ)
-    [row] = result.rows()
-    assert row["counterpart_read"] is True and row["caveat"] is None
+def test_unverifiable_orders_leave_the_match_rate():
+    """One order paid, one unpaid inside coverage, one placed after the
+    rail's horizon. The rate is over the two that could be judged."""
+    late = (HORIZON + timedelta(hours=2)).isoformat()
+    result = match(
+        SPEC,
+        [order("#1004"), order("#1003"), order("#1007", at=late)],
+        [payment("#1004")],
+        COMPLETE_LEDGER, PAYPAL_READ,
+    )
+    assert result.summary["match_rate"] == 0.5
+
+
+def test_all_unverifiable_is_a_zero_rate_not_a_division():
+    cut = cov("paypal.transactions.list", records=1, cap=1, truncated=True)
+    result = match(SPEC, [order("#1003")], [], COMPLETE_LEDGER, cut)
+    assert result.summary["match_rate"] == 0.0
+    assert result.summary["unverifiable_left"] == 1
+
+
+def test_matched_and_unmatched_rows_carry_no_reason():
+    result = match(
+        SPEC, [order("#1004"), order("#1003")], [payment("#1004")],
+        COMPLETE_LEDGER, PAYPAL_READ,
+    )
+    assert all(r["reason"] is None for r in result.rows())
 
 
 def test_summary_states_what_each_side_read():
@@ -163,14 +193,13 @@ def test_summary_states_what_each_side_read():
     assert coverage["right"]["truncated"] is False
 
 
-def test_without_coverage_nothing_is_claimed():
-    """A bare match over rows knows nothing about what was read. It must
-    not call an unmatched record a finding, nor deny it is one."""
+def test_without_coverage_nothing_is_unverifiable():
+    """A bare match over rows knows nothing about what was read, and
+    keeps the outcomes it had before coverage existed."""
     result = match(SPEC, [order("#1003")], [])
-    [row] = result.rows()
-    assert row["counterpart_read"] is None
+    assert _statuses(result) == {"unmatched_left": ["#1003"]}
     assert result.summary["coverage"] is None
-    assert result.summary["caveats"] == []
+    assert result.summary["unverifiable_left"] == 0
 
 
 # --- what the fetch reports --------------------------------------------
@@ -249,31 +278,43 @@ async def test_paypal_without_a_window_still_states_its_default(monkeypatch):
 
 # --- every surface carries it -----------------------------------------
 
-async def test_the_mcp_tool_returns_coverage_and_caveats(monkeypatch):
+async def test_the_mcp_tool_filters_on_the_new_status(monkeypatch):
     cut = cov("paypal.transactions.list", records=1, cap=1, truncated=True)
 
     async def fake_run(spec, **kw):
         return match(spec, [order("#1003")], [], COMPLETE_LEDGER, cut)
 
     monkeypatch.setattr(mcp, "run", fake_run)
-    out = await mcp._make_tool_fn(SPEC)(limit=1, status="unmatched_left")
+    out = await mcp._make_tool_fn(SPEC)(limit=1, status="unverifiable_left")
     assert out["summary"]["coverage"]["right"]["truncated"] is True
-    assert out["summary"]["unmatched_left_counterpart_unread"] == 1
-    assert out["rows"][0]["counterpart_read"] is False
+    assert out["summary"]["unverifiable_left"] == 1
+    assert out["rows"][0]["left"]["name"] == "#1003"
+    assert "cap" in out["rows"][0]["reason"]
 
 
-def test_the_sql_view_can_separate_findings_from_unread():
+def test_the_rest_filter_accepts_the_new_statuses():
+    app = FastAPI()
+    app.include_router(build_router())
+    client = TestClient(app)
+    # An unknown reconciliation is a 404 only once the status has passed
+    # validation; a rejected status would be a 422 first.
+    for status in ("unverifiable_left", "unverifiable_right"):
+        r = client.get("/v1/reconciliations/no_such", params={"status": status})
+        assert r.status_code == 404
+
+
+def test_the_sql_view_separates_unpaid_from_unverifiable():
     late = (HORIZON + timedelta(hours=2)).isoformat()
     result = match(
         SPEC, [order("#1003"), order("#1007", at=late)], [], COMPLETE_LEDGER, PAYPAL_READ
     )
     con = duckdb.connect()
     view = materialize_view(con, SPEC, result)
-    unpaid = con.execute(
-        f"SELECT left_record->>'name' FROM {view} "
-        "WHERE status = 'unmatched_left' AND counterpart_read"
+    got = con.execute(
+        f"SELECT status, left_record->>'name', reason IS NOT NULL FROM {view} "
+        "ORDER BY 2"
     ).fetchall()
-    assert unpaid == [("#1003",)]
+    assert got == [("unmatched_left", "#1003", False), ("unverifiable_left", "#1007", True)]
 
 
 async def test_the_runner_hands_coverage_to_the_result(monkeypatch):

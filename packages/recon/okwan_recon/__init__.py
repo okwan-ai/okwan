@@ -8,7 +8,7 @@ from .declaration import (
     Reconciliation,
     ResourceRef,
 )
-from .engine import Ambiguity, MatchedPair, ReconResult, match
+from .engine import Ambiguity, MatchedPair, ReconResult, Unverifiable, match
 from .fetch import env_credentials, fetch_rows
 from .registry import all_reconciliations, get, register
 from .runner import run
@@ -25,6 +25,7 @@ __all__ = [
     "ReconResult",
     "Reconciliation",
     "ResourceRef",
+    "Unverifiable",
     "all_reconciliations",
     "env_credentials",
     "fetch_rows",
