@@ -1,5 +1,5 @@
 # OKWAN AI — Master Project File
-**Version 1.8 · August 31, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
+**Version 1.9 · October 2, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
 
 > Single source of truth for the Okwan AI platform. Every strategic, technical, brand, and immigration-related decision lives here. Update the version and changelog with every major decision.
 
@@ -97,8 +97,8 @@ Reasoning: a hub-and-spoke diagram is the picture every connector library has, a
 ### 3.1 Connector SDK core abstractions
 - `Connector` — metadata, auth spec, rate-limit profile, optional `context_factory` transport seam
 - `Resource` — an entity with a Pydantic schema
-- `Operation` — list / get / search / create / update, with `is_read_only` derived from op type
-- `AuthAdapter` — OAuth2, API key, HMAC, JWT, connection-string. `ApiKeyAuth` binds `required_fields[0]`, so a connector needing more than one field writes its own adapter (see Shopify)
+- `Operation` — list / get / search / create / update / delete, with `is_read_only` derived from op type
+- `AuthAdapter` — core ships API key, bearer token and connection string. OAuth2 client-credentials lives in the PayPal connector and Shopify has its own two-field adapter; HMAC and JWT are not built. `ApiKeyAuth` binds `required_fields[0]`, so a connector needing more than one field writes its own adapter (see Shopify)
 - `CursorPage[T]` — the single paging contract across every connector
 - `okwan_core.currency` — `ZERO_DECIMAL_CURRENCIES`, `to_major`/`to_minor`
 - `CredentialResolver` — the seam that made tenancy possible without touching any call site
@@ -116,7 +116,7 @@ Reasoning: a hub-and-spoke diagram is the picture every connector library has, a
 - `validate_against_registry()` — rejects any declaration pointing at a write operation. Read-only is structural
 - `AcrossRails` — one order ledger against every declaration sharing its left side, folded to one verdict per order: collected_twice · split_tender · collected_inconsistent · collected · unverifiable · uncollected. The ledger is fetched once, so every member judges the same order rows. Compares each rail's gross take against the order total (not what the ledger received, since a ledger sees only its own checkout), within an integer basis-point tolerance. A match is positive evidence; "uncollected" requires every rail to have read the order. Same one-definition rule: MCP tool, REST route and DuckDB view
 
-**Seven outcomes, not two.** agrees · differs with a known cause · differs unexplained · ambiguous · unmatched-left · unmatched-right · unverifiable. Every distinction came from pointing the engine at real data. `net_unexplained_minor` is the figure a merchant acts on.
+**Seven outcomes, not two.** agrees · differs with a known cause · differs unexplained · ambiguous · unmatched-left · unmatched-right · unverifiable (eight statuses in `engine.STATUSES`, since unverifiable carries a side). Every distinction came from pointing the engine at real data. `net_unexplained_minor` is the figure a merchant acts on.
 
 **Unverifiable is not unmatched.** Each side reports what it read: its span, whether the record cap cut it short, and the ledger horizon a rail clamped to. A record whose counterpart side could not have read its match (the cap truncated that side, or its span does not reach the record's date) is `unverifiable_left`/`_right` with the reason attached, never unmatched. "No payment was read" is not "no payment exists". While any record is unverifiable, `match_rate` is null: the true denominator is unknown, and a rate over whatever happened to be read (1.0 from a three-record read) is worse than no figure. The counts remain. A truncated side makes every opposite-side miss unverifiable, because not every rail guarantees order within a page.
 
@@ -125,20 +125,20 @@ Reasoning: a hub-and-spoke diagram is the picture every connector library has, a
 **Known limit.** `validate_against_registry()` proves the connector and operation resolve and are read-only. A raw SQL string inside `ResourceRef.params` is opaque to it, so a declaration can outlive the schema it queries. Structural read-only holds; structural schema-validity does not.
 
 ### 3.3 Query layer (L2)
-- Catalog derived from `Resource.schema` in serialization mode — 12 tables, fully typed
+- Catalog derived from `Resource.schema` in serialization mode — 13 tables, fully typed (12 derived, plus the declared `rail.payments`)
 - Lazy per-query fetch: only tables the SQL names are pulled, once per session. Federation, not ETL
 - Containers whose shape is only known at call time (Postgres `RowSet`) excluded; `declare_sql_table` covers named queries
 - **Reachability.** Tables are marked queryable or not, naming missing credential fields. An agent that cannot distinguish configured from unconfigured learns by failing, and the rational response is to stop trusting the tool — which is exactly what happened in the first hosted run
 - **Statement guard.** The only tool taking agent-authored input, so read-only is enforced rather than derived. Rejects writes, `COPY`, `INSTALL`, `ATTACH`, `read_csv`, `glob`, chaining and comment-hidden statements
 
 ### 3.4 Vault, tenancy and billing
-- **Envelope encryption:** each credential sealed with its own AES-GCM data key; the data key wrapped by a master behind a provider interface (env var for dev, cloud KMS for production)
+- **Envelope encryption:** each credential sealed with its own AES-GCM data key; the data key wrapped by a master behind a provider interface. Production runs the env-var master today; `KmsMasterKey` is written and wins when `OKWAN_VAULT_KMS_KEY` is set, but `google-cloud-kms` is not a dependency, so it cannot run as deployed
 - **AAD** binds each ciphertext to its tenant, connector and field. A row moved between tenants fails to decrypt
 - **API keys** shown once, stored as SHA-256 hash plus public prefix, indexed on a partial index over active keys
 - **Vault in its own database**, not a schema: `postgres.sql.query` runs caller-supplied SQL against whatever DSN it receives
 - **Hierarchical tenants.** One account model: a solo developer is a tenant with no parent, an ISV is a tenant whose merchants are children. The boundary is one function — `may_administer` — so sibling isolation is not a special case to remember; a sibling is simply not on the target's ancestor chain
 - **Out-of-subtree access returns 404, not 403.** A 403 confirms the tenant exists, which turns the admin API into an enumeration oracle for other customers' tenant ids
-- **Metering** counts per request, attributed to the calling tenant, billed to the root. Hourly buckets, not a row per call. `402` on exhaustion — a plan needs upgrading, not waiting. Metering never fails the request it counts
+- **Metering** counts per request, attributed to the calling tenant, billed to the root. Hourly buckets, not a row per call. `402` on exhaustion — a plan needs upgrading, not waiting. Metering never fails the request it counts. **Coverage is partial:** connector REST routes and SQL REST are metered and quota-gated, and the credential test is metered. The hosted MCP and the reconciliation REST routes are neither
 - **Root tenants come from self-serve signup, gated on a verified email** (reversed 2026-10-02; previously CLI-only). One tenant per address. The token completes only with the password that started the signup, so pre-registering someone's address yields nothing. Signup and sign-in answer identically for registered and unknown addresses, the same reasoning as 404-not-403
 - **Dashboard sessions are not API keys.** `oks_` sessions administer a tenant (credentials, keys, tests) but cannot read a rail; data routes and the hosted MCP still take an `okw_` key the customer chose to issue
 
@@ -168,16 +168,19 @@ Reasoning: a hub-and-spoke diagram is the picture every connector library has, a
 | DB | Neon (`neondb` demo, `okwan_vault` secrets) + asyncpg | |
 | MCP | mcp 2.0 — stdio per connector, streamable HTTP hosted at `/mcp/` | |
 | Site | Next.js 15 + TypeScript + Tailwind 4, static export → Vercel | Brand system §2 |
-| Hosting | **Render** — Docker, Oregon, starter $7/mo | Railway/Fly free tiers ended |
+| Dashboard | Next.js 15 server routes → Render (`apps/dashboard`) | Built 2026-10-02, not yet deployed |
+| Hosting | **Render** — API on Docker, dashboard on Node, Oregon, starter $7/mo each | Railway/Fly free tiers ended. The dashboard service is declared in `render.yaml` |
 | Billing | Metering + plan gates shipped; no card charged yet | |
-| Test | pytest + pytest-asyncio + ruff | 179 tests as of 2026-08-31 |
+| Test | pytest + pytest-asyncio + ruff | 435 tests as of 2026-10-02. Ruff is configured but not a clean gate: 25 findings, 12 of them FastAPI's `Depends` idiom (B008) |
 | Compliance | Audit logging from day 1; SOC 2 prep at ~$500K ARR | |
 
-**⚠ `okwan_core.currency.to_minor` converts through `float`**, which §3.1 forbids for decimal-string money. Shopify and PayPal both route around it with their own `money_to_minor`. Promote one into core and delete the float version, before a third connector writes a fourth copy.
+**⚠ `okwan_core.currency.to_minor` converts through `float`**, which §3.1 forbids for decimal-string money. Shopify and PayPal both route around it with their own `money_to_minor`. Promote one into core and delete the float version, before a third connector writes a fourth copy. **The engine uses it too:** `Fuzzy` passes both sides' amounts through `to_minor`, but every declaration points `Fuzzy` at fields already in minor units, so each amount is scaled by 100 a second time. It is harmless at today's tolerance of 0, since integers stay exact in a float. Any nonzero `amount_tolerance_minor` would be 100× tighter than its name says.
 
 **⚠ `MAX_RECORDS_PER_WINDOW` is declared but unenforced.** PayPal refuses more than 10,000 records for one date window; a busier account truncates upstream silently. Needs adaptive window splitting.
 
 *Closed in v1.8: the interpreter split (Codespace pinned to 3.12) and the `Store` sync/async split (`badfa03`).*
+
+*New in v1.9: `apps/dashboard`, `okwan_core.egress`, `okwan_api/{signup,mail,ratelimit}.py`, `okwan_vault/accounts.py`.*
 
 **Monorepo structure (actual):**
 ```
@@ -204,13 +207,13 @@ okwan/
 
 **Stream 1 — Direct SaaS:** Free (5K requests/mo) → Pro (100K) → Team (1M) → Enterprise (unmetered).
 **Stream 2 — OEM/ISV Embed:** Startup $5K/yr → Growth $18K/yr → Enterprise $60K+/yr + per-connector royalty. *Primary long-term revenue engine.*
-**Stream 3 — Agent API:** usage-based per MCP tool call, bundled minimums.
+**Stream 3 — Agent API:** usage-based per MCP tool call, bundled minimums. *Not countable yet: the hosted MCP is not metered (§3.4).*
 
 **Metering unit: one request.** A federated query touching four connectors is one request even though it costs four upstream calls. That asymmetry is ours to manage, not the customer's to reason about — predictability over precision.
 
 **Billing rolls up to the root.** An ISV's merchants share one allowance and one invoice; the merchants are not customers.
 
-**Gap:** nothing charges a card. Plans are set by CLI. Manual invoicing is fine for the first three ISVs; Stripe subscriptions are a week not yet worth spending.
+**Gap:** nothing charges a card, and nothing sets a plan: `Store.set_plan` exists with no caller in the CLI or the API, so every tenant is on `free` (5K) unless its row is written by hand. Manual invoicing is fine for the first three ISVs; Stripe subscriptions are a week not yet worth spending.
 
 ---
 
@@ -220,8 +223,9 @@ okwan/
 |---|---|---|---|
 | **P0 Foundation** | Aug–Oct 2026 | ✅ COMPLETE 2026-08-12 | ✅ agent queries live data via Okwan MCP |
 | **P0.5 Wedge** | Aug 2026 | ✅ COMPLETE 2026-08-27: Paystack, reconciliation, Shopify | ✅ GATE PASSED ×2 |
-| **P0.75 Platform** | Aug 2026 | ✅ COMPLETE 2026-08-28: query federation, vault, tenancy, billing, deployment | ✅ hosted API serving tenant-scoped queries and reconciliations |
-| **P1 Launch** | Nov 2026–Feb 2027 | 10 connectors, dashboard, self-serve signup, HN/dev launch | 200 signups, 10 paid, $2K MRR |
+| **P0.75 Platform** | Aug 2026 | ✅ COMPLETE 2026-08-28: query federation, vault, tenancy, billing, deployment | ✅ hosted API serving tenant-scoped queries and reconciliations. *Reconciliations are tenant-scoped on the hosted MCP only; the REST routes are not (§11)* |
+| **P0.9 Depth** | Aug–Oct 2026 | ✅ 2026-10-02: PayPal (#6), two live rail declarations, coverage and unverifiable, `reconcile_across_rails` | ✅ double collection found live across two rails (#1002, #1004) |
+| **P1 Launch** | Nov 2026–Feb 2027 | 10 connectors, dashboard, self-serve signup, HN/dev launch. **Status 2026-10-02:** 6/10 connectors; dashboard and signup built, not deployed; signup returns 503 until the mailer (§10) | 200 signups, 10 paid, $2K MRR. Paid needs plan setting and card charging, neither built (§5) |
 | **P2 Platform** | Mar–Dec 2027 | 25 connectors, Sync engine, Embed SDK | 1st ISV embed deal ($10K+ ACV), $150K ARR |
 | **P3 Scale** | 2028 | 50+ connectors, SOC 2, enterprise tier | $500K–1M ARR, 3+ ISV partners |
 | **P4 Expand** | 2029–2030 | Agent marketplace, intl connectors, Series A or profitability | $2M+ ARR |
@@ -265,13 +269,16 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 
 ## 8. COMPETITIVE FRAME
 
-**"MCP-native connector library" is commoditized** — Nango, Composio, Arcade, and an existing Africa Payments MCP server all occupy it. Competing on connector count is competing on a saturated axis.
+**"MCP-native connector library" is commoditized** — Nango, Composio, Arcade, an existing Africa Payments MCP server, and now CData itself (Connect AI, hosted MCP at `mcp.cloud.cdata.com/mcp`) all occupy it. Competing on connector count is competing on a saturated axis.
+
+**The detection is not ours to claim; the primitive is.** Fincile already detects duplicate billing across 11+ gateways as a Shopify app. What `reconcile_across_rails` found live (#1002 and #1004 collected twice) is the class of thing a merchant product can already show. The claim is the primitive underneath it: a declaration an ISV writes and versions, which yields a REST route, a SQL view and an MCP tool, runs per tenant, and says what it could not see (unverifiable) rather than reporting a clean result over a partial read.
 
 **The defensible wedge is the federation and reconciliation layer none of them address.** Connector libraries fetch from one system at a time. Reconciliation is a *query across* systems that disagree.
 
 | Player | Their game | Why they don't cover this |
 |---|---|---|
-| CData | 350+ connectors, driver-first legacy, MCP retrofitted | No cross-source matching primitive; BI-shaped, not money-shaped |
+| CData | 350+ connectors; Connect Cloud rebranded Connect AI with a hosted MCP (`mcp.cloud.cdata.com/mcp`) | Agent access to one source at a time is now their product too. Still no cross-source matching primitive; BI-shaped, not money-shaped |
+| Fincile | Shopify app: duplicate-billing detection across 11+ gateways | Covers the detection. Sold to merchants as a product; the gap is a primitive an ISV declares, versions and embeds per tenant |
 | Fivetran | ELT pipelines to warehouses | Lands data; leaves reconciliation to the analyst |
 | Nango / Composio / Arcade | Agent tool-calling, auth infrastructure | Single-source tool calls; no matching, no currency semantics |
 | Merge.dev / unified APIs | Category-specific unified APIs | Normalizes shape, not truth; no cross-rail join |
@@ -279,7 +286,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 | Modern Treasury / close-automation | Payment ops for finance teams | Enterprise-shaped, not developer-shaped |
 | DIY internal builds | Every ISV's default | Our pricing must beat one engineer-month per rail pair |
 
-**Moats to build:** reconciliation rule library as licensed SKUs · ISV switching costs · correctness details competitors get wrong (zero-decimal currencies, MSISDN ambiguity, minor-unit arithmetic, gross-vs-net on refunds, ambiguous pairing) · **merchant-scoped agent endpoints** — an ISV provisions a tenant per merchant and each gets an MCP endpoint seeing only their own systems. No competitor can offer this: the recon products have no API, and the agent-native connector libraries have no tenancy model.
+**Moats to build:** reconciliation rule library as licensed SKUs · ISV switching costs · correctness details competitors get wrong (zero-decimal currencies, MSISDN ambiguity, minor-unit arithmetic, gross-vs-net on refunds, ambiguous pairing) · **merchant-scoped agent endpoints** — an ISV provisions a tenant per merchant and each gets an MCP endpoint seeing only their own systems. No recon competitor offers this: the recon products have no API, and the agent-native connector libraries have no tenancy model. CData's hosted MCP is the nearest, and it serves sources, not reconciliations.
 
 ---
 
@@ -335,27 +342,31 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 
 ## 10. IMMEDIATE NEXT ACTIONS
 
-**Revenue path**
-1. **Talk to one ISV.** Unmoved for three versions. Everything else is speculation until someone uses it. The site and a working URL now exist as assets for that conversation
-2. **Wire a mail provider.** Self-serve signup and the dashboard shipped 2026-10-02 but answer 503 in production until verification mail can be sent (`okwan_api/mail.py`). The provider sees every verification link, so it is a security choice as well as a vendor one. Its gates are closed (egress bounds, rate limits, §9); one check remains before it: confirm on a deployed request which `X-Forwarded-For` hop Render appends (§11)
-3. **Card charging.** Metering and plan gates work; nothing invoices. Manual is fine for three ISVs
+**Launch path, in order** *(each gates the next; nothing here waits on item 4)*
+1. **Put `/v1/reconciliations` behind the API key.** The REST reconciliation routes take no key, read credentials from request headers (the per-request model §9 records as removed), and fall back to the server's own `OKWAN_<CONNECTOR>_*` environment. Production is not exposed today only because no rail variables are set on Render (checked 2026-10-02: both declarations answer 401 for missing fields). Route them through `current_tenant` + vault resolution like the MCP, and meter them and the hosted MCP while there (§3.4)
+2. **Deploy the dashboard; confirm the forwarded-IP hop.** `render.yaml` declares the service and the shared secret. Check on a real request which `X-Forwarded-For` entry Render appends, and set `OKWAN_TRUSTED_PROXY_HOPS` if it is not the last (§11)
+3. **Wire a mail provider.** Signup answers 503 in production until verification mail can be sent (`okwan_api/mail.py`). The provider sees every verification link, so it is a security choice as well as a vendor one. Its other gates are closed (egress bounds, rate limits, §9)
+
+**Revenue**
+4. **Talk to one ISV.** Unmoved for four versions. Needs none of the launch path: the hosted MCP with a provisioned tenant is the demo, and `reconcile_across_rails` is the finding to show
+5. **Plan setting, then card charging.** Nothing sets a plan today (§5), so the 402 gate holds every tenant to 5K. A CLI or admin command first; invoicing stays manual for three ISVs
 
 **Build**
-4. **Promote a `Decimal`-based `money_to_minor` into core** and delete the float `to_minor`. Two connectors already route around it; a third copy is the point it becomes a divergence rather than a duplication
-5. **Enforce `MAX_RECORDS_PER_WINDOW`** with adaptive window splitting. A PayPal account busier than the sandbox truncates silently today
-6. **Correct the #1001 Shopify fixture** so a reference case stops carrying the whole ledger's gross
-7. Connectors, chosen by the §3.5 criterion rather than the stale P1 list
+6. **Promote a `Decimal`-based `money_to_minor` into core** and delete the float `to_minor`, including the engine's `Fuzzy` path, which rescales minor-unit amounts (§4)
+7. **Enforce `MAX_RECORDS_PER_WINDOW`** with adaptive window splitting. A PayPal account busier than the sandbox truncates silently today
+8. **Correct the #1001 Shopify fixture**, and the landing hero that leads with it: §2.4's table shows #1001 as "explained" at a $2,423.00 rail figure, which §9 records as a seeding artifact not to be used as a reference case
+9. Connectors, chosen by the §3.5 criterion rather than the stale P1 list
 
 **Strategic**
-8. **Paystack account** — signup needs a business registered in a supported African country. The Ghana sole proprietorship covers sandbox access for testing only; any revenue routing is an attorney/CPA question and must not be improvised
-9. Register `okwan.ai`; point it at Render and set `OKWAN_ALLOWED_HOSTS`
-10. Attorney: formal OKWAN clearance opinion + intent-to-use application, IC 009 + 042
-11. Move the Vercel project under the LLC (§7 entity consistency)
+10. **Paystack account** — signup needs a business registered in a supported African country. The Ghana sole proprietorship covers sandbox access for testing only; any revenue routing is an attorney/CPA question and must not be improvised
+11. Register `okwan.ai`; point the API and dashboard at it, set `OKWAN_ALLOWED_HOSTS` and `OKWAN_DASHBOARD_URL`
+12. Attorney: formal OKWAN clearance opinion + intent-to-use application, IC 009 + 042
+13. Move the Vercel project under the LLC (§7 entity consistency)
 
 **Corporate / NIW** *(operational detail in NIW_WORKING_PACK.md)*
-12. ~~Execute Operating Agreement + Member Resolution~~ — **executed 2026-08-30, both signatures.** Remaining: scan both flat as PDFs for Exhibits 12 and 13
-13. Amended 1065s, TY2024 and TY2025 — in progress. Capture: date mailed, CPA/EA review, form revision per year, Schedule B-2 status, service center, certified-mail tracking. Proof of mailing is separate evidence from the return
-14. IRS Business account transcripts via +1 267-941-1000. The transcript is the evidence; the call is only diagnostic
+14. ~~Execute Operating Agreement + Member Resolution~~ — **executed 2026-08-30, both signatures.** Remaining: scan both flat as PDFs for Exhibits 12 and 13
+15. Amended 1065s, TY2024 and TY2025 — in progress. Capture: date mailed, CPA/EA review, form revision per year, Schedule B-2 status, service center, certified-mail tracking. Proof of mailing is separate evidence from the return
+16. IRS Business account transcripts via +1 267-941-1000. The transcript is the evidence; the call is only diagnostic
 
 ---
 
@@ -366,16 +377,18 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 - **What the platform now does right, independent of that:** credentials are never transmitted per request, are sealed with per-credential data keys, are bound by AAD to their tenant, live in a database no connector can reach, and the tenant boundary is covered by tests in both directions.
 - **Working pattern:** Codespaces secrets (`OKWAN_*`) scoped to `okwan-ai/okwan`, loaded at container start. Secrets only load on rebuild.
 - **Repo hygiene:** the root `.gitignore` did not cover the web app's build output; a commit attempt carried 141 MB before `node_modules`, `.next` and `out` were ignored.
-- **Vault CLI is unusable in GitHub Codespaces.** `cred set` uses `getpass`, which opens `/dev/tty` directly — neither pasting nor a herestring reaches it, and the prompt hangs with no error. Tenant provisioning currently requires a local shell or direct `store.put_credential` calls. This is §10 item 2 in sharper form: onboarding is not merely manual, it is environment-dependent.
+- **Vault CLI is unusable in GitHub Codespaces.** `cred set` uses `getpass`, which opens `/dev/tty` directly — neither pasting nor a herestring reaches it, and the prompt hangs with no error. Superseded for customers once the dashboard is deployed: credential entry posts through the API's `put_credential` and needs no terminal. The CLI's `cred set` still hangs in a Codespace.
 - **Credential field names are a contract.** `env_credentials` maps `OKWAN_<CONNECTOR>_<FIELD>` to the adapter's `required_fields`. `OKWAN_PAYPAL_SECRET` failed silently against an adapter wanting `client_secret`; the fix belongs at the secret, not in the adapter, or the convention stops being a convention.
 - **Caller-chosen destinations are bounded (closed 2026-10-02).** Open signup made `postgres.connection_string` a way for anyone to open TCP connections from the API to arbitrary hosts, including Render-internal ones. `okwan_core.egress` now resolves first, refuses unless every address is globally routable (loopback, private, link-local and so the metadata service, CGNAT, IPv4-mapped forms of each), and dials the checked address through `PinnedLoop`, so a second DNS answer is never consulted while TLS keeps the hostname for SNI (Neon routes on it). DSNs are limited to one network host and four query keys: asyncpg would otherwise read `passfile`/`service`/`sslrootcert` from this server's disk or take a second host from `?host=`. A DSN without a password now sends an empty one, since asyncpg's fallback is this server's `PGPASSWORD` and `~/.pgpass`, which it would have sent to the caller's host. Exceptions go in `OKWAN_EGRESS_ALLOW` (hostnames or CIDRs); local development against a local database needs `localhost` there. Shopify's `shop_domain` now must be `<store>.myshopify.com`, which takes away the choice of host rather than filtering it. **Remaining:** ports are not restricted, so any port on a public host is reachable.
 - **Signup, sign-in, verification and Test are rate-limited (closed 2026-10-02).** Per client IP and per subject (the address, or the tenant), fixed windows, in memory, one message for every rule so a 429 is not a registration oracle, and checked after the subtree guard so a foreign tenant is still a 404. scrypt (~50 ms, 16 MiB) now runs in a thread with a cap of two concurrent hashes; it had been blocking the single worker's event loop for each one. Behind the dashboard every request arrives from one address, so the dashboard forwards the browser's IP and the API believes it only with `OKWAN_DASHBOARD_SECRET`, which Render generates and shares between the two services. **Unverified until deployed:** which `X-Forwarded-For` hop Render's proxy appends. Both services take the rightmost (`OKWAN_TRUSTED_PROXY_HOPS=1`); if Render puts the client elsewhere, per-IP limits key on the wrong hop until that is set. Limits are per instance.
+- **Reconciliation REST routes are unauthenticated (open, found 2026-10-02).** `/v1/reconciliations/*` resolve credentials from `X-Okwan-<Connector>-Credential-*` headers, then from the server's `OKWAN_<CONNECTOR>_*` environment, with no API key. Latent today because Render carries no rail variables. Setting any of them there, for instance to demo, would let anyone run reconciliations against that account. It also means a customer's key does nothing on these routes. §10 item 1.
 - **Claude Desktop cannot invoke `npx` on Windows.** It runs MCP servers through `cmd.exe`, and `npx.cmd` lives at `C:\Program Files\nodejs\` — the unquoted space fails with `'C:\Program' is not recognized`, and one crashing server takes down every other entry in the panel. Fix: `npm install -g mcp-remote` and point `command` at `%APPDATA%\npm\mcp-remote.cmd` directly. Separately, `mcp-remote` **silently drops** a `--header` argument not in exact `Name:Value` form — a space after the colon is enough to break auth, with nothing but a warning line in the logs to show for it.
 - **Config note:** Claude Desktop on Windows is an MSIX app. The live config is at `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\claude_desktop_config.json`, **not** `%APPDATA%\Claude\`. Brace nesting is the recurring failure. `Set-Content -Encoding UTF8` adds a BOM that breaks the file; use `WriteAllText` with a BOM-less encoder.
 
 ---
 
 *Changelog:*
+*v1.9 — PayPal shipped as connector #6 over a window walk: Transaction Search caps a query at 31 days, so the cursor encodes (window, page) and the walk clamps to PayPal's own last-refreshed time. Two live rail declarations, `shopify_paypal` and `shopify_stripe`. Three engine corrections found only against real data: payment classification by direction rather than event code, `Explains` on magnitude rather than raw value, and the dead PayPal fuzzy fallback (net-to-net could never fire) moved to gross-to-gross. `Reconciliation.lookback` declares one span per run. Results state what was read: per-side coverage, then `unverifiable` as a seventh outcome replacing the caveat, with `match_rate` withheld while anything is unverifiable. `reconcile_across_rails` folds the rail declarations per order and found #1002 and #1004 collected twice ($1,449.00) — invisible to either declaration alone. `limit` pages rows instead of capping the read. Self-serve signup reverses CLI-only root tenants, gated on a verified email, with a dashboard whose Test and Save proves credentials with a live read. Egress bounds and rate limits close the two exposures open signup created, and gate the mailer. Document checked against the code (§3–§5, §10, §11): unauthenticated reconciliation REST routes, partial metering, no plan-setting path, and the engine's float conversion recorded. §8 updated for Fincile and CData Connect AI. 435 tests.*
 *v1.8 — PayPal shipped as connector #6 (§3.5): Transaction Search over a window walk, the first rail that pages inside a bounded date range rather than along a single sequence, with the walk clamped to PayPal's own statement of ledger currency. `shopify_paypal` declaration (§9): one order ledger against a second rail, live across two systems, 83% match rate with fees explained and $7.93 unexplained. Two engine corrections found only by running against real data — payment classification needs direction, not just an event code, and `Explains` must match on magnitude rather than raw value (§3.2). First per-connector test files, now the standard; 179 tests. Demo 4 recorded over the hosted multi-tenant MCP with vault-resolved credentials (§7, Exhibit 22) — the §8 moat claim exercised rather than asserted. Interpreter split and `Store` sync/async debt closed; the currency float path and the unenforced window-record cap recorded as new debt (§4). Vault CLI tty dependency, the credential field-name contract, and the Claude Desktop `npx` failure added to §11.*
 *v1.7 — Hierarchical tenancy and the ISV provisioning API (§3.4): one account model, boundary in one tested function, 404 not 403 out of subtree. Per-request metering with subtree rollup and plan gates (§3.4, §5). Reconciliations exposed over the hosted MCP with per-tenant runnability. Landing page repositioned around the primitive with a live reconciliation as the hero (§2.4). Merchant-scoped agent endpoints added to the moat list (§8) — they fell out of the tenancy model at no cost. Store sync/async split and the Vercel entity inconsistency recorded as debt (§4, §7). Repo hygiene note added (§11).*
 *v1.6 — L2 query federation over REST and MCP. Credential vault, API-key tenancy, per-tenant resolution. Deployed to Render. Hosted multi-tenant MCP. Three correctness fixes closed: ambiguity, explained discrepancies, window default. MoMo rejected; connector criterion recorded. US market researched. Third demo gate logged.*

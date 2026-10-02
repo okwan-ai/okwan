@@ -8,8 +8,8 @@ export default async function ResultsPage() {
       <div className="card mt-10 p-8">
         <p className="font-display text-2xl">Reconciliation results land here.</p>
         <p className="mt-3 max-w-xl text-ink-soft">
-          Until then, the same results are available with your API key over REST at{" "}
-          <code className="font-mono">/v1/reconciliations</code> and to agents over the hosted MCP.
+          Until then, your agents can run them with your API key over the hosted MCP at{" "}
+          <code className="font-mono">/mcp/</code>, using <code className="font-mono">okwan_reconcile</code>.
         </p>
       </div>
     </>
