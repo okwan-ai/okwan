@@ -136,6 +136,10 @@ shopify_paypal = register(
             Explains(path="fee_minor", side="right", label="rail_fee"),
             Explains(path="total_refunded_minor", side="left", label="refund"),
         ],
+        # PayPal's list defaults to the last 30 days, so without this the
+        # reconciliation goes blank once the ledger stops being recent.
+        # Shopify's side has no start_date and is read in full.
+        lookback="90d",
     )
 )
 
@@ -197,6 +201,10 @@ shopify_stripe = register(
         explains=[
             Explains(path="fee_minor", side="right", label="rail_fee"),
         ],
+        # Neither side's list input takes start_date/end_date today, so
+        # this bounds nothing yet. Declared so the span is stated, and so
+        # it applies the moment either connector accepts a window.
+        lookback="90d",
     )
 )
 

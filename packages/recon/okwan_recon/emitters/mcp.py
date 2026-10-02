@@ -34,6 +34,7 @@ def tool_metadata(spec: Reconciliation) -> dict[str, Any]:
             for k in spec.keys
             if isinstance(k, Fuzzy)
         ],
+        "lookback": spec.lookback,
         "view": spec.view_name,
         "read_only": True,
     }
