@@ -18,6 +18,18 @@ from .paths import dig
 
 Row = dict[str, Any]
 
+#: Every row status `ReconResult.rows()` emits — the filter vocabulary.
+STATUSES = (
+    "matched",
+    "matched_explained",
+    "matched_discrepant",
+    "unmatched_left",
+    "unmatched_right",
+    "ambiguous",
+    "unverifiable_left",
+    "unverifiable_right",
+)
+
 
 @dataclass(slots=True)
 class MatchedPair:

@@ -13,9 +13,19 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from okwan_core import CredentialError, OkwanError, UpstreamError
 
 from ..across import OUTCOMES, run_across
+from ..engine import STATUSES
+from ..paging import DEFAULT_ROWS, MAX_ROWS
 from ..registry import all_across, all_reconciliations, get, get_across
 from ..runner import run
-from .mcp import across_metadata, tool_metadata
+from .mcp import across_metadata, paged, tool_metadata
+
+
+def _rest(out: dict[str, Any]) -> dict[str, Any]:
+    """REST names the page `data`; a stale cursor is a 409, not a 200."""
+    if "error" in out:
+        raise HTTPException(409, out["error"])
+    out["data"] = out.pop("rows")
+    return out
 
 
 def _header_resolver(request: Request):
@@ -46,48 +56,44 @@ def build_router() -> APIRouter:
     async def read_across(
         request: Request,
         name: str,
-        limit: int = Query(100, ge=1, le=1000),
+        limit: int = Query(DEFAULT_ROWS, ge=1, le=MAX_ROWS),
         outcome: str = Query("all", pattern=f"^(all|{'|'.join(OUTCOMES)})$"),
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         try:
             spec = get_across(name)
         except KeyError:
             raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
         try:
-            result = await run_across(spec, _header_resolver(request), max_records=limit)
+            result = await run_across(spec, _header_resolver(request))
         except CredentialError as exc:
             raise HTTPException(401, str(exc)) from exc
         except UpstreamError as exc:
             raise HTTPException(exc.status, exc.body) from exc
         except OkwanError as exc:
             raise HTTPException(502, str(exc)) from exc
-        rows = result.rows()
-        if outcome != "all":
-            rows = [r for r in rows if r["outcome"] == outcome]
-        return {"summary": result.summary, "data": rows}
+        return _rest(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
 
     @router.get("/{name}")
     async def read_reconciliation(
         request: Request,
         name: str,
-        limit: int = Query(100, ge=1, le=1000),
-        status: str = Query("all", pattern="^(all|matched|unmatched_left|unmatched_right|unverifiable_left|unverifiable_right)$"),
+        limit: int = Query(DEFAULT_ROWS, ge=1, le=MAX_ROWS),
+        status: str = Query("all", pattern=f"^(all|{'|'.join(STATUSES)})$"),
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         try:
             spec = get(name)
         except KeyError:
             raise HTTPException(404, f"unknown reconciliation '{name}'") from None
         try:
-            result = await run(spec, _header_resolver(request), max_records=limit)
+            result = await run(spec, _header_resolver(request))
         except CredentialError as exc:
             raise HTTPException(401, str(exc)) from exc
         except UpstreamError as exc:
             raise HTTPException(exc.status, exc.body) from exc
         except OkwanError as exc:
             raise HTTPException(502, str(exc)) from exc
-        rows = result.rows()
-        if status != "all":
-            rows = [r for r in rows if r["status"] == status]
-        return {"summary": result.summary, "data": rows}
+        return _rest(paged(result.summary, result.rows(), "status", status, limit, cursor))
 
     return router
