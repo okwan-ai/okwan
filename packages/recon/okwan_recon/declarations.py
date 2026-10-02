@@ -6,6 +6,7 @@ adding a declaration here and nothing else.
 """
 from __future__ import annotations
 
+from .across import AcrossRails, Rail
 from .declaration import (
     AmountRef,
     ExactRef,
@@ -14,7 +15,7 @@ from .declaration import (
     Reconciliation,
     ResourceRef,
 )
-from .registry import register
+from .registry import register, register_across
 
 #: Payment rail against a live Shopify order ledger — two real systems,
 #: not two tables. Matches on the merchant-facing order name first, then
@@ -208,4 +209,32 @@ shopify_stripe = register(
     )
 )
 
-__all__ = ["shopify_orders", "shopify_paypal", "shopify_stripe"]
+
+#: The question neither rail declaration can answer alone: was each order
+#: paid once? An order collected on both Stripe and PayPal is a clean,
+#: fee-explained match on each, so the double collection only exists in
+#: the fold.
+#:
+#: Compares each rail's gross take against the order total, not against
+#: what Shopify says it received. Shopify records its own checkout; it
+#: cannot see that a second rail also charged the customer.
+rails = register_across(
+    AcrossRails(
+        name="rails",
+        title="Shopify orders across payment rails",
+        description=(
+            "Fold every payment rail reconciled against the Shopify order "
+            "ledger into one verdict per order: collected once, collected "
+            "twice, split across rails, collected inconsistently, uncollected, "
+            "or unverifiable because a rail could not have read it. Each "
+            "verdict names the rails and carries each rail's discrepancy."
+        ),
+        rails=[
+            Rail(reconciliation="shopify_paypal", collected="amount_minor"),
+            Rail(reconciliation="shopify_stripe", collected="amount"),
+        ],
+        ledger_total="total_price_minor",
+    )
+)
+
+__all__ = ["rails", "shopify_orders", "shopify_paypal", "shopify_stripe"]

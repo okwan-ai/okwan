@@ -12,9 +12,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from okwan_core import CredentialError, OkwanError, UpstreamError
 
-from ..registry import all_reconciliations, get
+from ..across import OUTCOMES, run_across
+from ..registry import all_across, all_reconciliations, get, get_across
 from ..runner import run
-from .mcp import tool_metadata
+from .mcp import across_metadata, tool_metadata
 
 
 def _header_resolver(request: Request):
@@ -36,7 +37,34 @@ def build_router() -> APIRouter:
 
     @router.get("")
     async def list_reconciliations() -> dict[str, Any]:
-        return {"data": [tool_metadata(s) for s in all_reconciliations()]}
+        return {
+            "data": [tool_metadata(s) for s in all_reconciliations()],
+            "across": [across_metadata(s) for s in all_across()],
+        }
+
+    @router.get("/across/{name}")
+    async def read_across(
+        request: Request,
+        name: str,
+        limit: int = Query(100, ge=1, le=1000),
+        outcome: str = Query("all", pattern=f"^(all|{'|'.join(OUTCOMES)})$"),
+    ) -> dict[str, Any]:
+        try:
+            spec = get_across(name)
+        except KeyError:
+            raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
+        try:
+            result = await run_across(spec, _header_resolver(request), max_records=limit)
+        except CredentialError as exc:
+            raise HTTPException(401, str(exc)) from exc
+        except UpstreamError as exc:
+            raise HTTPException(exc.status, exc.body) from exc
+        except OkwanError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        rows = result.rows()
+        if outcome != "all":
+            rows = [r for r in rows if r["outcome"] == outcome]
+        return {"summary": result.summary, "data": rows}
 
     @router.get("/{name}")
     async def read_reconciliation(

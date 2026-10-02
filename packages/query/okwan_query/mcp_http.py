@@ -127,10 +127,13 @@ def _reconcile_tool(max_records: int):
     ) -> dict[str, Any]:
         """Run a named reconciliation across two live systems.
 
-        Call okwan_list_reconciliations first. Reports six outcomes, not
+        Call okwan_list_reconciliations first. Reports seven outcomes, not
         two: agrees, differs with a known cause, differs unexplained,
-        ambiguous, unmatched on either side. `net_unexplained_minor` is
-        the figure to act on — an explained difference is accounted for.
+        ambiguous, unmatched on either side, and unverifiable — the other
+        side could not have read the record, so its absence proves
+        nothing. `net_unexplained_minor` is the figure to act on — an
+        explained difference is accounted for. `match_rate` is null while
+        anything is unverifiable.
         """
         try:
             resolver = await _tenant_resolver(ctx)
