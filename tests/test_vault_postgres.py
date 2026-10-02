@@ -215,3 +215,36 @@ async def test_key_owner(store):
     _, record = await store.issue_key(tenant.id)
     assert await store.key_owner(record.id) == tenant.id
     assert await store.key_owner("key_nope") is None
+
+
+async def test_add_account_to_a_root_tenant(store):
+    from okwan_vault import accounts
+
+    tenant = await store.create_tenant("Acme")
+    email = f"pg-{uuid.uuid4().hex[:8]}@okwan.test"
+    await store.add_account(tenant.id, email, accounts.hash_password("x" * 12))
+
+    tenant_id, stored = await store.account_login(email)
+    assert tenant_id == tenant.id
+    assert accounts.check_password("x" * 12, stored)
+    assert tenant.id in {t.id for t in await store.list_tenants()}
+
+
+async def test_add_account_refusals(store):
+    from okwan_vault.accounts import AccountRefused
+
+    root = await store.create_tenant("Acme")
+    other = await store.create_tenant("Other")
+    child = await store._inner.create_tenant("Merchant", parent_id=root.id)
+    email = f"pg-{uuid.uuid4().hex[:8]}@okwan.test"
+
+    with pytest.raises(AccountRefused, match="no such tenant"):
+        await store.add_account("ten_nope", email, "h")
+    with pytest.raises(AccountRefused, match="not a root tenant"):
+        await store.add_account(child.id, email, "h")
+    await store.add_account(root.id, email, "h")
+    with pytest.raises(AccountRefused, match="already has an account"):
+        await store.add_account(root.id, f"x-{email}", "h")
+    with pytest.raises(AccountRefused, match="already taken"):
+        await store.add_account(other.id, email, "h")
+    assert not await store.account_exists(f"x-{email}")

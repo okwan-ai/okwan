@@ -18,6 +18,7 @@ from pathlib import Path
 import asyncpg
 
 from . import apikey
+from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import ApiKey, SealedCredential, Tenant
@@ -97,6 +98,12 @@ class PostgresStore:
             "SELECT id, name, parent_id, created_at FROM tenants "
             "WHERE parent_id = $1 ORDER BY created_at",
             tenant_id,
+        )
+        return [_tenant(r) for r in rows]
+
+    async def list_tenants(self) -> list[Tenant]:
+        rows = await self.pool.fetch(
+            "SELECT id, name, parent_id, created_at FROM tenants ORDER BY created_at"
         )
         return [_tenant(r) for r in rows]
 
@@ -351,6 +358,34 @@ class PostgresStore:
             "SELECT tenant_id, password_hash FROM accounts WHERE email = $1", email
         )
         return None if row is None else (row["tenant_id"], row["password_hash"])
+
+    async def add_account(self, tenant_id: str, email: str, password_hash: str) -> None:
+        """Attach a login to an existing root tenant.
+
+        The checks give the operator a specific reason; the accounts keys
+        (email, and tenant_id UNIQUE) are what hold under a race, and a
+        violation is mapped back to the same reasons.
+        """
+        async with self.pool.acquire() as con, con.transaction():
+            row = await con.fetchrow(
+                "SELECT parent_id FROM tenants WHERE id = $1 FOR UPDATE", tenant_id
+            )
+            if row is None:
+                raise AccountRefused(f"no such tenant: {tenant_id}")
+            if row["parent_id"] is not None:
+                raise AccountRefused(f"{tenant_id} is not a root tenant")
+            if await con.fetchval("SELECT 1 FROM accounts WHERE tenant_id = $1", tenant_id):
+                raise AccountRefused(f"{tenant_id} already has an account")
+            try:
+                await con.execute(
+                    "INSERT INTO accounts (email, tenant_id, password_hash) "
+                    "VALUES ($1, $2, $3)",
+                    email, tenant_id, password_hash,
+                )
+            except asyncpg.UniqueViolationError as e:
+                if e.constraint_name == "accounts_pkey":
+                    raise AccountRefused(f"{email} is already taken") from None
+                raise AccountRefused(f"{tenant_id} already has an account") from None
 
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
