@@ -306,10 +306,10 @@ async def test_the_mcp_tool_filters_on_the_new_status(monkeypatch):
     assert "cap" in out["rows"][0]["reason"]
 
 
-def test_the_rest_filter_accepts_the_new_statuses():
+def test_the_rest_filter_accepts_the_new_statuses(api_key):
     app = FastAPI()
     app.include_router(build_router())
-    client = TestClient(app)
+    client = TestClient(app, headers=api_key)
     # An unknown reconciliation is a 404 only once the status has passed
     # validation; a rejected status would be a 422 first.
     for status in ("unverifiable_left", "unverifiable_right"):

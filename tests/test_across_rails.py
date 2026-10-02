@@ -329,8 +329,8 @@ def test_the_mcp_server_registers_the_tool():
     assert "reconcile_across_rails" in names
 
 
-def test_the_rest_route_is_generated():
-    client = TestClient(_app())
+def test_the_rest_route_is_generated(api_key):
+    client = TestClient(_app(), headers=api_key)
     listed = client.get("/v1/reconciliations").json()
     assert [a["name"] for a in listed["across"]] == ["rails"]
     assert client.get("/v1/reconciliations/across/nope").status_code == 404

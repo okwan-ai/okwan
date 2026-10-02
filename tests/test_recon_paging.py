@@ -130,7 +130,7 @@ def test_a_stale_cursor_still_returns_the_summary():
 
 # --- REST --------------------------------------------------------------
 
-def _client(monkeypatch, result) -> TestClient:
+def _client(monkeypatch, result, api_key) -> TestClient:
     async def fake(spec, *args, **kw):
         return result
 
@@ -138,12 +138,12 @@ def _client(monkeypatch, result) -> TestClient:
     monkeypatch.setattr(rest, "run_across", fake)
     app = FastAPI()
     app.include_router(rest.build_router())
-    return TestClient(app)
+    return TestClient(app, headers=api_key)
 
 
-def test_rest_pages_and_names_the_page_data(monkeypatch):
+def test_rest_pages_and_names_the_page_data(monkeypatch, api_key):
     result = ReconResult(name=PAIR.name, unmatched_left=[{"name": f"#{i}"} for i in range(3)])
-    client = _client(monkeypatch, result)
+    client = _client(monkeypatch, result, api_key)
     first = client.get(f"/v1/reconciliations/{PAIR.name}", params={"limit": 2}).json()
     assert len(first["data"]) == 2 and first["has_more"] is True
     second = client.get(
@@ -153,16 +153,16 @@ def test_rest_pages_and_names_the_page_data(monkeypatch):
     assert len(second["data"]) == 1 and second["has_more"] is False
 
 
-def test_rest_stale_cursor_is_a_conflict(monkeypatch):
-    client = _client(monkeypatch, ReconResult(name=PAIR.name))
+def test_rest_stale_cursor_is_a_conflict(monkeypatch, api_key):
+    client = _client(monkeypatch, ReconResult(name=PAIR.name), api_key)
     r = client.get(f"/v1/reconciliations/{PAIR.name}", params={"cursor": "garbage"})
     assert r.status_code == 409
 
 
 @pytest.mark.parametrize("status", ["ambiguous", "matched_explained", "matched_discrepant"])
-def test_rest_filter_reaches_every_status(monkeypatch, status):
+def test_rest_filter_reaches_every_status(monkeypatch, status, api_key):
     """These were unreachable: the filter pattern was hand-written."""
-    client = _client(monkeypatch, ReconResult(name=PAIR.name))
+    client = _client(monkeypatch, ReconResult(name=PAIR.name), api_key)
     assert client.get(f"/v1/reconciliations/{PAIR.name}", params={"status": status}).status_code == 200
 
 
@@ -197,10 +197,16 @@ def _tenant(monkeypatch, configured: set[str]) -> None:
     def resolver(name: str, fields: tuple[str, ...]) -> dict[str, str]:
         return {f: ("x" if name in configured else "") for f in fields}
 
-    async def tenant(ctx):
+    from okwan_vault.models import Tenant
+
+    async def caller(ctx):
+        return Tenant(id="ten_test", name="Test tenant"), resolver
+
+    async def tenant_resolver(ctx):
         return resolver
 
-    monkeypatch.setattr(mcp_http, "_tenant_resolver", tenant)
+    monkeypatch.setattr(mcp_http, "_caller", caller)
+    monkeypatch.setattr(mcp_http, "_tenant_resolver", tenant_resolver)
 
 
 async def test_hosted_list_includes_folds_and_their_runnability(monkeypatch):

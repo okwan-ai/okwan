@@ -52,12 +52,12 @@ def _bearer(ctx: Context) -> str:
     return key
 
 
-async def _tenant_resolver(ctx: Context):
+async def _caller(ctx: Context):
     """Resolve the caller to a tenant and load their credentials once.
 
-    Returns a synchronous resolver over a plain dict, matching the shape
-    the SDK expects below this point, and keeping plaintext scoped to one
-    tool call.
+    Returns the tenant, for quota and metering, and a synchronous resolver
+    over a plain dict, matching the shape the SDK expects below this point
+    and keeping plaintext scoped to one tool call.
     """
     from okwan_api.auth import get_store
 
@@ -68,7 +68,27 @@ async def _tenant_resolver(ctx: Context):
 
     from okwan_vault import resolver_for
 
-    return await resolver_for(store, tenant.id)
+    return tenant, await resolver_for(store, tenant.id)
+
+
+async def _tenant_resolver(ctx: Context):
+    return (await _caller(ctx))[1]
+
+
+async def _over_quota(tenant) -> str | None:
+    """The REST gate's 402, as data an agent can read.
+
+    Only the tools that read upstream are gated and metered: listing what
+    exists is free on every surface, as `/v1/query/tables` is on REST.
+    """
+    from fastapi import HTTPException
+    from okwan_api.auth import check_quota
+
+    try:
+        await check_quota(tenant)
+    except HTTPException as exc:
+        return str(exc.detail)
+    return None
 
 
 def _recon_blockers(spec: Reconciliation, resolver) -> list[str]:
@@ -171,9 +191,11 @@ def _reconcile_tool():
         next page. The summary always covers the whole result.
         """
         try:
-            resolver = await _tenant_resolver(ctx)
+            tenant, resolver = await _caller(ctx)
         except Unauthenticated as exc:
             return {"error": str(exc), "rows": [], "summary": {}}
+        if (limited := await _over_quota(tenant)) is not None:
+            return {"error": limited, "rows": [], "summary": {}}
 
         spec: Reconciliation | AcrossRails
         try:
@@ -210,6 +232,9 @@ def _reconcile_tool():
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as data
             return {"error": f"{type(exc).__name__}: {exc}", "rows": [], "summary": {}}
 
+        from okwan_api.auth import meter
+
+        await meter(tenant, "mcp:reconcile")
         return paged(result.summary, result.rows(), key, status, limit, cursor)
 
     kw = inspect.Parameter.KEYWORD_ONLY
@@ -264,13 +289,19 @@ def build_server(max_records: int = DEFAULT_LIMIT):
         WITH only.
         """
         try:
-            resolver = await _tenant_resolver(ctx)
+            tenant, resolver = await _caller(ctx)
         except Unauthenticated as exc:
             return {"error": str(exc), "rows": [], "row_count": 0}
+        if (limited := await _over_quota(tenant)) is not None:
+            return {"error": limited, "rows": [], "row_count": 0}
 
         session = QuerySession(resolver=resolver, max_records=min(limit, max_records))
         try:
-            return await session.query(sql)
+            result = await session.query(sql)
+            from okwan_api.auth import meter
+
+            await meter(tenant, "mcp:query")
+            return result
         except UnsafeStatement as exc:
             return {"error": str(exc), "rows": [], "row_count": 0}
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as data
