@@ -18,6 +18,7 @@ already the opaque cursor `CursorPage` expects.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -44,6 +45,11 @@ from .schemas import (
 )
 
 API_VERSION = "2026-07"
+
+#: Without the `read_all_orders` scope the Admin API returns only orders
+#: from the last 60 days, and says nothing about the rest.
+UNSCOPED_ORDER_DAYS = 60
+ALL_ORDERS_SCOPE = "read_all_orders"
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +179,7 @@ query ListOrders($first: Int!, $after: String, $query: String) {
     edges { node { %s } }
     pageInfo { hasNextPage endCursor }
   }
+  currentAppInstallation { accessScopes { handle } }
 }
 """ % _ORDER_FIELDS
 
@@ -228,7 +235,33 @@ async def list_orders(ctx: ConnectorContext, params: ListOrdersIn) -> OrderPage:
         query=_search_query(params),
     )
     items, cursor, more = _page(data.get("orders") or {}, _order)
-    return OrderPage(items=items, next_cursor=cursor, has_more=more)
+    return OrderPage(
+        items=items,
+        next_cursor=cursor,
+        has_more=more,
+        span_start=_read_from(data, params.created_at_min, datetime.now(UTC)),
+    )
+
+
+def _read_from(
+    data: dict[str, Any], created_at_min: datetime | None, now: datetime
+) -> datetime | None:
+    """The earliest order this list can return, or None when unbounded.
+
+    Without `read_all_orders` Shopify drops orders older than 60 days
+    silently. A ledger that looks complete while missing its history
+    turns every older payment into a false "payment with no order", so
+    the bound is stated rather than assumed away. An unreadable scope
+    list is treated as the scope being absent: overstating what was read
+    is the failure this exists to prevent.
+    """
+    installation = data.get("currentAppInstallation") or {}
+    scopes = {s.get("handle") for s in installation.get("accessScopes") or []}
+    bounds = [created_at_min] if created_at_min else []
+    if ALL_ORDERS_SCOPE not in scopes:
+        bounds.append(now - timedelta(days=UNSCOPED_ORDER_DAYS))
+    bounds = [b if b.tzinfo else b.replace(tzinfo=UTC) for b in bounds]
+    return max(bounds) if bounds else None
 
 
 @orders.operation(

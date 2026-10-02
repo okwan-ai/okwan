@@ -89,10 +89,8 @@ class ReconResult:
 
     @property
     def summary(self) -> dict[str, Any]:
-        # Over orders whose payment could have been read. An order whose
-        # rail was not read for its date is neither collected nor unpaid,
-        # and counting it either way moves the rate on no evidence.
         total = len(self.matched) + len(self.unmatched_left)
+        unverifiable = len(self.unverifiable_left) + len(self.unverifiable_right)
         discrepant = [p for p in self.matched if p.agrees is False]
         unexplained = [p for p in discrepant if p.explained_by is None]
         return {
@@ -118,10 +116,19 @@ class ReconResult:
             # as either would overstate what the data supports.
             "ambiguous": len(self.ambiguous),
             # Records whose counterpart side was not read for them. Not
-            # findings, and outside match_rate. Each row carries why.
+            # findings. Each row carries why.
             "unverifiable_left": len(self.unverifiable_left),
             "unverifiable_right": len(self.unverifiable_right),
-            "match_rate": round(len(self.matched) / total, 4) if total else 0.0,
+            # None while anything is unverifiable. Excluding those records
+            # gives a rate over whatever happened to be read — 1.0 from a
+            # three-record read — and including them counts them on no
+            # evidence. No figure is better than one the data cannot support;
+            # the counts above remain.
+            "match_rate": (
+                None if unverifiable
+                else round(len(self.matched) / total, 4) if total
+                else 0.0
+            ),
             "coverage": (
                 None
                 if self.left_coverage is None and self.right_coverage is None
