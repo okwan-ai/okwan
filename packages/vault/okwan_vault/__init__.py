@@ -1,4 +1,4 @@
-from . import apikey
+from . import accounts, apikey
 from .authz import Forbidden, ancestors, may_administer, require_administer
 from .crypto import new_key, open_sealed, seal
 from .keys import EnvMasterKey, KmsMasterKey, MasterKeyProvider, from_env
@@ -21,6 +21,7 @@ __all__ = [
     "SealedCredential",
     "Store",
     "Tenant",
+    "accounts",
     "ancestors",
     "apikey",
     "billing_root",

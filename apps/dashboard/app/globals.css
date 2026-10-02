@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+/* ── Okwan brand tokens (OKWAN_PROJECT.md §2.1) ─────────────────── */
+@theme {
+  --color-canvas: #f4f1eb;
+  --color-surface: #fdfcfa;
+  --color-ink: #111111;
+  --color-ink-soft: #4a4a45;
+  --color-volt: #ffd400;
+  --color-volt-deep: #e8b800;
+  --color-navy: #0d1b2e;
+  --color-sky: #b9c6f2;
+  --color-line: #e2ded4;
+
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body: "Poppins", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-volt);
+  color: var(--color-ink);
+}
+
+/* Primary: volt fill, black text. Secondary: outlined black on cream. §2.3 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  padding: 0.6rem 1.25rem;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: background-color 120ms, opacity 120ms;
+}
+.btn-primary { background: var(--color-volt); color: var(--color-ink); }
+.btn-primary:hover { background: var(--color-volt-deep); }
+.btn-secondary { border: 1.5px solid var(--color-ink); background: transparent; }
+.btn-secondary:hover { background: var(--color-surface); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.field {
+  width: 100%;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+}
+.field:focus { outline: 2px solid var(--color-ink); outline-offset: 1px; }
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+}

@@ -1,9 +1,8 @@
 """Vault administration.
 
-Deliberately a CLI rather than HTTP routes. Onboarding an ISV is a thing
-you do, not a thing the internet does, and an admin API that can mint
-tenants is an attack surface with no current user. Add it when self-serve
-signup exists; until then there is nothing exposed to protect.
+Operator tooling. Root tenants also come from self-serve signup now
+(`okwan_api/signup.py`, gated on a verified email); this remains for
+provisioning by hand and for inspecting a tenant.
 
     python -m okwan_vault keygen
     python -m okwan_vault tenant create "Acme ISV"

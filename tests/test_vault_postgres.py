@@ -128,3 +128,90 @@ async def test_deleting_a_tenant_removes_its_secrets(store):
         "SELECT count(*) FROM credentials WHERE tenant_id = $1", tenant.id
     )
     assert count == 0
+
+
+# ── self-serve accounts ─────────────────────────────────────────────
+
+@pytest.fixture
+async def accounts_store():
+    """Raw store plus cleanup by address, since verification creates the
+    tenant inside the store rather than through a tracked call."""
+    s = await PostgresStore(DSN, EnvMasterKey(new_key())).connect()
+    emails: list[str] = []
+    try:
+        yield s, emails
+    finally:
+        for email in emails:
+            await s.pool.execute(
+                "DELETE FROM tenants WHERE id IN "
+                "(SELECT tenant_id FROM accounts WHERE email = $1)", email)
+            await s.pool.execute("DELETE FROM signups WHERE email = $1", email)
+        await s.close()
+
+
+async def _pending(s, emails):
+    from okwan_vault import accounts
+
+    email = f"pg-{uuid.uuid4().hex[:8]}@okwan.test"
+    emails.append(email)
+    _, token_hash = accounts.new_token(accounts.VERIFY_PREFIX)
+    await s.add_signup(email, accounts.hash_password("correct horse battery"),
+                       token_hash, accounts.expires(accounts.SIGNUP_TTL))
+    return email, token_hash
+
+
+async def test_signup_completes_once_with_one_tenant(accounts_store):
+    s, emails = accounts_store
+    email, token_hash = await _pending(s, emails)
+
+    assert (await s.signup_for(token_hash))[0] == email
+    tenant = await s.complete_signup(token_hash)
+    assert tenant is not None and tenant.is_root
+    assert await s.complete_signup(token_hash) is None
+    assert (await s.account_login(email))[0] == tenant.id
+
+
+async def test_concurrent_verification_yields_one_tenant(accounts_store):
+    """Two tokens for one address verified at once: the accounts key holds."""
+    import asyncio
+
+    from okwan_vault import accounts
+
+    s, emails = accounts_store
+    email, first = await _pending(s, emails)
+    _, second = accounts.new_token(accounts.VERIFY_PREFIX)
+    await s.add_signup(email, accounts.hash_password("x" * 12), second,
+                       accounts.expires(accounts.SIGNUP_TTL))
+
+    results = await asyncio.gather(s.complete_signup(first), s.complete_signup(second))
+    assert sum(r is not None for r in results) == 1
+    n = await s.pool.fetchval(
+        "SELECT count(*) FROM tenants WHERE name = $1", email)
+    assert n == 1
+
+
+async def test_session_round_trip_and_expiry(accounts_store):
+    from datetime import UTC, datetime, timedelta
+
+    from okwan_vault import accounts
+
+    s, emails = accounts_store
+    _, token_hash = await _pending(s, emails)
+    tenant = await s.complete_signup(token_hash)
+
+    _, live = accounts.new_token(accounts.SESSION_PREFIX)
+    _, stale = accounts.new_token(accounts.SESSION_PREFIX)
+    await s.create_session(tenant.id, live, accounts.expires(accounts.SESSION_TTL))
+    await s.create_session(tenant.id, stale, datetime.now(UTC) - timedelta(seconds=1))
+
+    assert (await s.tenant_for_session(live)).id == tenant.id
+    assert await s.tenant_for_session(stale) is None
+    await s.delete_session(live)
+    assert await s.tenant_for_session(live) is None
+
+
+async def test_key_owner(store):
+    tenant = await store.create_tenant("Acme")
+    _, record = await store.issue_key(tenant.id)
+    assert await store.key_owner(record.id) == tenant.id
+    assert await store.key_owner("key_nope") is None

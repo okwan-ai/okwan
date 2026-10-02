@@ -19,7 +19,8 @@ import os
 from fastapi import Depends, Header, HTTPException
 
 from okwan_vault import (
-    EnvMasterKey, MemoryStore, PostgresStore, Store, from_env, new_key, resolver_for,
+    EnvMasterKey, MemoryStore, PostgresStore, Store, accounts, from_env, new_key,
+    resolver_for,
 )
 from okwan_vault.models import Tenant
 from okwan_vault.usage import Quota, billing_root, month_start
@@ -97,6 +98,27 @@ async def current_tenant(
     if tenant is None:
         raise HTTPException(401, "invalid or revoked API key")
     return tenant
+
+
+async def admin_actor(
+    authorization: str = Header(default=""),
+    x_okwan_key: str = Header(default=""),
+) -> Tenant:
+    """An API key or a dashboard session, for the admin routes only.
+
+    Data routes and the hosted MCP stay on `current_tenant`, so a session
+    can provision its tenant but cannot read from a rail — that still
+    takes a key the customer chose to issue.
+    """
+    token = x_okwan_key.strip()
+    if not token and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if token.startswith(f"{accounts.SESSION_PREFIX}_"):
+        tenant = await get_store().tenant_for_session(accounts.hash_token(token))
+        if tenant is None:
+            raise HTTPException(401, "session expired — sign in again")
+        return tenant
+    return await current_tenant(authorization=authorization, x_okwan_key=x_okwan_key)
 
 
 async def load_credentials(tenant: Tenant, connector_name: str, fields: tuple[str, ...]):

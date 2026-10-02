@@ -12,6 +12,7 @@ authenticating a request stays O(1) as tenants accumulate.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import asyncpg
@@ -23,6 +24,10 @@ from .models import ApiKey, SealedCredential, Tenant
 from .usage import DEFAULT_PLAN, PLANS, hour_bucket
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
+
+
+class _Lost(Exception):
+    """Raised inside a transaction to roll it back."""
 
 
 def _tenant(row) -> Tenant:
@@ -256,3 +261,116 @@ class PostgresStore:
         for r in rows:
             out.setdefault(r["connector"], []).append(r["field_name"])
         return out
+
+    async def key_owner(self, key_id: str) -> str | None:
+        return await self.pool.fetchval(
+            "SELECT tenant_id FROM api_keys WHERE id = $1", key_id
+        )
+
+    # ── accounts ────────────────────────────────────────────────────
+
+    async def add_signup(
+        self, email: str, password_hash: str, token_hash: str, expires_at: datetime
+    ) -> None:
+        await self.pool.execute(
+            "INSERT INTO signups (token_hash, email, password_hash, expires_at) "
+            "VALUES ($1, $2, $3, $4)",
+            token_hash, email, password_hash, expires_at,
+        )
+
+    async def signup_for(self, token_hash: str) -> tuple[str, str] | None:
+        row = await self.pool.fetchrow(
+            "SELECT email, password_hash FROM signups "
+            "WHERE token_hash = $1 AND expires_at > now()",
+            token_hash,
+        )
+        return None if row is None else (row["email"], row["password_hash"])
+
+    async def complete_signup(self, token_hash: str) -> Tenant | None:
+        """Consume the token and create the root tenant, or neither.
+
+        Verifications for one address are serialized by an advisory lock
+        on the address, taken before any row is touched. Without it, two
+        tokens for one address deadlock: each deletes its own signup row,
+        then the winner's sweep of the address's other signups waits on the
+        loser's row while the loser waits on the winner's account insert.
+        Under the lock, the loser finds its token already swept and gets
+        None. The DELETE ... RETURNING guards one token used twice, and the
+        accounts primary key remains the last word on one tenant per address.
+        """
+        try:
+            return await self._complete_signup(token_hash)
+        except _Lost:
+            # The insert raced a verification for the same address; the
+            # transaction rolled back, so no orphan tenant remains.
+            return None
+
+    async def _complete_signup(self, token_hash: str) -> Tenant | None:
+        async with self.pool.acquire() as con, con.transaction():
+            email = await con.fetchval(
+                "SELECT email FROM signups WHERE token_hash = $1", token_hash
+            )
+            if email is None:
+                return None
+            await con.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", email
+            )
+            row = await con.fetchrow(
+                "DELETE FROM signups WHERE token_hash = $1 AND expires_at > now() "
+                "RETURNING email, password_hash",
+                token_hash,
+            )
+            if row is None:
+                return None
+            email = row["email"]
+            if await con.fetchval("SELECT 1 FROM accounts WHERE email = $1", email):
+                return None
+            tenant = _tenant(await con.fetchrow(
+                "INSERT INTO tenants (id, name, parent_id) VALUES ($1, $2, NULL) "
+                "RETURNING id, name, parent_id, created_at",
+                f"ten_{uuid.uuid4().hex[:16]}", email,
+            ))
+            try:
+                await con.execute(
+                    "INSERT INTO accounts (email, tenant_id, password_hash) "
+                    "VALUES ($1, $2, $3)",
+                    email, tenant.id, row["password_hash"],
+                )
+            except asyncpg.UniqueViolationError:
+                raise _Lost() from None
+            await con.execute("DELETE FROM signups WHERE email = $1", email)
+            return tenant
+
+    async def account_exists(self, email: str) -> bool:
+        return bool(await self.pool.fetchval(
+            "SELECT 1 FROM accounts WHERE email = $1", email
+        ))
+
+    async def account_login(self, email: str) -> tuple[str, str] | None:
+        row = await self.pool.fetchrow(
+            "SELECT tenant_id, password_hash FROM accounts WHERE email = $1", email
+        )
+        return None if row is None else (row["tenant_id"], row["password_hash"])
+
+    async def create_session(
+        self, tenant_id: str, token_hash: str, expires_at: datetime
+    ) -> None:
+        await self.pool.execute(
+            "INSERT INTO sessions (token_hash, tenant_id, expires_at) "
+            "VALUES ($1, $2, $3)",
+            token_hash, tenant_id, expires_at,
+        )
+
+    async def tenant_for_session(self, token_hash: str) -> Tenant | None:
+        row = await self.pool.fetchrow(
+            "SELECT t.id, t.name, t.parent_id, t.created_at "
+            "FROM sessions s JOIN tenants t ON t.id = s.tenant_id "
+            "WHERE s.token_hash = $1 AND s.expires_at > now()",
+            token_hash,
+        )
+        return None if row is None else _tenant(row)
+
+    async def delete_session(self, token_hash: str) -> None:
+        await self.pool.execute(
+            "DELETE FROM sessions WHERE token_hash = $1", token_hash
+        )

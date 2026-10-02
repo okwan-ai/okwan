@@ -1,0 +1,99 @@
+import "server-only";
+import { cookies } from "next/headers";
+
+/**
+ * The dashboard's only route to the Okwan API. Server-side by construction:
+ * the session token lives in an httpOnly cookie the browser cannot read,
+ * and every call that carries it is made from here.
+ */
+
+export const SESSION_COOKIE = "okwan_session";
+const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // matches the API's SESSION_TTL
+
+export function apiUrl(): string {
+  return (process.env.OKWAN_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+}
+
+export type ApiResult<T> = { ok: true; status: number; data: T } | {
+  ok: false;
+  status: number;
+  detail: string;
+};
+
+export async function api<T>(
+  path: string,
+  init: { method?: string; body?: unknown; session?: string | null } = {},
+): Promise<ApiResult<T>> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (init.session) headers.Authorization = `Bearer ${init.session}`;
+  let res: Response;
+  try {
+    res = await fetch(`${apiUrl()}${path}`, {
+      method: init.method ?? "GET",
+      headers,
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, status: 502, detail: "the Okwan API is unreachable" };
+  }
+  if (res.status === 204) return { ok: true, status: 204, data: undefined as T };
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, status: res.status, detail: describe(payload) };
+  return { ok: true, status: res.status, data: payload as T };
+}
+
+/** FastAPI errors are a string or a list of {loc, msg}. Never an input value:
+ * the API's 422 handler strips those before they leave. */
+function describe(payload: { detail?: unknown }): string {
+  const d = payload?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return d
+      .map((e: { loc?: unknown[]; msg?: string }) =>
+        `${(e.loc ?? []).slice(1).join(".")}: ${e.msg ?? "invalid"}`)
+      .join("; ");
+  }
+  return "request failed";
+}
+
+export async function session(): Promise<string | null> {
+  return (await cookies()).get(SESSION_COOKIE)?.value ?? null;
+}
+
+export async function setSession(token: string): Promise<void> {
+  (await cookies()).set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE,
+  });
+}
+
+export async function clearSession(): Promise<void> {
+  (await cookies()).delete(SESSION_COOKIE);
+}
+
+export type Me = { id: string; name: string };
+
+/** The signed-in tenant, or null when the session is missing or expired. */
+export async function me(): Promise<Me | null> {
+  const token = await session();
+  if (!token) return null;
+  const r = await api<{ self: Me }>("/v1/tenants", { session: token });
+  return r.ok ? r.data.self : null;
+}
+
+/** Same-origin check for mutating route handlers. SameSite=Lax already keeps
+ * the cookie off cross-site POSTs; this refuses them outright as well. */
+export function sameOrigin(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return false;
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}

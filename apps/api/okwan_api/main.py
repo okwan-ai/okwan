@@ -15,7 +15,9 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import okwan_paystack.connector  # noqa: F401  (registers the connector)
@@ -34,6 +36,7 @@ from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.admin import build_router as build_admin_router
+from okwan_api.signup import build_router as build_signup_router
 from okwan_api.auth import (
     check_quota, close_store, current_tenant, load_credentials, meter, open_store,
 )
@@ -96,6 +99,15 @@ class ConnectorInfo(BaseModel):
     version: str
     description: str
     resources: dict[str, list[str]]
+    #: What the vault needs for this connector, from its auth adapter.
+    credential_fields: list[str]
+    #: The list call a credential test runs, or None when none can run blind.
+    probe: str | None
+
+
+def _probe_name(c: Connector) -> str | None:
+    probe = c.probe()
+    return None if probe is None else f"{c.name}.{probe[0].name}.{probe[1].name}"
 
 
 @app.get("/v1/connectors", response_model=list[ConnectorInfo])
@@ -106,6 +118,8 @@ async def list_connectors() -> list[ConnectorInfo]:
             version=c.version,
             description=c.description,
             resources={r.name: sorted(r.operations) for r in c.resources.values()},
+            credential_fields=list(c.auth.required_fields),
+            probe=_probe_name(c),
         )
         for c in all_connectors()
     ]
@@ -175,6 +189,22 @@ for _connector in all_connectors():
 app.include_router(build_router())
 app.include_router(build_query_router())
 app.include_router(build_admin_router())
+app.include_router(build_signup_router())
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 without echoing the input.
+
+    FastAPI's default puts each failing value back in the response, and on
+    the credential, signup and sign-in routes that value is a secret or a
+    password. Location and reason are enough to fix a request.
+    """
+    errors = [
+        {k: v for k, v in e.items() if k in ("loc", "msg", "type")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 # Hosted MCP. Mounted rather than run as a separate service so agents
 # authenticate through the same vault the REST routes use — one tenant

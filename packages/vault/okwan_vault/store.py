@@ -11,7 +11,7 @@ credentials exist only inside a single function's stack frame.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Protocol
 
 from . import apikey
@@ -39,6 +39,19 @@ class Store(Protocol):
     async def usage_since(self, root_id: str, since) -> int: ...
     async def get_plan(self, tenant_id: str) -> tuple[str, int]: ...
     async def set_plan(self, tenant_id: str, name: str) -> None: ...
+    async def key_owner(self, key_id: str) -> str | None: ...
+    async def add_signup(
+        self, email: str, password_hash: str, token_hash: str, expires_at: datetime
+    ) -> None: ...
+    async def signup_for(self, token_hash: str) -> tuple[str, str] | None: ...
+    async def complete_signup(self, token_hash: str) -> Tenant | None: ...
+    async def account_exists(self, email: str) -> bool: ...
+    async def account_login(self, email: str) -> tuple[str, str] | None: ...
+    async def create_session(
+        self, tenant_id: str, token_hash: str, expires_at: datetime
+    ) -> None: ...
+    async def tenant_for_session(self, token_hash: str) -> Tenant | None: ...
+    async def delete_session(self, token_hash: str) -> None: ...
 
 
 class MemoryStore:
@@ -51,6 +64,12 @@ class MemoryStore:
         self._creds: dict[tuple[str, str, str], SealedCredential] = {}
         self._usage: dict[tuple, int] = {}
         self._plans: dict[str, str] = {}
+        # token_hash → (email, password_hash, expires_at)
+        self._signups: dict[str, tuple[str, str, datetime]] = {}
+        # email → (tenant_id, password_hash)
+        self._accounts: dict[str, tuple[str, str]] = {}
+        # token_hash → (tenant_id, expires_at)
+        self._sessions: dict[str, tuple[str, datetime]] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -173,6 +192,57 @@ class MemoryStore:
             if tid == tenant_id:
                 out.setdefault(connector, []).append(field_name)
         return out
+
+    async def key_owner(self, key_id: str) -> str | None:
+        record = self._keys.get(key_id)
+        return None if record is None else record.tenant_id
+
+    # ── accounts ────────────────────────────────────────────────────
+
+    async def add_signup(
+        self, email: str, password_hash: str, token_hash: str, expires_at: datetime
+    ) -> None:
+        self._signups[token_hash] = (email, password_hash, expires_at)
+
+    async def signup_for(self, token_hash: str) -> tuple[str, str] | None:
+        found = self._signups.get(token_hash)
+        if found is None or found[2] <= datetime.now(UTC):
+            return None
+        return found[0], found[1]
+
+    async def complete_signup(self, token_hash: str) -> Tenant | None:
+        found = await self.signup_for(token_hash)
+        self._signups.pop(token_hash, None)
+        if found is None:
+            return None
+        email, password_hash = found
+        if email in self._accounts:
+            return None
+        tenant = await self.create_tenant(email)
+        self._accounts[email] = (tenant.id, password_hash)
+        for other in [h for h, s in self._signups.items() if s[0] == email]:
+            del self._signups[other]
+        return tenant
+
+    async def account_exists(self, email: str) -> bool:
+        return email in self._accounts
+
+    async def account_login(self, email: str) -> tuple[str, str] | None:
+        return self._accounts.get(email)
+
+    async def create_session(
+        self, tenant_id: str, token_hash: str, expires_at: datetime
+    ) -> None:
+        self._sessions[token_hash] = (tenant_id, expires_at)
+
+    async def tenant_for_session(self, token_hash: str) -> Tenant | None:
+        found = self._sessions.get(token_hash)
+        if found is None or found[1] <= datetime.now(UTC):
+            return None
+        return self._tenants.get(found[0])
+
+    async def delete_session(self, token_hash: str) -> None:
+        self._sessions.pop(token_hash, None)
 
 
 async def resolver_for(store: Store, tenant_id: str, connectors=None):

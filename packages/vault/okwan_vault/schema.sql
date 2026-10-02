@@ -61,3 +61,34 @@ CREATE TABLE IF NOT EXISTS plans (
     monthly_requests bigint NOT NULL,
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
+
+-- ── self-serve accounts ─────────────────────────────────────────────
+-- A signup is a claim on an address, not an account: it owns nothing
+-- until its token returns. The password hash lives here, per token, so
+-- verification can require the password that created this signup and
+-- not whichever one was set last.
+CREATE TABLE IF NOT EXISTS signups (
+    token_hash     text PRIMARY KEY,
+    email          text NOT NULL,
+    password_hash  text NOT NULL,
+    expires_at     timestamptz NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signups_email_idx ON signups (email);
+
+-- One tenant per address, held by two constraints rather than a check:
+-- the email is the key, and a tenant has at most one owning address.
+CREATE TABLE IF NOT EXISTS accounts (
+    email          text PRIMARY KEY,
+    tenant_id      text NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+    password_hash  text NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  text PRIMARY KEY,
+    tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    expires_at  timestamptz NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
