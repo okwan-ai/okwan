@@ -43,7 +43,7 @@ def build_router() -> APIRouter:
         request: Request,
         name: str,
         limit: int = Query(100, ge=1, le=1000),
-        status: str = Query("all", pattern="^(all|matched|unmatched_left|unmatched_right)$"),
+        status: str = Query("all", pattern="^(all|matched|unmatched_left|unmatched_right|unverifiable_left|unverifiable_right)$"),
     ) -> dict[str, Any]:
         try:
             spec = get(name)

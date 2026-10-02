@@ -15,10 +15,8 @@ _COLUMNS = (
     ("status", "VARCHAR"),
     ("rule", "VARCHAR"),
     ("confidence", "DOUBLE"),
-    # False on an unmatched row whose counterpart side did not read its
-    # date: not a finding. Filter on it before calling anything unpaid.
-    ("counterpart_read", "BOOLEAN"),
-    ("caveat", "VARCHAR"),
+    # Why an unverifiable row could not be judged; null on every other.
+    ("reason", "VARCHAR"),
     ("left_record", "JSON"),
     ("right_record", "JSON"),
 )
@@ -38,8 +36,7 @@ def materialize_view(con: Any, spec: Reconciliation, result: ReconResult) -> str
             row["status"],
             row["rule"],
             row["confidence"],
-            row["counterpart_read"],
-            row["caveat"],
+            row["reason"],
             json.dumps(row["left"], default=str) if row["left"] is not None else None,
             json.dumps(row["right"], default=str) if row["right"] is not None else None,
         )

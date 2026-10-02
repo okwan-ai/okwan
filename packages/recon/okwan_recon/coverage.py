@@ -37,7 +37,7 @@ class Coverage:
         """Whether a counterpart dated `at` would have been fetched here.
 
         Returns the verdict and, when False, why — phrased for the record
-        on the other side, since that is where the caveat is shown.
+        on the other side, which is reported unverifiable with it.
         """
         if self.truncated:
             return False, (
