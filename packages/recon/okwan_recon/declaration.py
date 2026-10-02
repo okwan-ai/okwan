@@ -224,7 +224,27 @@ class Reconciliation(Frozen):
         description="Known causes that reclassify a discrepancy as explained",
     )
     identity: MSISDN | None = None
+    lookback: str | None = Field(
+        default=None,
+        description=(
+            "How far back to read, in the same grammar as a Fuzzy window "
+            "('90d', '48h'). Resolved at call time to start_date/end_date and "
+            "passed to each side whose list input accepts them; a side that "
+            "does not is read as it would be without it."
+        ),
+    )
     max_records: int = Field(default=500, ge=1, le=10_000)
+
+    @field_validator("lookback")
+    @classmethod
+    def _check_lookback(cls, v: str | None) -> str | None:
+        if v is not None:
+            parse_window(v)
+        return v
+
+    @property
+    def lookback_delta(self) -> timedelta | None:
+        return parse_window(self.lookback) if self.lookback else None
 
     @field_validator("name")
     @classmethod
