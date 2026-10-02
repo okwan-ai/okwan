@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import logging
 import math
 import os
 import secrets
@@ -126,16 +125,12 @@ def client_ip(request: Request) -> str:
     chain = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")
              if p.strip()]
     if matched and forwarded:
-        chosen, via = forwarded, "dashboard"
-    elif cloudflare:
-        chosen, via = cloudflare, "cloudflare"
-    elif hops and len(chain) >= hops:
-        chosen, via = chain[-hops], "chain"
-    else:
-        chosen, via = (request.client.host if request.client else "unknown"), "peer"
-    if os.environ.get("OKWAN_LOG_FORWARDED") == "1":
-        _log_forwarded(chain, bool(forwarded), matched, via, chosen)
-    return chosen
+        return forwarded
+    if cloudflare:
+        return cloudflare
+    if hops and len(chain) >= hops:
+        return chain[-hops]
+    return request.client.host if request.client else "unknown"
 
 
 def _address(value: str) -> str:
@@ -144,36 +139,6 @@ def _address(value: str) -> str:
         return str(ipaddress.ip_address(value.strip()))
     except ValueError:
         return ""
-
-
-# TEMPORARY DIAGNOSTIC — remove once the Render hop is confirmed (§10 item 1).
-# Logs exactly four things: the X-Forwarded-For chain, whether
-# X-Okwan-Client-IP was present (not its value), whether the dashboard
-# secret matched (never the secret), and the address chosen. Nothing else
-# from the request. Its own handler, because uvicorn leaves the root
-# logger at WARNING and an INFO record from this module would be dropped.
-_forwarded_log: logging.Logger | None = None
-
-
-def _log_forwarded(chain: list[str], header_present: bool, matched: bool,
-                   via: str, chosen: str) -> None:
-    global _forwarded_log
-    if _forwarded_log is None:
-        log = logging.getLogger("okwan_api.forwarded")
-        log.setLevel(logging.INFO)
-        if not log.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
-            log.addHandler(handler)
-        log.propagate = False
-        _forwarded_log = log
-    # %r on the chain: header values are client-written, and repr keeps
-    # one request on one log line whatever they contain.
-    _forwarded_log.info(
-        "x-forwarded-for=%r x-okwan-client-ip=%s dashboard-secret=%s via=%s chose=%r",
-        chain, "present" if header_present else "absent",
-        "matched" if matched else "not-matched", via, chosen,
-    )
 
 
 def enforce(request: Request, *checks: tuple[Rule, str]) -> None:
