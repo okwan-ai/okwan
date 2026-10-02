@@ -32,7 +32,6 @@ from .ratelimit import (
     off_loop,
 )
 
-_EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 _ACCEPTED = {
     "status": "pending",
     "detail": "if this address can be registered, a verification link is on its way",
@@ -40,8 +39,8 @@ _ACCEPTED = {
 
 
 class SignupIn(BaseModel):
-    email: str = Field(max_length=254, pattern=_EMAIL)
-    password: str = Field(min_length=accounts.MIN_PASSWORD, max_length=256)
+    email: str = Field(max_length=254, pattern=accounts.EMAIL_PATTERN)
+    password: str = Field(min_length=accounts.MIN_PASSWORD, max_length=accounts.MAX_PASSWORD)
 
 
 class VerifyIn(BaseModel):

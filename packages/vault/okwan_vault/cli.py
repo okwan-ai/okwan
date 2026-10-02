@@ -9,6 +9,8 @@ provisioning by hand and for inspecting a tenant.
     python -m okwan_vault key issue ten_abc123
     python -m okwan_vault cred set ten_abc123 stripe secret_key
     python -m okwan_vault tenant show ten_abc123
+    python -m okwan_vault tenant list
+    python -m okwan_vault account add ten_abc123 founder@acme.com
 """
 from __future__ import annotations
 
@@ -16,8 +18,10 @@ import asyncio
 import base64
 import getpass
 import os
+import re
 import sys
 
+from . import accounts
 from .crypto import new_key
 from .keys import from_env
 from .postgres import PostgresStore
@@ -61,6 +65,60 @@ async def tenant_show(tenant_id: str) -> None:
                 print(f"  {connector:12} {', '.join(sorted(fields))}")
     finally:
         await store.close()
+
+
+async def tenant_list() -> None:
+    store = await _store()
+    try:
+        for t in await store.list_tenants():
+            print(f"{t.id}  {'root' if t.is_root else 'child of ' + t.parent_id:<32}  {t.name}")
+    finally:
+        await store.close()
+
+
+def _read_password() -> str:
+    """From OKWAN_ACCOUNT_PASSWORD, else piped stdin. Not getpass: it opens
+    /dev/tty directly and hangs in Codespaces (§11). A terminal on stdin is
+    refused rather than read, because typing there echoes the password."""
+    password = os.environ.get("OKWAN_ACCOUNT_PASSWORD")
+    if password is None:
+        if sys.stdin.isatty():
+            sys.exit("set OKWAN_ACCOUNT_PASSWORD or pipe the password on stdin")
+        password = sys.stdin.readline().rstrip("\r\n")
+    return password
+
+
+async def add_account(store, tenant_id: str, email: str, password: str) -> str:
+    """The checks and the insert, apart from where the store and the
+    password come from. Raises AccountRefused with the reason."""
+    email = accounts.normalize_email(email)
+    if len(email) > 254 or not re.match(accounts.EMAIL_PATTERN, email):
+        raise accounts.AccountRefused(f"not an email address: {email!r}")
+    if not accounts.MIN_PASSWORD <= len(password) <= accounts.MAX_PASSWORD:
+        raise accounts.AccountRefused(
+            f"password must be {accounts.MIN_PASSWORD} to "
+            f"{accounts.MAX_PASSWORD} characters"
+        )
+    await store.add_account(tenant_id, email, accounts.hash_password(password))
+    return email
+
+
+async def account_add(tenant_id: str, email: str) -> None:
+    """A login for an existing root tenant, without email verification.
+
+    For the operator's own tenant only: signup proves the address owns the
+    inbox, and this does not (§11).
+    """
+    password = _read_password()
+    store = await _store()
+    try:
+        email = await add_account(store, tenant_id, email, password)
+    except accounts.AccountRefused as e:
+        sys.exit(str(e))
+    finally:
+        await store.close()
+    print(f"account {email}")
+    print(f"tenant  {tenant_id}")
 
 
 async def key_issue(tenant_id: str) -> None:
@@ -118,6 +176,8 @@ USAGE = """usage:
   python -m okwan_vault keygen
   python -m okwan_vault tenant create <name>
   python -m okwan_vault tenant show <tenant_id>
+  python -m okwan_vault tenant list
+  python -m okwan_vault account add <tenant_id> <email>
   python -m okwan_vault key issue <tenant_id>
   python -m okwan_vault key revoke <key_id>
   python -m okwan_vault cred set <tenant_id> <connector> <field>
@@ -141,6 +201,8 @@ def main(argv: list[str]) -> None:
     routes = {
         ("tenant", "create"): (tenant_create, 1),
         ("tenant", "show"): (tenant_show, 1),
+        ("tenant", "list"): (tenant_list, 0),
+        ("account", "add"): (account_add, 2),
         ("key", "issue"): (key_issue, 1),
         ("key", "revoke"): (key_revoke, 1),
         ("cred", "set"): (cred_set, 3),

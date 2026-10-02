@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from . import apikey
+from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import ApiKey, SealedCredential, Tenant
@@ -47,6 +48,8 @@ class Store(Protocol):
     async def complete_signup(self, token_hash: str) -> Tenant | None: ...
     async def account_exists(self, email: str) -> bool: ...
     async def account_login(self, email: str) -> tuple[str, str] | None: ...
+    async def add_account(self, tenant_id: str, email: str, password_hash: str) -> None: ...
+    async def list_tenants(self) -> list[Tenant]: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
     ) -> None: ...
@@ -85,6 +88,9 @@ class MemoryStore:
 
     async def children_of(self, tenant_id: str) -> list[Tenant]:
         return [t for t in self._tenants.values() if t.parent_id == tenant_id]
+
+    async def list_tenants(self) -> list[Tenant]:
+        return list(self._tenants.values())
 
     async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
         if tenant_id not in self._tenants:
@@ -229,6 +235,18 @@ class MemoryStore:
 
     async def account_login(self, email: str) -> tuple[str, str] | None:
         return self._accounts.get(email)
+
+    async def add_account(self, tenant_id: str, email: str, password_hash: str) -> None:
+        tenant = self._tenants.get(tenant_id)
+        if tenant is None:
+            raise AccountRefused(f"no such tenant: {tenant_id}")
+        if not tenant.is_root:
+            raise AccountRefused(f"{tenant_id} is not a root tenant")
+        if any(t == tenant_id for t, _ in self._accounts.values()):
+            raise AccountRefused(f"{tenant_id} already has an account")
+        if email in self._accounts:
+            raise AccountRefused(f"{email} is already taken")
+        self._accounts[email] = (tenant_id, password_hash)
 
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime

@@ -31,6 +31,13 @@ VERIFY_PREFIX = "okv"
 SIGNUP_TTL = timedelta(hours=24)
 SESSION_TTL = timedelta(days=7)
 MIN_PASSWORD = 12
+MAX_PASSWORD = 256
+EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+
+class AccountRefused(ValueError):
+    """An operator-created login that would break one of the account rules:
+    an existing root tenant, one account per tenant, one per address."""
 
 # n=2**14, r=8 costs 16 MiB and tens of milliseconds per hash: noticeable
 # to an attacker running millions, not to a person signing in.
