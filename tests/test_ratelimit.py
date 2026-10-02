@@ -256,7 +256,7 @@ def test_the_diagnostic_logs_the_four_facts_and_nothing_else(
     )
     [line] = forwarded_log
     assert line == ("x-forwarded-for=['1.1.1.1', '2.2.2.2'] x-okwan-client-ip=present "
-                    "dashboard-secret=matched chose='5.6.7.8'")
+                    "dashboard-secret=matched via=dashboard chose='5.6.7.8'")
     for private in (secret, "victim@x.test", "hunter2", "okw_", "oks_"):
         assert private not in line
 
@@ -270,7 +270,7 @@ def test_the_diagnostic_shows_a_mismatched_secret_falling_back(
              **{"X-Okwan-Client-IP": "5.6.7.8", "X-Okwan-Dashboard-Secret": "wrong"})
     assert forwarded_log == [(
         "x-forwarded-for=['1.1.1.1', '2.2.2.2'] "
-        "x-okwan-client-ip=present dashboard-secret=not-matched chose='2.2.2.2'"
+        "x-okwan-client-ip=present dashboard-secret=not-matched via=chain chose='2.2.2.2'"
     )]
 
 
@@ -280,3 +280,56 @@ def test_a_non_ascii_secret_header_is_a_mismatch_not_a_500(client, monkeypatch):
                  **{"X-Okwan-Client-IP": "5.6.7.8",
                     "X-Okwan-Dashboard-Secret": "s3cr\xe9t".encode("latin-1")})
     assert r.status_code == 401
+
+
+# ── which address is the client ─────────────────────────────────────
+
+def _chosen(client, forwarded_log, monkeypatch, **headers) -> str:
+    monkeypatch.setenv("OKWAN_LOG_FORWARDED", "1")
+    client.post("/v1/sessions", json={"email": "a@x.test", "password": "x"},
+                headers=headers)
+    return forwarded_log[-1].rsplit("via=", 1)[1]
+
+
+# The dashboard's chain, observed 2026-10-02: client, Cloudflare edge, Render.
+OBSERVED = "175.213.142.165, 172.68.175.85, 10.28.103.150"
+
+
+def test_cloudflare_names_a_direct_caller(client, forwarded_log, monkeypatch):
+    via = _chosen(client, forwarded_log, monkeypatch, **{
+        "X-Forwarded-For": OBSERVED, "CF-Connecting-IP": "175.213.142.165"})
+    assert via == "cloudflare chose='175.213.142.165'"
+
+
+def test_a_forged_chain_does_not_move_a_cloudflare_caller(
+    client, forwarded_log, monkeypatch
+):
+    """Forged entries land on the left; Cloudflare's header is not in reach."""
+    via = _chosen(client, forwarded_log, monkeypatch, **{
+        "X-Forwarded-For": f"6.6.6.6, {OBSERVED}", "CF-Connecting-IP": "175.213.142.165"})
+    assert via == "cloudflare chose='175.213.142.165'"
+
+
+def test_the_trusted_dashboard_header_beats_cloudflare(client, forwarded_log, monkeypatch):
+    """On a dashboard call, Cloudflare names the dashboard; the browser is forwarded."""
+    monkeypatch.setenv("OKWAN_DASHBOARD_SECRET", "s3cret-shared-by-render")
+    via = _chosen(client, forwarded_log, monkeypatch, **{
+        "CF-Connecting-IP": "74.220.48.143",
+        "X-Okwan-Client-IP": "175.213.142.165",
+        "X-Okwan-Dashboard-Secret": "s3cret-shared-by-render"})
+    assert via == "dashboard chose='175.213.142.165'"
+
+
+def test_a_malformed_cloudflare_header_is_ignored(client, forwarded_log, monkeypatch):
+    via = _chosen(client, forwarded_log, monkeypatch, **{
+        "X-Forwarded-For": "9.9.9.9", "CF-Connecting-IP": "not-an-address"})
+    assert via == "chain chose='9.9.9.9'"
+
+
+def test_without_cloudflare_one_hop_never_reads_a_client_entry(
+    client, forwarded_log, monkeypatch
+):
+    """The fallback errs toward the proxy's own entry, never the client's."""
+    via = _chosen(client, forwarded_log, monkeypatch,
+                  **{"X-Forwarded-For": f"6.6.6.6, {OBSERVED}"})
+    assert via == "chain chose='10.28.103.150'"

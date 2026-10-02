@@ -21,6 +21,7 @@ else it would be a way to pick a fresh IP per request.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import math
 import os
@@ -112,20 +113,37 @@ def client_ip(request: Request) -> str:
     matched = bool(secret) and secrets.compare_digest(
         presented.encode("latin-1"), secret.encode("latin-1", "replace")
     )
-    # The proxy in front of us appends the address it saw; entries to the
-    # left of that were written by the client and prove nothing.
+    # Cloudflare sets CF-Connecting-IP to the address it accepted the
+    # connection from, overwriting anything the client sent. Trusting it
+    # assumes every request reaches Render through Cloudflare, which is the
+    # same assumption that makes any X-Forwarded-For entry trustworthy.
+    cloudflare = _address(request.headers.get("cf-connecting-ip", ""))
+    # Fallback when Cloudflare's header is absent (local runs): count from
+    # the right, because a client's own entries land to the left of what a
+    # trusted proxy appends. One hop errs toward a shared bucket, which is
+    # coarse but unforgeable; too many hops would read a forged entry.
     hops = int(os.environ.get("OKWAN_TRUSTED_PROXY_HOPS", "1"))
     chain = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")
              if p.strip()]
     if matched and forwarded:
-        chosen = forwarded
+        chosen, via = forwarded, "dashboard"
+    elif cloudflare:
+        chosen, via = cloudflare, "cloudflare"
     elif hops and len(chain) >= hops:
-        chosen = chain[-hops]
+        chosen, via = chain[-hops], "chain"
     else:
-        chosen = request.client.host if request.client else "unknown"
+        chosen, via = (request.client.host if request.client else "unknown"), "peer"
     if os.environ.get("OKWAN_LOG_FORWARDED") == "1":
-        _log_forwarded(chain, bool(forwarded), matched, chosen)
+        _log_forwarded(chain, bool(forwarded), matched, via, chosen)
     return chosen
+
+
+def _address(value: str) -> str:
+    """A well-formed IP address, or empty. Anything else is not trusted."""
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return ""
 
 
 # TEMPORARY DIAGNOSTIC — remove once the Render hop is confirmed (§10 item 1).
@@ -138,7 +156,7 @@ _forwarded_log: logging.Logger | None = None
 
 
 def _log_forwarded(chain: list[str], header_present: bool, matched: bool,
-                   chosen: str) -> None:
+                   via: str, chosen: str) -> None:
     global _forwarded_log
     if _forwarded_log is None:
         log = logging.getLogger("okwan_api.forwarded")
@@ -152,9 +170,9 @@ def _log_forwarded(chain: list[str], header_present: bool, matched: bool,
     # %r on the chain: header values are client-written, and repr keeps
     # one request on one log line whatever they contain.
     _forwarded_log.info(
-        "x-forwarded-for=%r x-okwan-client-ip=%s dashboard-secret=%s chose=%r",
+        "x-forwarded-for=%r x-okwan-client-ip=%s dashboard-secret=%s via=%s chose=%r",
         chain, "present" if header_present else "absent",
-        "matched" if matched else "not-matched", chosen,
+        "matched" if matched else "not-matched", via, chosen,
     )
 
 
