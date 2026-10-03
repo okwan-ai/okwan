@@ -2,8 +2,8 @@ import "server-only";
 import { cache } from "react";
 import { api, session } from "./api";
 import {
-  type AcrossPage, ATTENTION, type AttentionRow, atStake, digestOf, failedDigest, type Finding, missingFor, type RunDigest, toFinding,
-  truncated,
+  type AcrossPage, ATTENTION, type AttentionRow, atStake, digestOf, failedDigest, type Finding, FOLD_READS, missingFor, type RunDigest,
+  toFinding, truncated,
 } from "./finding";
 import { formatMinor } from "./money";
 import { merchantsWithRails, type MerchantRails } from "./merchants";
@@ -46,8 +46,10 @@ const recent = new Map<string, { at: number; finding: Finding }>();
 /** Runs already on their way, so two loads at once share one metered run. */
 const inflight = new Map<string, Promise<{ ok: true; finding: Finding; at: number } | { ok: false; status: number; detail: string }>>();
 
+/** Only what the fold reads: connecting Paystack (not in the check) must
+ *  not miss the cache and cost a second metered run. */
 function keyOf(m: { tenant: { id: string }; ready: string[] }): string {
-  return `${m.tenant.id}:${FOLD}:${[...m.ready].sort().join(",")}`;
+  return `${m.tenant.id}:${FOLD}:${FOLD_READS.filter((c) => m.ready.includes(c)).join(",")}`;
 }
 
 /**
@@ -121,9 +123,11 @@ export function attentionRows(runs: MerchantRun[]): AttentionRow[] {
           }))
         : [],
     )
-    // Worst outcome first; amounts compare only within one currency.
+    // A total order: worst outcome, then currency, then largest first within
+    // that currency (amounts never compare across currencies), then merchant.
     .sort((a, b) => ATTENTION.indexOf(a.outcome) - ATTENTION.indexOf(b.outcome)
-      || (a.currency === b.currency ? (b.total_minor ?? 0) - (a.total_minor ?? 0) : 0)
+      || (a.currency ?? "").localeCompare(b.currency ?? "")
+      || (b.total_minor ?? 0) - (a.total_minor ?? 0)
       || a.merchantName.localeCompare(b.merchantName));
 }
 
@@ -168,8 +172,8 @@ export function caveats(runs: MerchantRun[]): string[] {
 export function digest(r: MerchantRun): RunDigest | null {
   const id = r.merchant.tenant.id;
   if (r.state === "skipped") return null;
-  if (r.state === "failed") return failedDigest(id, r.detail, r.at);
-  return digestOf(id, r.finding, r.at);
+  const d = r.state === "failed" ? failedDigest(id, r.detail, r.at) : digestOf(id, r.finding, r.at);
+  return { ...d, name: r.merchant.tenant.name };
 }
 
 /** Findings per merchant in the shape the palette's order search needs.

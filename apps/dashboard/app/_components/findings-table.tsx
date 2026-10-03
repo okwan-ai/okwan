@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ATTENTION, atStake, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, what } from "@/lib/finding";
 import { downloadFindings } from "@/lib/csv";
 import { formatMinor } from "@/lib/money";
@@ -28,16 +28,32 @@ export function FindingsTable({ rows, merchants, apiBase }: {
 }) {
   const params = useSearchParams();
   const [outcome, setOutcome] = useState(() => valid(params.get("outcome")));
-  const [merchant, setMerchant] = useState(() => params.get("merchant") ?? "");
+  const known = (id: string | null) => (id && merchants.some((m) => m.id === id) ? id : "");
+  const [merchant, setMerchant] = useState(() => known(params.get("merchant")));
   const [q, setQ] = useState(() => params.get("q") ?? "");
   const [proof, setProof] = useState<number | null>(null);
+  // A link to /findings?outcome=… from this page (palette, sidebar) keeps the
+  // table mounted; follow the URL, but not our own replaceState writes.
+  useEffect(() => {
+    if (params.toString() === own.current) return;
+    // Following a navigation: forget our last write, or a later link to that
+    // same URL would be mistaken for our own and ignored.
+    own.current = null;
+    setOutcome(valid(params.get("outcome")));
+    setMerchant(known(params.get("merchant")));
+    setQ(params.get("q") ?? "");
+  }, [params]);
 
+  // The last query string this table wrote, so the URL-follow effect below
+  // can tell its own writes from a navigation.
+  const own = useRef<string | null>(null);
   function sync(next: { outcome?: string; merchant?: string; q?: string }) {
     const u = new URL(window.location.href);
     for (const [k, v] of Object.entries(next)) {
       if (v) u.searchParams.set(k, v);
       else u.searchParams.delete(k);
     }
+    own.current = u.searchParams.toString();
     window.history.replaceState(null, "", u);
   }
 
@@ -95,7 +111,7 @@ export function FindingsTable({ rows, merchants, apiBase }: {
 
       {shown.length === 0 ? (
         <EmptyState title={rows.length ? "No finding matches these filters" : "Nothing needs attention"}>
-          {rows.length ? "Clear a filter to see the rest." : "No order was found collected twice, short or unpaid in what was read."}
+          {rows.length ? "Clear a filter to see the rest." : "No order was found collected twice, not adding up across rails, or unpaid in what was read."}
         </EmptyState>
       ) : (
         <>

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { OUTCOME_LABEL, OUTCOME_MARK } from "@/lib/finding";
+import { OUTCOME_LABEL, OUTCOME_MARK, verdictOf } from "@/lib/finding";
 import { useTabFindings, useTabResults } from "@/lib/tab-results";
 import type { MerchantLink } from "./sidebar";
 import { useDialog } from "./ui/dialog";
@@ -20,6 +20,8 @@ const PAGES: Command[] = [
   { id: "p-rails", group: "Pages", label: "Your own rails", href: "/connections", keywords: "connections credentials" },
   { id: "a-add", group: "Actions", label: "Add a merchant", href: "/merchants?add=1", keywords: "new create" },
 ];
+
+const GROUP_ORDER = ["Orders", "Pages", "Actions", "Merchants", "Merchant tabs"];
 
 /** Opens the palette from anywhere (the sidebar's Search button). */
 export function openPalette() {
@@ -42,7 +44,7 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
   const panel = useDialog(open, () => setOpen(false));
   const results = useTabResults();
   const seen = useTabFindings();
-  const list = useRef<HTMLUListElement>(null);
+  const list = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -72,7 +74,8 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
     ...PAGES,
     ...merchants.flatMap((m) => {
       const d = results[m.id];
-      const hint = !d ? undefined : !d.ok ? "couldn't run" : d.twice ? `×2 · ${d.open} findings` : d.open ? `${d.open} findings` : "all paid once";
+      const v = verdictOf(d);
+      const hint = d ? `${v.mark} ${v.label}` : undefined;
       const base = `/merchants/${encodeURIComponent(m.id)}`;
       return [
         { id: `m-${m.id}`, group: "Merchants", label: m.name, hint, href: base, keywords: m.id },
@@ -105,8 +108,25 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
       return terms.every((t) => hay.includes(t));
     });
     // Without a query, merchant tabs would crowd the list; show them on search.
-    return [...orders, ...(terms.length ? hits : hits.filter((c) => c.group !== "Merchant tabs"))].slice(0, 40);
+    // Contiguous groups in a fixed order (merchant rows and their tabs would
+    // otherwise interleave), then capped.
+    const rank = (g: string) => GROUP_ORDER.indexOf(g);
+    return [...orders, ...(terms.length ? hits : hits.filter((c) => c.group !== "Merchant tabs"))]
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => rank(a.c.group) - rank(b.c.group) || a.i - b.i)
+      .map(({ c }) => c)
+      .slice(0, 40);
   }, [commands, orders, q]);
+
+  const groups = useMemo(() => {
+    const out: { name: string; slug: string; items: { c: Command; i: number }[] }[] = [];
+    shown.forEach((c, i) => {
+      const last = out[out.length - 1];
+      if (last && last.name === c.group) last.items.push({ c, i });
+      else out.push({ name: c.group, slug: c.group.toLowerCase().replace(/\W+/g, "-"), items: [{ c, i }] });
+    });
+    return out;
+  }, [shown]);
 
   useEffect(() => {
     list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
@@ -135,7 +155,7 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
           <input
             data-autofocus
             role="combobox"
-            aria-expanded="true"
+            aria-expanded={shown.length > 0}
             aria-controls="palette-list"
             aria-activedescendant={shown[active] ? `palette-${shown[active].id}` : undefined}
             aria-autocomplete="list"
@@ -155,32 +175,37 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
           />
           <kbd className="rounded border border-line px-1.5 font-mono text-[11px] text-ink-soft">esc</kbd>
         </div>
-        <ul id="palette-list" ref={list} role="listbox" aria-label="Results" className="overflow-y-auto py-2">
-          {shown.length === 0 && (
-            <li className="px-4 py-6 text-center text-sm text-ink-soft">
-              Nothing matches “{q}”.{/\d/.test(q) ? " Orders are searchable once Overview or Findings has loaded in this tab." : ""}
-            </li>
-          )}
-          {shown.map((c, i) => (
-            <li key={c.id} role="presentation">
-              {(i === 0 || shown[i - 1].group !== c.group) && (
-                <p role="presentation" className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-ink-soft uppercase">{c.group}</p>
-              )}
-              <div
-                id={`palette-${c.id}`}
-                role="option"
-                aria-selected={i === active}
-                data-index={i}
-                onMouseMove={() => setActive(i)}
-                onClick={() => go(c)}
-                className={`mx-2 flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 text-sm ${i === active ? "bg-ink/[0.06]" : ""}`}
-              >
-                <span className="truncate">{c.label}</span>
-                {c.hint && <span className="shrink-0 text-xs text-ink-soft">{c.hint}</span>}
-              </div>
-            </li>
+        {/* Options sit in labelled groups; the empty message is outside the
+            listbox (a listbox may hold only options) and is announced. */}
+        <div id="palette-list" ref={list} role="listbox" aria-label="Results" className="overflow-y-auto py-2" hidden={shown.length === 0}>
+          {groups.map((g) => (
+            <div key={g.name} role="group" aria-labelledby={`palette-g-${g.slug}`}>
+              <p id={`palette-g-${g.slug}`} className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-ink-soft uppercase">{g.name}</p>
+              {g.items.map(({ c, i }) => (
+                <div
+                  key={c.id}
+                  id={`palette-${c.id}`}
+                  role="option"
+                  aria-selected={i === active}
+                  data-index={i}
+                  onMouseMove={() => setActive(i)}
+                  onClick={() => go(c)}
+                  className={`mx-2 flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-lg px-3 text-sm ${
+                    i === active ? "bg-ink/[0.06] ring-1 ring-ink ring-inset" : ""
+                  }`}
+                >
+                  <span className="truncate">{c.label}</span>
+                  {c.hint && <span className="shrink-0 text-xs text-ink-soft">{c.hint}</span>}
+                </div>
+              ))}
+            </div>
           ))}
-        </ul>
+        </div>
+        <p role="status" className={shown.length ? "sr-only" : "px-4 py-6 text-center text-sm text-ink-soft"}>
+          {shown.length
+            ? `${shown.length} result${shown.length === 1 ? "" : "s"}`
+            : <>Nothing matches “{q}”.{/\d/.test(q) ? " Orders are searchable once Overview or Findings has loaded in this tab." : ""}</>}
+        </p>
         <p className="border-t border-line px-4 py-2 text-[11px] text-ink-soft">
           <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · Overview and Findings check merchants
           when opened (one request each, reused for 10 minutes)

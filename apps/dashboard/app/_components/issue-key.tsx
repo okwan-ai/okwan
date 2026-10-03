@@ -8,7 +8,7 @@ import { CopyButton } from "./ui/copy-button";
 type Issued = { key_id: string; prefix: string; secret: string };
 
 /** `tenantId` issues for a merchant's tenant; without it, the signed-in tenant. */
-export function IssueKey({ tenantId }: { tenantId?: string } = {}) {
+export function IssueKey({ tenantId, onShowing }: { tenantId?: string; onShowing?: (showing: boolean) => void } = {}) {
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +17,8 @@ export function IssueKey({ tenantId }: { tenantId?: string } = {}) {
   // The key appears where the button was: move focus to it, and back after.
   useEffect(() => {
     if (issued) panel.current?.focus();
-  }, [issued]);
+    onShowing?.(issued !== null);
+  }, [issued, onShowing]);
 
   async function issue() {
     setBusy(true);

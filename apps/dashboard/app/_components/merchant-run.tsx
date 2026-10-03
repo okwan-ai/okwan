@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, type ReactNode, useCallback, useContext, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
 import { digestOf, failedDigest, type Finding, railLabel } from "@/lib/finding";
 import { formatMinor } from "@/lib/money";
-import { report } from "@/lib/tab-results";
+import { lastRun, rebase, report, reportRun } from "@/lib/tab-results";
 import { Button, buttonClass } from "./ui/button";
 import { IconPlay } from "./ui/icons";
 
@@ -37,7 +37,7 @@ export function useMerchantRun(): RunState {
  * tabs (each tab is a URL, and the page beneath remounts). Each run is a
  * fresh, metered read through the session route; nothing is kept.
  */
-export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", initial = null, missing = [], children }: {
+export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", initial = null, serverNow, missing = [], children }: {
   tenantId: string;
   tenantName: string;
   fold?: string;
@@ -45,6 +45,9 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
   /** A result Overview or Findings already paid for, still fresh on the
    *  server; shown without running again. */
   initial?: { finding: Finding; at: number } | null;
+  /** The server's clock when `initial` was read, to compare it with runs
+   *  this tab made (lib/tab-results.ts rebase). */
+  serverNow: number;
   children: ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
@@ -54,6 +57,17 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
   const [error, setError] = useState<RunState["error"]>(null);
   // Spoken progress: a run takes seconds and ends somewhere else on the page.
   const [said, setSaid] = useState("");
+
+  // A Run made in this tab after the server's cached check wins: the server
+  // cache only learns of page-load checks, never of the Run button.
+  useEffect(() => {
+    const mine = lastRun(tenantId);
+    if (mine && (!initial || mine.at > rebase(initial.at, serverNow))) {
+      setFinding(mine.finding);
+      setRanAt(new Date(mine.at));
+      setReused(false);
+    }
+  }, [tenantId, initial, serverNow]);
 
   const run = useCallback(async () => {
     setBusy(true);
@@ -69,7 +83,7 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
       const detail = data.detail ?? "the dashboard couldn't reach the API";
       setError({ status: res?.status ?? 0, detail });
       setSaid(`The run didn't finish: ${detail}`);
-      report([failedDigest(tenantId, detail, Date.now())]);
+      report([{ ...failedDigest(tenantId, detail, Date.now()), origin: "tab" }]);
       return;
     }
     const at = Date.now();
@@ -77,10 +91,11 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
     setRanAt(new Date(at));
     setReused(false);
     const f = data as Finding;
+    reportRun(tenantId, f, at);
     const twice = f.summary.collected_twice;
     setSaid(`Run finished: ${f.summary.orders} orders checked, ${twice} collected twice${
       twice && f.twice_currency ? ` (${formatMinor(f.summary.collected_twice_minor, f.twice_currency)})` : ""}.`);
-    report([digestOf(tenantId, f, at)]);
+    report([{ ...digestOf(tenantId, f, at), origin: "tab" }]);
   }, [tenantId, fold]);
 
   return (
@@ -101,7 +116,7 @@ export function RunButton() {
   // product); lead to what's missing instead.
   if (missing.length && !finding) {
     return (
-      <Link href={`${path}?tab=connections&connect=${missing[0]}`} scroll={false} className={buttonClass(tab === "connections" ? "secondary" : "primary")}>
+      <Link href={`${path}?tab=connections&connect=${missing[0]}`} scroll={false} className={buttonClass(tab === "connections" || tab === "keys" ? "secondary" : "primary")}>
         Connect {missing.map(railLabel).join(" + ")}
       </Link>
     );
@@ -109,8 +124,9 @@ export function RunButton() {
   return (
     <Button
       // One volt element per view: once a result exists the band carries it,
-      // and a re-run (metered) is a secondary action.
-      variant={finding ? "secondary" : "primary"}
+      // a re-run (metered) is secondary, and on the keys tab issuing a key is
+      // the primary action.
+      variant={finding || tab === "keys" ? "secondary" : "primary"}
       disabled={busy}
       aria-busy={busy}
       onClick={() => {

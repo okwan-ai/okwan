@@ -3,11 +3,14 @@
  * float: the whole and fractional parts are split with BigInt, and Intl
  * formats only the whole part (symbol and grouping).
  *
- * The exponent is the API's, not Intl's. The API builds every minor-unit
- * integer with okwan_core/currency.py: exponent 0 for the currencies below,
- * 2 for every other. Intl disagrees for some (KWD 3, BIF 0, ...), and
- * formatting with Intl's exponent would show those amounts 10x or 100x off.
- * This mirrors ZERO_DECIMAL_CURRENCIES; keep the two in step.
+ * The exponent is okwan_core's, not Intl's. Connectors that convert a
+ * decimal amount (PayPal, Shopify) build minor units with
+ * okwan_core/currency.py: exponent 0 for the currencies below, 2 for every
+ * other; Intl disagrees for some (KWD 3, BIF 0, ...). This mirrors
+ * ZERO_DECIMAL_CURRENCIES; keep the two in step. Known gap, recorded in
+ * OKWAN_PROJECT.md §10 item 12: Stripe's rail amounts are Stripe's own
+ * minor units, which differ from the core table for BIF, DJF, GNF, KMF and
+ * MGA (zero-decimal) and KWD, BHD, JOD, OMR and TND (three-decimal).
  */
 const ZERO_DECIMAL = new Set(["XOF", "XAF", "JPY", "KRW", "VND", "CLP", "ISK", "PYG", "RWF", "UGX", "VUV", "XPF"]);
 

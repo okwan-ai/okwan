@@ -12,6 +12,17 @@ import { formatMinor } from "@/lib/money";
  */
 export function MoneyTrail({ r }: { r: FindingRow }) {
   const cur = r.currency;
+  // A missing amount is not zero: the fold reports "amount missing", and a
+  // bar or an over/short figure would invent one. Say what is known.
+  if (r.total_minor === null || r.paid.some((p) => p.minor === null)) {
+    return (
+      <p className="text-xs text-ink">
+        Order total {r.total_minor === null ? "not reported" : formatMinor(r.total_minor, cur)}.{" "}
+        {r.paid.map((p) => `${railLabel(p.rail)} took ${p.minor === null ? "an amount not reported" : formatMinor(p.minor, p.currency ?? cur)}`).join(" · ")}
+        {r.paid.length ? "." : "No matching payment on PayPal or Stripe."} No difference can be drawn without both amounts.
+      </p>
+    );
+  }
   // Amounts in different currencies can't share a scale; say so in words.
   if (!sameCurrency(r)) {
     return (
@@ -88,7 +99,7 @@ export function MoneyTrail({ r }: { r: FindingRow }) {
  * the row it sits in states the same numbers in words.
  */
 export function MiniTrail({ r }: { r: FindingRow }) {
-  if (!sameCurrency(r)) return null;
+  if (!sameCurrency(r) || r.total_minor === null || r.paid.some((p) => p.minor === null)) return null;
   const total = r.total_minor ?? 0;
   const taken = r.paid.reduce((n, p) => n + (p.minor ?? 0), 0);
   const scale = Math.max(total, taken, 1);

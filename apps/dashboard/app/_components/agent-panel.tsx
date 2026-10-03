@@ -69,18 +69,19 @@ export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"]
                 type="button"
                 aria-pressed={view === v}
                 onClick={() => setView(v)}
-                className={`min-h-9 rounded-md px-2.5 text-xs font-medium ${view === v ? "bg-canvas text-ink" : "text-canvas/80 hover:text-canvas"}`}
+                className={`min-h-9 rounded-md px-2.5 text-xs font-medium focus-visible:outline-canvas ${view === v ? "bg-canvas text-ink" : "text-canvas/80 hover:text-canvas"}`}
               >
                 {LABEL[v]}
               </button>
             ))}
           </div>
-          <span className="[&_button]:text-canvas/80 [&_button:hover]:bg-canvas/10 [&_button:hover]:text-canvas">
+          <span className="[&_button]:text-canvas/80 [&_button:focus-visible]:outline-canvas [&_button:hover]:bg-canvas/10 [&_button:hover]:text-canvas">
             <CopyButton value={code[view]} label={`Copy ${LABEL[view]}`} text="Copy" />
           </span>
         </div>
       </div>
-      <pre className="overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre text-sky"><code>{code[view]}</code></pre>
+      {/* Focusable so a keyboard can scroll a long line; the ring is light on navy. */}
+      <pre tabIndex={0} aria-label={LABEL[view]} className="overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre text-sky focus-visible:outline-canvas focus-visible:-outline-offset-2"><code>{code[view]}</code></pre>
       <p className="border-t border-canvas/15 px-4 py-2 text-[11px] text-canvas/70">
         Use a key issued for this merchant in place of <code className="font-mono">okw_…</code>. Every Okwan surface is read-only.
       </p>

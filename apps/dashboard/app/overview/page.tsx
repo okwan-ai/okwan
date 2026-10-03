@@ -53,7 +53,7 @@ async function OverviewBody() {
     const failed = runs.filter((r) => r.state === "failed");
     return (
       <>
-        <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} />
+        <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
         <SetupChecklist steps={steps} prominent />
         {failed.length > 0 && <FailedNote runs={failed} />}
         {runs.length > 0 && (
@@ -69,7 +69,7 @@ async function OverviewBody() {
 
   return (
     <>
-      <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} />
+      <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
       <VerdictStrip runs={runs} />
 
       <Section
@@ -78,7 +78,7 @@ async function OverviewBody() {
       >
         {rows.length === 0 ? (
           <EmptyState title="Nothing needs attention">
-            No order was found collected twice, short or unpaid in what was read.
+            No order was found collected twice, not adding up across rails, or unpaid in what was read.
           </EmptyState>
         ) : (
           <AttentionList rows={rows.slice(0, ATTENTION_LIMIT)} apiBase={apiUrl()} />
@@ -156,7 +156,9 @@ function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
             <span className="ml-1.5 text-sm text-ink-soft">orders checked across {plural(ok.length, "merchant")}</span>
           </p>
           <p className="text-sm text-ink-soft">
-            {rate === null
+            {orders === 0
+              ? "No orders in what was read"
+              : rate === null
               ? "Match rate withheld: some orders couldn't be verified"
               : <><span className="font-semibold text-ink tabular-nums">{(rate * 100).toFixed(1)}%</span> paid exactly once</>}
           </p>
@@ -212,8 +214,13 @@ function rank(r: MerchantRun): number {
 }
 
 function MerchantTable({ runs }: { runs: MerchantRun[] }) {
+  // Amounts compare only within one currency; a merchant without a single
+  // owed-back currency sorts after the priced ones in its rank.
+  const cur = (r: MerchantRun) => (r.state === "ok" ? r.finding.twice_currency ?? "~" : "~");
+  const owed = (r: MerchantRun) => (r.state === "ok" ? r.finding.summary.overcollected_minor : 0);
   const sorted = [...runs].sort((a, b) => rank(a) - rank(b)
-    || (b.state === "ok" ? b.finding.summary.overcollected_minor : 0) - (a.state === "ok" ? a.finding.summary.overcollected_minor : 0)
+    || cur(a).localeCompare(cur(b))
+    || owed(b) - owed(a)
     || a.merchant.tenant.name.localeCompare(b.merchant.tenant.name));
   return (
     <>

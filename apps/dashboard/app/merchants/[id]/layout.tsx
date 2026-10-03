@@ -47,7 +47,7 @@ export default async function MerchantLayout({
   const initial = cachedRun(id, rails.ready);
 
   return (
-    <MerchantRunProvider tenantId={id} tenantName={name} initial={initial} missing={missingFor(rails)}>
+    <MerchantRunProvider tenantId={id} tenantName={name} initial={initial} serverNow={Date.now()} missing={missingFor(rails)}>
       <PageHeader
         eyebrow={
           <nav aria-label="Breadcrumb">

@@ -37,6 +37,7 @@ export default async function MerchantsPage() {
         </EmptyState>
       ) : (
         <MerchantsTable
+          serverNow={Date.now()}
           rows={merchants.map((m) => {
             // Listed under this session, so the caller may see it; memory only, never a run.
             const c = cachedRun(m.tenant.id, m.ready);

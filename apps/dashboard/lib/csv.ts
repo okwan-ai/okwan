@@ -44,10 +44,11 @@ export function downloadFindings(
   URL.revokeObjectURL(url);
 }
 
-/** RFC 4180 quoting, and a leading quote on anything a spreadsheet would
- *  read as a formula (CSV injection). */
+/** Every cell quoted (RFC 4180), so no delimiter a locale might use, "," or
+ *  ";", can split a value into a new cell; and a leading quote on anything a
+ *  spreadsheet would read as a formula (CSV injection). */
 function cell(v: string): string {
   const numeric = /^-?\d+(\.\d+)?$/.test(v);
   const safe = !numeric && /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  return `"${safe.replace(/"/g, '""')}"`;
 }

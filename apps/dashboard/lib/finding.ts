@@ -267,9 +267,16 @@ export type AttentionRow = FindingRow & {
 /** What the browser's in-tab results store needs from a run. */
 export type RunDigest = {
   id: string;
+  /** The merchant's name, for notes that mention it. */
+  name?: string;
   ok: boolean;
-  /** When the result was produced (ms epoch); the store keeps the newest. */
+  /** When the result was produced (ms epoch, on the browser's clock once in
+   *  the tab store); the store keeps the newest. */
   at: number;
+  /** "server": a page-load check (Overview, Findings), `rawAt` on the
+   *  server's clock. "tab": this tab's Run button, on the browser's clock. */
+  origin?: "server" | "tab";
+  rawAt?: number;
   /** Findings: collected twice, doesn't add up, no payment. */
   open: number;
   twice: number;
@@ -301,4 +308,16 @@ export function digestOf(id: string, f: Finding, at: number): RunDigest {
 
 export function failedDigest(id: string, detail: string, at: number): RunDigest {
   return { id, ok: false, at, open: 0, twice: 0, twiceMinor: 0, overMinor: 0, unverifiable: 0, unconfirmed: 0, currency: null, detail };
+}
+
+/** One short verdict for a digest, for places with room for a glyph and a
+ *  few words (sidebar, palette). Same precedence as merchant status. */
+export function verdictOf(d: RunDigest | undefined): { mark: string; label: string; tone: "danger" | "ink" | "soft" | "ok" } {
+  if (!d) return { mark: "·", label: "not checked this session", tone: "soft" };
+  if (!d.ok) return { mark: "✕", label: "couldn't run", tone: "danger" };
+  if (d.twice) return { mark: "×2", label: `collected twice · ${d.open} finding${d.open === 1 ? "" : "s"}`, tone: "danger" };
+  if (d.open) return { mark: String(d.open), label: `${d.open} finding${d.open === 1 ? "" : "s"}`, tone: "ink" };
+  if (d.unverifiable) return { mark: "?", label: `${d.unverifiable} couldn't verify`, tone: "soft" };
+  if (d.unconfirmed) return { mark: "✓?", label: `paid once · ${d.unconfirmed} not ruled out`, tone: "ok" };
+  return { mark: "✓", label: "all paid once", tone: "ok" };
 }

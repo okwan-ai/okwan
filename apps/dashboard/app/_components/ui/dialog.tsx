@@ -6,6 +6,10 @@ import { IconClose } from "./icons";
 /** Shared behaviour: Escape closes, focus moves in on open and back on close,
  *  Tab stays inside, and the page behind does not scroll. Exported for the
  *  narrow-screen menu, which is a dialog too. */
+/** Open dialogs, innermost last: only the top one answers Escape and Tab,
+ *  so closing the palette never also closes the drawer beneath it. */
+const stack: symbol[] = [];
+
 export function useDialog(open: boolean, onClose: () => void) {
   const panel = useRef<HTMLDivElement>(null);
   // Held in a ref so a parent re-render does not re-run the effect and pull focus.
@@ -13,6 +17,8 @@ export function useDialog(open: boolean, onClose: () => void) {
   close.current = onClose;
   useEffect(() => {
     if (!open) return;
+    const me = Symbol("dialog");
+    stack.push(me);
     const before = document.activeElement as HTMLElement | null;
     const el = panel.current;
     const focusables = () =>
@@ -21,6 +27,7 @@ export function useDialog(open: boolean, onClose: () => void) {
       ) ?? []);
     (el?.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0])?.focus();
     const onKey = (e: KeyboardEvent) => {
+      if (stack[stack.length - 1] !== me) return;
       if (e.key === "Escape") return close.current();
       if (e.key !== "Tab") return;
       const f = focusables();
@@ -41,6 +48,7 @@ export function useDialog(open: boolean, onClose: () => void) {
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
+      stack.splice(stack.indexOf(me), 1);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
       if (before && before !== document.body && document.contains(before)) before.focus();

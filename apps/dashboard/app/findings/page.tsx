@@ -18,7 +18,7 @@ export default async function FindingsPage() {
     <>
       <PageHeader
         title="Findings"
-        description="Every order collected twice, short or unpaid, across every merchant ready for a check. Filter, then export the worksheet for refunds. Checked when this page loads and reused for up to 10 minutes; not saved."
+        description="Every order collected twice, not adding up across rails, or unpaid, across every merchant ready for a check. Filter, then export the worksheet for refunds. Checked when this page loads and reused for up to 10 minutes; not saved. A single rail that took less than the order isn't flagged yet; the money trail on the merchant page shows it."
       />
       <Suspense fallback={<FindingsSkeleton />}>
         <FindingsBody />
@@ -37,7 +37,7 @@ async function FindingsBody() {
 
   return (
     <>
-      <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} />
+      <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
       <p className="mb-4 text-sm text-ink-soft">
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
         {skipped > 0 && <> · {skipped} not ready (a check needs Shopify, PayPal and Stripe)</>}

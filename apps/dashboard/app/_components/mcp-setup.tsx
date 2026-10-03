@@ -11,21 +11,30 @@ import { IssueKey } from "./issue-key";
  */
 export function McpSetup({ merchants, apiBase }: { merchants: { id: string; name: string }[]; apiBase: string }) {
   const [id, setId] = useState(merchants[0]?.id ?? "");
+  // A key on screen exists nowhere else; switching merchant would discard it.
+  const [showing, setShowing] = useState(false);
   const m = merchants.find((x) => x.id === id);
   const server = m ? `okwan-${m.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}` : "okwan";
   return (
     <div className="space-y-5">
       <label className="flex flex-wrap items-center gap-3 text-sm">
         <span className="font-medium">Merchant</span>
-        <select value={id} onChange={(e) => setId(e.target.value)} className="field w-auto min-w-56 py-2">
+        <select
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          disabled={showing}
+          aria-describedby={showing ? "mcp-store-first" : undefined}
+          className="field w-auto min-w-56 py-2 disabled:opacity-60"
+        >
           {merchants.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
+        {showing && <span id="mcp-store-first" className="text-xs text-ink-soft">Store the key below first; it can&apos;t be shown again.</span>}
       </label>
       {m && (
         <>
           <div>
             <h2 className="mb-2 text-sm font-semibold">1 · Issue a key for {m.name}</h2>
-            <IssueKey key={m.id} tenantId={m.id} />
+            <IssueKey key={m.id} tenantId={m.id} onShowing={setShowing} />
           </div>
           <div>
             <h2 className="mb-2 text-sm font-semibold">2 · Add the server to your MCP client, then ask</h2>
