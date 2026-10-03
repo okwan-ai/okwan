@@ -4,7 +4,8 @@ import { Sidebar } from "./_components/sidebar";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Okwan dashboard",
+  // Each page names itself, so client navigation is announced (WCAG 2.4.2).
+  title: { template: "%s · Okwan", default: "Okwan" },
   description: "Connect your payment rails and issue an API key.",
   robots: { index: false, follow: false },
 };
@@ -24,13 +25,19 @@ export default async function RootLayout({
         />
       </head>
       <body className="min-h-screen">
+        <a
+          href="#main"
+          className="sr-only rounded-lg bg-ink px-4 py-3 text-canvas focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[70]"
+        >
+          Skip to content
+        </a>
         {tree ? (
           <div className="min-[900px]:flex">
             <Sidebar
               tenant={tree.self.name}
-              merchants={tree.children.length}
+              merchants={tree.children.map((c) => ({ id: c.id, name: c.name }))}
             />
-            <main className="min-w-0 flex-1">
+            <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
               <div className="mx-auto max-w-[1120px] px-4 py-8 sm:px-8 sm:py-10">{children}</div>
             </main>
           </div>
@@ -53,7 +60,7 @@ function SignedOut({ children }: { children: React.ReactNode }) {
           </a>
         </div>
       </header>
-      <main className="mx-auto max-w-[920px] px-4 py-12 sm:px-6">{children}</main>
+      <main id="main" tabIndex={-1} className="mx-auto max-w-[920px] px-4 py-12 outline-none sm:px-6">{children}</main>
     </>
   );
 }

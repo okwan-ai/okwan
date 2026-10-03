@@ -1,5 +1,9 @@
 import { AuthForm } from "../_components/auth-form";
 
+export async function generateMetadata({ searchParams }: { searchParams: Promise<{ mode?: string }> }) {
+  return { title: (await searchParams).mode === "signin" ? "Sign in" : "Create an account" };
+}
+
 export default async function SignupPage({
   searchParams,
 }: {
