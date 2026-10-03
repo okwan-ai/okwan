@@ -1,5 +1,6 @@
 import { apiUrl, tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
+import { Endpoints } from "../_components/endpoints";
 import { McpSetup } from "../_components/mcp-setup";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
@@ -23,6 +24,7 @@ export default async function McpPage() {
       <PageHeader
         title="MCP for agents"
         description="The hosted MCP server gives an agent four read-only tools. The key decides whose rails it reads: issue one per merchant."
+        actions={<Endpoints apiBase={apiUrl()} />}
       />
       {merchants.length ? (
         <McpSetup merchants={merchants} apiBase={apiUrl()} />
