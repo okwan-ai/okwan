@@ -8,7 +8,7 @@ import { IconPlus } from "./ui/icons";
 
 /** "Add merchant" and its modal. `?add=1` opens it on arrival, so other
  *  pages can link straight to it. A new merchant opens on its Connections. */
-export function AddMerchant() {
+export function AddMerchant({ variant = "primary" }: { variant?: "primary" | "secondary" } = {}) {
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -43,7 +43,7 @@ export function AddMerchant() {
 
   return (
     <>
-      <Button variant="primary" onClick={() => setOpen(true)}>
+      <Button variant={variant} onClick={() => setOpen(true)}>
         <IconPlus /> Add merchant
       </Button>
       <Modal open={open} onClose={close} title="Add merchant">

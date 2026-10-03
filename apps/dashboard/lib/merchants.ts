@@ -12,6 +12,8 @@ export type Connector = {
   probe: string | null;
   /** SQL tables this connector generates ("stripe.charges"). */
   sql_tables?: string[];
+  /** Operations that are not read-only ("messages.send_text"). */
+  writes?: string[];
 };
 
 export type MerchantRails = {

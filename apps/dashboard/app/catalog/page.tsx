@@ -35,6 +35,7 @@ export default async function CatalogPage() {
   const base = apiUrl();
   const routes = list.reduce((n, c) => n + Object.values(c.resources ?? {}).reduce((m, ops) => m + ops.length, 0), 0);
   const tables = list.reduce((n, c) => n + (c.sql_tables?.length ?? 0), 0);
+  const writes = list.reduce((n, c) => n + (c.writes?.length ?? 0), 0);
 
   return (
     <>
@@ -44,7 +45,8 @@ export default async function CatalogPage() {
           <>
             Each connector is declared once. From that one declaration Okwan generates its REST routes, its SQL tables and its
             MCP tools, so every surface reads the same rails the same way. {list.length} connectors · {routes} operations ·{" "}
-            {tables} SQL tables.
+            {tables} SQL tables · {writes} write operation{writes === 1 ? "" : "s"}, marked{" "}
+            <span aria-hidden className="font-mono">✎</span>.
           </>
         }
         actions={<ButtonLink href={`${base}/docs`} target="_blank" rel="noopener">OpenAPI reference</ButtonLink>}
@@ -60,6 +62,7 @@ export default async function CatalogPage() {
 function ConnectorCard({ c, base }: { c: Connector; base: string }) {
   const resources = Object.entries(c.resources ?? {});
   const inCheck = (FOLD_READS as readonly string[]).includes(c.name);
+  const writes = new Set(c.writes ?? []);
   return (
     <article aria-labelledby={`cat-${c.name}`} className="rounded-xl border border-line bg-surface">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
@@ -73,6 +76,7 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
         <div className="flex flex-wrap gap-1.5">
           <Badge>{CATEGORY[c.name] ?? "Connector"}</Badge>
           {inCheck && <Badge tone="ok" symbol="✓">In the reconciliation</Badge>}
+          {writes.size > 0 && <Badge tone="warn" symbol="✎">{writes.size} write operation{writes.size === 1 ? "" : "s"}</Badge>}
         </div>
       </header>
 
@@ -81,9 +85,15 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
           <ul className="space-y-1">
             {resources.flatMap(([res, ops]) => ops.map((op) => {
               const path = `/v1/${c.name}/${res}/${op}`;
+              const write = writes.has(`${res}.${op}`);
               return (
                 <li key={path} className="flex items-center gap-1">
                   <code className="min-w-0 truncate font-mono text-[12px]">{path}</code>
+                  {write && (
+                    <span className="shrink-0 rounded-full border border-ink-soft/50 px-1.5 font-mono text-[10px] text-ink" title="Not read-only: this operation changes something on the rail.">
+                      ✎ <span className="font-sans">write</span>
+                    </span>
+                  )}
                   <CopyButton value={`${base}${path}`} label={`Copy ${path}`} />
                 </li>
               );
@@ -117,7 +127,10 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
               <li><code className="font-mono">okwan_query</code> <span className="text-ink-soft">over {c.sql_tables.length} table{c.sql_tables.length === 1 ? "" : "s"}</span></li>
             ) : null}
             {resources.flatMap(([res, ops]) => ops.map((op) => (
-              <li key={`${res}-${op}`}><code className="font-mono">{`${c.name}_${res}_${op}`}</code> <span className="text-ink-soft">SDK</span></li>
+              <li key={`${res}-${op}`}>
+                <code className="font-mono">{`${c.name}_${res}_${op}`}</code> <span className="text-ink-soft">SDK</span>
+                {writes.has(`${res}.${op}`) && <span className="ml-1 font-mono text-[10px]" title="Not read-only">✎</span>}
+              </li>
             )))}
           </ul>
         </Surface>
