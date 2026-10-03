@@ -2,7 +2,8 @@ import "server-only";
 import { cache } from "react";
 import { api, session } from "./api";
 import {
-  type AcrossPage, ATTENTION, atStake, digestOf, failedDigest, type Finding, type FindingRow, missingFor, type RunDigest, toFinding,
+  type AcrossPage, ATTENTION, type AttentionRow, atStake, digestOf, failedDigest, type Finding, missingFor, type RunDigest, toFinding,
+  truncated,
 } from "./finding";
 import { formatMinor } from "./money";
 import { merchantsWithRails, type MerchantRails } from "./merchants";
@@ -101,13 +102,8 @@ export function oldestAt(runs: MerchantRun[]): number | null {
   return ats.length ? Math.min(...ats) : null;
 }
 
-export function checkedAgo(at: number | null): string {
-  if (at === null) return "";
-  const min = Math.floor((Date.now() - at) / 60000);
-  return min < 1 ? "Checked just now" : `Checked ${min} min ago`;
-}
-
-export type AttentionRow = FindingRow & { merchantId: string; merchantName: string };
+export { checkedAgo } from "./finding";
+export type { AttentionRow } from "./finding";
 
 /** Every money finding across merchants, worst first, largest first. */
 export function attentionRows(runs: MerchantRun[]): AttentionRow[] {
@@ -116,7 +112,13 @@ export function attentionRows(runs: MerchantRun[]): AttentionRow[] {
       r.state === "ok"
         ? r.finding.rows
           .filter((row) => ATTENTION.includes(row.outcome))
-          .map((row) => ({ ...row, merchantId: r.merchant.tenant.id, merchantName: r.merchant.tenant.name }))
+          .map((row) => ({
+            ...row,
+            merchantId: r.merchant.tenant.id,
+            merchantName: r.merchant.tenant.name,
+            at: r.at,
+            partial: r.finding.partial || truncated(r.finding),
+          }))
         : [],
     )
     // Worst outcome first; amounts compare only within one currency.
@@ -162,10 +164,6 @@ export function caveats(runs: MerchantRun[]): string[] {
   return out;
 }
 
-function truncated(f: Finding): boolean {
-  return Boolean(f.summary.ledger_coverage?.truncated)
-    || Object.values(f.summary.rails).some((r) => r.coverage?.truncated);
-}
 
 export function digest(r: MerchantRun): RunDigest | null {
   const id = r.merchant.tenant.id;

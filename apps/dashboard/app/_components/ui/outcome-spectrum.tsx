@@ -20,8 +20,10 @@ function segments(s: Pick<Summary, "collected" | "split_tender" | "collected_twi
  * symbol and a count in the legend, so the bar is never the only carrier;
  * the bar itself is hidden from assistive tech and the legend is the text.
  */
-export function OutcomeSpectrum({ summary, unconfirmed = 0, compact = false }: {
+export function OutcomeSpectrum({ summary, unconfirmed = 0, compact = false, animate = false }: {
   summary: Parameters<typeof segments>[0];
+  /** Settle into place: only for a result the viewer just ran. */
+  animate?: boolean;
   /** Of the paid-once orders, those another rail couldn't rule out a second
    *  payment for. Drawn as an outlined part of the paid-once segment. */
   unconfirmed?: number;
@@ -41,7 +43,7 @@ export function OutcomeSpectrum({ summary, unconfirmed = 0, compact = false }: {
   if (!total) return null;
   return (
     <div className="min-w-0">
-      <div aria-hidden className={`animate-settle flex w-full overflow-hidden rounded-full bg-canvas ${compact ? "h-2" : "h-3"}`}>
+      <div aria-hidden className={`${animate ? "animate-settle " : ""}flex w-full overflow-hidden rounded-full bg-canvas ${compact ? "h-2" : "h-3"}`}>
         {segs.filter((s) => s.n).map((s) => (
           <span key={s.key} className={`${s.fill} h-full border-r-2 border-surface last:border-r-0`} style={{ width: `${(s.n / total) * 100}%` }} />
         ))}

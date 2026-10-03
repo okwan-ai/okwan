@@ -5,8 +5,14 @@ import { minorToDecimal } from "./money";
 
 /** CSV from rows already in the browser: no request, no run. Amounts are
  *  decimal strings built from minor units without floating point. */
-export function downloadFindings(rows: (FindingRow & { merchantName: string; merchantId: string })[], name = "findings") {
-  const head = ["merchant", "merchant_id", "order", "outcome", "outcome_code", "currency", "order_total", "taken", "at_stake", "at_stake_kind", "taken_by_rail"];
+export function downloadFindings(
+  rows: (FindingRow & { merchantName: string; merchantId: string; at?: number; partial?: boolean })[],
+  name = "findings",
+) {
+  const head = [
+    "merchant", "merchant_id", "order", "outcome", "outcome_code", "currency", "order_total", "taken", "at_stake",
+    "at_stake_kind", "taken_by_rail", "rails_collected", "rails_not_ruled_out", "checked_at", "result_complete",
+  ];
   const lines = rows.map((r) => {
     const s = atStake(r);
     return [
@@ -22,6 +28,11 @@ export function downloadFindings(rows: (FindingRow & { merchantName: string; mer
       s ? minorToDecimal(s.minor, r.currency) : "",
       s?.label ?? "",
       r.paid.map((p) => `${railLabel(p.rail)} ${minorToDecimal(p.minor, p.currency ?? r.currency)} ${(p.currency ?? r.currency ?? "").toUpperCase()}`.trim()).join("; "),
+      r.collected_on.map(railLabel).join("; "),
+      r.unverified.map(railLabel).join("; "),
+      r.at ? new Date(r.at).toISOString() : "",
+      // false: the merchant's result was cut short, so this list may be incomplete.
+      r.partial === undefined ? "" : String(!r.partial),
     ];
   });
   const csv = [head, ...lines].map((row) => row.map(cell).join(",")).join("\r\n");

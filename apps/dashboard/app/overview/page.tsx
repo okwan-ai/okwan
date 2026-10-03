@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { missingFor, railLabel } from "@/lib/finding";
+import { apiUrl } from "@/lib/api";
+import { FOLD_READS, missingFor, railLabel, unconfirmedRows } from "@/lib/finding";
 import { requireTenant } from "@/lib/guard";
 import { formatMinor } from "@/lib/money";
 import {
@@ -73,18 +74,21 @@ async function OverviewBody() {
 
       <Section
         title="Needs attention"
-        aside={rows.length > ATTENTION_LIMIT ? <Link href="/findings" className="underline underline-offset-4 hover:text-ink">View all {rows.length}</Link> : null}
+        aside={rows.length > ATTENTION_LIMIT ? <Link href="/findings" prefetch={false} className="underline underline-offset-4 hover:text-ink">View all {rows.length}</Link> : null}
       >
         {rows.length === 0 ? (
           <EmptyState title="Nothing needs attention">
             No order was found collected twice, short or unpaid in what was read.
           </EmptyState>
         ) : (
-          <AttentionList rows={rows.slice(0, ATTENTION_LIMIT)} />
+          <AttentionList rows={rows.slice(0, ATTENTION_LIMIT)} apiBase={apiUrl()} />
         )}
       </Section>
 
-      <Section title="Merchants" aside={<Link href="/merchants" className="underline underline-offset-4 hover:text-ink">All merchants</Link>}>
+      <Section
+        title="Merchants"
+        aside={<>{coverageLine(runs)} · <Link href="/merchants" className="underline underline-offset-4 hover:text-ink">All merchants</Link></>}
+      >
         <MerchantTable runs={runs} />
       </Section>
 
@@ -138,8 +142,9 @@ function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
               {owed.length && !t.mixed ? <> · <strong className="font-semibold">{owed.join(" + ")} owed back</strong></> : null}
             </>}
         </p>
+        {t.orders > 0 && <HowItAddsUp runs={runs} />}
         {t.orders > 0 && (
-          <Link href="/findings?outcome=collected_twice" className="mt-auto inline-flex min-h-11 items-center gap-1 self-start pt-3 text-sm font-medium underline underline-offset-4">
+          <Link href="/findings?outcome=collected_twice" prefetch={false} className="mt-auto inline-flex min-h-11 items-center gap-1 self-start pt-3 text-sm font-medium underline underline-offset-4">
             Review the orders <span aria-hidden>→</span>
           </Link>
         )}
@@ -158,9 +163,7 @@ function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
         </div>
         <OutcomeSpectrum
           summary={counts}
-          unconfirmed={runs.reduce((n, r) => n + (r.state === "ok"
-            ? r.finding.rows.filter((x) => (x.outcome === "collected" || x.outcome === "split_tender") && x.unverified.length > 0).length
-            : 0), 0)}
+          unconfirmed={runs.reduce((n, r) => n + (r.state === "ok" ? unconfirmedRows(r.finding) : 0), 0)}
         />
         <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
           <span>{checkedAgo(oldestAt(runs))}</span>
@@ -172,6 +175,32 @@ function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** The hero's terms, merchant by merchant, and what it leaves out, so the
+ *  one big number can be checked by eye. Same data as the figure. */
+function HowItAddsUp({ runs }: { runs: MerchantRun[] }) {
+  const terms = runs.flatMap((r) => (r.state === "ok" && r.finding.summary.collected_twice > 0 ? [r] : []));
+  const left = runs.flatMap((r) => (r.state === "failed" ? [`${r.merchant.tenant.name}: couldn't run`] : []))
+    .concat(terms.filter((r) => r.finding.twice_currency === null).map((r) => `${r.merchant.tenant.name}: counted as orders, not money (currencies differ or not all orders listed)`));
+  return (
+    <details className="mt-3 text-sm">
+      <summary className="inline-flex min-h-11 cursor-pointer items-center font-medium underline-offset-4 hover:underline">How this adds up</summary>
+      <ul className="mt-1 space-y-1">
+        {terms.map((r) => {
+          const s = r.finding.summary;
+          const cur = r.finding.twice_currency;
+          return (
+            <li key={r.merchant.tenant.id} className="flex flex-wrap justify-between gap-x-4 tabular-nums">
+              <span>{r.merchant.tenant.name} · {s.collected_twice} order{s.collected_twice === 1 ? "" : "s"}</span>
+              <span>{cur ? <>{formatMinor(s.collected_twice_minor, cur)} · {formatMinor(s.overcollected_minor, cur)} owed back</> : "—"}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {left.length > 0 && <p className="mt-2 text-xs">Not in the figure: {left.join("; ")}.</p>}
+    </details>
   );
 }
 
@@ -210,11 +239,11 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
         })}
       </ul>
       <div className="hidden sm:block">
-        <Table label="Merchants" minWidth={680}>
+        <Table label="Merchants" minWidth={760}>
           <thead>
             <tr>
               <Th>Merchant</Th>
-              <Th>Rails</Th>
+              {FOLD_READS.map((c) => <Th key={c}>{railLabel(c)}{c === "shopify" ? <span className="font-normal"> · ledger</span> : null}</Th>)}
               <Th>Status</Th>
               <Th className="text-right">Owed back</Th>
             </tr>
@@ -231,7 +260,7 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
                     </Link>
                     <code className="block font-mono text-xs text-ink-soft">{m.tenant.id}</code>
                   </Td>
-                  <Td><RailChips ready={m.ready} partial={m.partial} known={m.known} /></Td>
+                  {FOLD_READS.map((c) => <Td key={c}><RailCell m={m} rail={c} /></Td>)}
                   <Td>
                     <RunStatus m={m} d={d} />
                     {r.state === "failed" && (
@@ -249,6 +278,28 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
       </div>
     </>
   );
+}
+
+/** One rail of the check, for one merchant: a glyph and a word, never
+ *  colour alone. */
+function RailCell({ m, rail }: { m: MerchantRun["merchant"]; rail: string }) {
+  if (!m.known) return <span className="text-xs text-ink-soft">Unknown</span>;
+  if (m.ready.includes(rail)) {
+    return <span className="inline-flex items-center gap-1.5 text-sm"><span aria-hidden className="text-ok">●</span>Connected</span>;
+  }
+  if (m.partial.includes(rail)) {
+    return <span className="inline-flex items-center gap-1.5 text-sm"><span aria-hidden>◐</span>Partial</span>;
+  }
+  return <span className="inline-flex items-center gap-1.5 text-sm text-ink-soft"><span aria-hidden>○</span>Missing</span>;
+}
+
+/** "3 of 5 merchants fully connected · 2 need PayPal" */
+function coverageLine(runs: MerchantRun[]): string {
+  const full = runs.filter((r) => eligible(r.merchant)).length;
+  const need = new Map<string, number>();
+  for (const r of runs) for (const c of r.merchant.known ? missingFor(r.merchant) : []) need.set(c, (need.get(c) ?? 0) + 1);
+  const top = [...need].sort((a, b) => b[1] - a[1])[0];
+  return `${full} of ${runs.length} merchant${runs.length === 1 ? "" : "s"} fully connected${top ? ` · ${top[1]} need${top[1] === 1 ? "s" : ""} ${railLabel(top[0])}` : ""}`;
 }
 
 function FailedNote({ runs }: { runs: MerchantRun[] }) {

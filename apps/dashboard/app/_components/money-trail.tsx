@@ -40,7 +40,7 @@ export function MoneyTrail({ r }: { r: FindingRow }) {
           {takes.length === 0 && <span className="absolute inset-0 flex items-center pl-2">no match on PayPal or Stripe</span>}
           {/* Three layers so the hatch never hides a rail's name: fills,
               then the excess hatch, then the labels on top. */}
-          <div className="animate-settle absolute inset-y-0 left-0 flex" style={{ width: pct(taken) }}>
+          <div className="absolute inset-y-0 left-0 flex" style={{ width: pct(taken) }}>
             {takes.map((p, i) => (
               <div
                 key={`${p.rail}-${i}`}

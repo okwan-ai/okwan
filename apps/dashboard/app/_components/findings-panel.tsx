@@ -3,7 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
-  ATTENTION, type Coverage, type Finding, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency,
+  ATTENTION, type Coverage, type Finding, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency, truncated, unconfirmedRows,
 } from "@/lib/finding";
 import { downloadFindings } from "@/lib/csv";
 import { formatMinor } from "@/lib/money";
@@ -97,7 +97,7 @@ function Result({ f, ranAt, reused, apiBase }: { f: Finding; ranAt: Date | null;
               : <><span className="font-semibold text-ink tabular-nums">{(s.match_rate * 100).toFixed(1)}%</span> paid exactly once</>}
           </p>
         </div>
-        <OutcomeSpectrum summary={s} unconfirmed={unconfirmed(f)} />
+        <OutcomeSpectrum summary={s} unconfirmed={unconfirmedRows(f)} animate={!reused} />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -113,7 +113,10 @@ function Result({ f, ranAt, reused, apiBase }: { f: Finding; ranAt: Date | null;
               variant="ghost"
               className="ml-auto"
               disabled={!rows.length}
-              onClick={() => downloadFindings(rows.map((r) => ({ ...r, merchantId: tenantId, merchantName: tenantName })), slug(tenantName))}
+              onClick={() => downloadFindings(
+                rows.map((r) => ({ ...r, merchantId: tenantId, merchantName: tenantName, at: ranAt?.getTime(), partial: f.partial || truncated(f) })),
+                slug(tenantName),
+              )}
             >
               <IconDownload className="h-4 w-4" /> Export CSV
             </Button>
@@ -400,13 +403,16 @@ function CoveragePanel({ s }: { s: Finding["summary"] }) {
   );
 }
 
+/** In UTC: the API's spans are UTC instants, and formatting them in the
+ *  server's or the browser's zone could shift a day (and disagree between
+ *  the server render and hydration). */
 function span(c: Coverage): string {
   const d = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : null;
+    iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : null;
   const start = d(c.span_start);
   const end = d(c.span_end);
   if (start && end) return `${start} – ${end}`;
-  if (end) return `to ${end}`;
+  if (end) return `full history to ${end}`;
   if (start) return `from ${start}`;
   return "full history";
 }
@@ -440,8 +446,3 @@ function taken(r: FindingRow): string {
   return r.collected_minor === null ? "—" : formatMinor(r.collected_minor, r.currency);
 }
 
-/** Paid once, but another rail couldn't rule out a second payment. From the
- *  rows on the page, so a partial page undercounts; it never overcounts. */
-function unconfirmed(f: Finding): number {
-  return f.rows.filter((r) => (r.outcome === "collected" || r.outcome === "split_tender") && r.unverified.length > 0).length;
-}

@@ -11,9 +11,9 @@ import { IconSearch } from "./ui/icons";
 type Command = { id: string; group: string; label: string; hint?: string; href: string; keywords?: string };
 
 const PAGES: Command[] = [
-  { id: "p-overview", group: "Pages", label: "Overview", href: "/overview", keywords: "home dashboard verdict" },
-  { id: "p-findings", group: "Pages", label: "Findings", href: "/findings", keywords: "collected twice refunds issues" },
-  { id: "p-twice", group: "Pages", label: "Findings: collected twice", href: "/findings?outcome=collected_twice", keywords: "double refund owed" },
+  { id: "p-overview", group: "Pages", label: "Overview", hint: "checks merchants", href: "/overview", keywords: "home dashboard verdict" },
+  { id: "p-findings", group: "Pages", label: "Findings", hint: "checks merchants", href: "/findings", keywords: "collected twice refunds issues" },
+  { id: "p-twice", group: "Pages", label: "Findings: collected twice", hint: "checks merchants", href: "/findings?outcome=collected_twice", keywords: "double refund owed" },
   { id: "p-merchants", group: "Pages", label: "Merchants", href: "/merchants", keywords: "tenants stores" },
   { id: "p-keys", group: "Pages", label: "API keys", href: "/key", keywords: "token secret" },
   { id: "p-mcp", group: "Pages", label: "MCP for agents", href: "/mcp", keywords: "claude agent tools" },
@@ -27,8 +27,10 @@ export function openPalette() {
 }
 
 /**
- * ⌘K / Ctrl-K (or "/" outside a field): jump to a page, a merchant, or a
- * merchant's tab. Navigation only, so nothing here starts a metered run.
+ * ⌘K / Ctrl-K (or "/" outside a field): jump to a page, a merchant, a
+ * merchant's tab or an order. Opening Overview or Findings checks every
+ * ready merchant (one metered request each, reused for 10 minutes); the
+ * palette says so beside them. Nothing else here starts a run.
  * An ARIA combobox: the input owns a listbox, arrows move the active
  * option, Enter follows it, Escape closes.
  */
@@ -180,7 +182,8 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
           ))}
         </ul>
         <p className="border-t border-line px-4 py-2 text-[11px] text-ink-soft">
-          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · opening a page never runs a check
+          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · Overview and Findings check merchants
+          when opened (one request each, reused for 10 minutes)
         </p>
       </div>
     </div>
