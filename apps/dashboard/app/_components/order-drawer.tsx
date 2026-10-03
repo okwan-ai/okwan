@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRef } from "react";
 import {
   type AttentionRow, atStake, checkedAgo, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency,
 } from "@/lib/finding";
@@ -30,6 +31,15 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
 }) {
   const r = index === null ? null : rows[index] ?? null;
   const stake = r ? atStake(r) : null;
+  const prev = useRef<HTMLButtonElement>(null);
+  const next = useRef<HTMLButtonElement>(null);
+  // At either end the pressed arrow disables itself; hand focus to the
+  // other one rather than drop it on <body>.
+  function step(i: number) {
+    onIndex(i);
+    if (i === 0) requestAnimationFrame(() => next.current?.focus());
+    else if (i === rows.length - 1) requestAnimationFrame(() => prev.current?.focus());
+  }
   return (
     <SlideOver
       open={r !== null}
@@ -47,9 +57,11 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
             <div className="flex items-center gap-1">
-              <span className="mr-1 text-xs text-ink-soft tabular-nums">{index + 1} of {rows.length}</span>
-              <Button variant="ghost" aria-label="Previous finding" disabled={index === 0} onClick={() => onIndex(index - 1)}>←</Button>
-              <Button variant="ghost" aria-label="Next finding" disabled={index === rows.length - 1} onClick={() => onIndex(index + 1)}>→</Button>
+              <span role="status" className="mr-1 text-xs text-ink-soft tabular-nums">
+                {index + 1} of {rows.length}<span className="sr-only">: order {r.order}, {OUTCOME_LABEL[r.outcome] ?? r.outcome}</span>
+              </span>
+              <Button ref={prev} variant="ghost" aria-label="Previous finding" disabled={index === 0} onClick={() => step(index - 1)}>←</Button>
+              <Button ref={next} variant="ghost" aria-label="Next finding" disabled={index === rows.length - 1} onClick={() => step(index + 1)}>→</Button>
             </div>
           </div>
 
@@ -80,7 +92,7 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
                 <Fact label="PayPal and Stripe" value="No matching payment" muted />
               )}
             </dl>
-            {r.reason && (r.outcome === "unverifiable" || r.paid.length === 0 || !sameCurrency(r)) && (
+            {r.reason && (r.outcome === "unverifiable" || r.paid.length === 0 || r.total_minor === null || r.collected_minor === null || !sameCurrency(r)) && (
               <p className="mt-2 text-xs break-words text-ink-soft">Reason: {r.reason}</p>
             )}
             {r.partial && (

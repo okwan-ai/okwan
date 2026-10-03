@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { RunDigest } from "@/lib/finding";
+import { type RunDigest, verdictOf } from "@/lib/finding";
 import { useTabResults } from "@/lib/tab-results";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
@@ -35,6 +35,14 @@ export function Sidebar({ tenant, merchants }: { tenant: string; merchants: Merc
 
   // A link followed on the narrow layout closes the menu behind it.
   useEffect(() => setOpen(false), [path]);
+  // So does the layout turning wide (rotation, zoom): the menu's header is
+  // hidden then, and a modal nobody can see must not keep the page locked.
+  useEffect(() => {
+    const wide = window.matchMedia("(min-width: 900px)");
+    const onChange = () => wide.matches && setOpen(false);
+    wide.addEventListener("change", onChange);
+    return () => wide.removeEventListener("change", onChange);
+  }, []);
 
   const nav = (
     <>
@@ -205,16 +213,12 @@ function MerchantSwitcher({ merchants, results, path }: {
 }
 
 function Glyph({ d }: { d: RunDigest | undefined }) {
-  const [mark, cls, label] = !d ? ["·", "text-ink-soft", "not checked this session"]
-    : !d.ok ? ["!", "text-danger", "couldn't run"]
-      : d.twice ? ["×2", "text-danger", "collected twice"]
-        : d.open ? ["!", "text-ink", `${d.open} findings`]
-          : d.unverifiable ? ["?", "text-ink-soft", "some orders couldn't be verified"]
-            : ["✓", "text-ok", "all paid once"];
+  const v = verdictOf(d);
+  const cls = { danger: "text-danger", ink: "text-ink", soft: "text-ink-soft", ok: "text-ok" }[v.tone];
   return (
     <span className={`w-5 shrink-0 text-center font-mono text-[11px] font-medium ${cls}`}>
-      <span aria-hidden>{mark}</span>
-      <span className="sr-only">{label}: </span>
+      <span aria-hidden>{v.mark}</span>
+      <span className="sr-only">{v.label}: </span>
     </span>
   );
 }

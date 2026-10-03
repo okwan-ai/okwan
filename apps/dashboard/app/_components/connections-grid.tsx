@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FOLD_READS, railLabel } from "@/lib/finding";
 import { useTabTests } from "@/lib/tab-results";
 import { ConnectorForm, type ConnectorView, TEST_LABEL } from "./connector-form";
@@ -29,6 +29,16 @@ export function ConnectionsGrid({ connectors, tenantId, tenantKey, fold = false 
   const [managing, setManaging] = useState<string | null>(
     asked && connectors.some((c) => c.name === asked) ? asked : null,
   );
+  // Also when the link is followed from this tab (the grid stays mounted).
+  // Used once: the param is dropped from the URL, so a later save (which
+  // refreshes the page) never reopens a form the user has moved on from.
+  useEffect(() => {
+    if (!asked) return;
+    if (connectors.some((c) => c.name === asked)) setManaging(asked);
+    const u = new URL(window.location.href);
+    u.searchParams.delete("connect");
+    window.history.replaceState(null, "", u);
+  }, [asked]);
   const tests = useTabTests();
   const grouped = new Set(GROUPS.flatMap((g) => g.names));
   const groups = [

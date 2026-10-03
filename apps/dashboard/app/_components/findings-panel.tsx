@@ -24,6 +24,9 @@ type Filter = "all" | "findings" | "paid" | "unverifiable";
 
 export function FindingsPanel({ apiBase }: { apiBase: string }) {
   const { busy, finding, error, ranAt, reused, missing, run } = useMerchantRun();
+  // A new ?order= on the same page (palette, drawer) remounts the result so
+  // the filter, the open row and the scroll follow the link.
+  const order = useSearchParams().get("order");
 
   if (busy) return <Loading />;
   if (error) {
@@ -51,7 +54,7 @@ export function FindingsPanel({ apiBase }: { apiBase: string }) {
       </EmptyState>
     );
   }
-  return <Result f={finding} ranAt={ranAt} reused={reused} apiBase={apiBase} />;
+  return <Result key={order ?? ""} f={finding} ranAt={ranAt} reused={reused} apiBase={apiBase} />;
 }
 
 function Result({ f, ranAt, reused, apiBase }: { f: Finding; ranAt: Date | null; reused: boolean; apiBase: string }) {
@@ -125,7 +128,7 @@ function Result({ f, ranAt, reused, apiBase }: { f: Finding; ranAt: Date | null;
             <OrderTable rows={rows} focus={order} />
           ) : (
             <EmptyState title={filter === "findings" ? "No findings" : "No orders here"}>
-              {filter === "findings" ? "No order was found collected twice, short or unpaid in what was read." : null}
+              {filter === "findings" ? "No order was found collected twice, not adding up across rails, or unpaid in what was read." : null}
             </EmptyState>
           )}
           {f.partial && (
@@ -190,9 +193,12 @@ function Pill({ on, onClick, count, children }: { on: boolean; onClick: () => vo
 function OrderTable({ rows, focus }: { rows: FindingRow[]; focus: string | null }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set(focus ? [focus] : []));
   const target = useRef<HTMLTableRowElement>(null);
+  const card = useRef<HTMLLIElement>(null);
   useEffect(() => {
-    target.current?.scrollIntoView({ block: "center" });
-    target.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    // The card list shows below 640px, the table above; act on the one with a box.
+    const el = [card.current, target.current].find((x) => x && x.offsetParent !== null);
+    el?.scrollIntoView({ block: "center" });
+    el?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   }, []);
   const toggle = (k: string) =>
     setOpen((prev) => {
@@ -213,7 +219,7 @@ function OrderTable({ rows, focus }: { rows: FindingRow[]; focus: string | null 
           const id = `m-detail-${r.order.replace(/[^a-zA-Z0-9_-]/g, "")}-${i}`;
           const gap = gapOf(r);
           return (
-            <li key={k} className={expanded ? "bg-canvas/60" : ""}>
+            <li key={k} ref={focus === r.order ? card : undefined} className={expanded ? "bg-canvas/60" : ""}>
               <button
                 type="button"
                 aria-expanded={expanded}
@@ -324,7 +330,7 @@ function Detail({ r }: { r: FindingRow }) {
         )}
         {/* The trail already states amounts the reason gives in raw minor
             units; show the API's reason where the trail can't explain. */}
-        {r.reason && (r.outcome === "unverifiable" || r.paid.length === 0) && (
+        {r.reason && (r.outcome === "unverifiable" || r.paid.length === 0 || r.total_minor === null || r.collected_minor === null) && (
           <>
             <dt className="text-xs text-ink-soft">Reason</dt>
             <dd className="break-words text-ink-soft">{r.reason}</dd>

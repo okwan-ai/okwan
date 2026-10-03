@@ -1,20 +1,22 @@
 "use client";
 
 import type { RunDigest } from "@/lib/finding";
-import { useTabResults } from "@/lib/tab-results";
+import { pickNewer, useTabResults } from "@/lib/tab-results";
 import { owedAmount, RunStatus } from "./merchant-status";
 
 /** The newest result for a merchant: from this tab's store, or one the
  *  server still holds (`initial`, read from memory, never a run). Without
  *  either, the merchant's readiness. */
-export function LastResult({ id, ready, known, initial = null }: {
+export function LastResult({ id, ready, known, initial = null, serverNow = null }: {
   id: string;
   ready: string[];
   known: boolean;
   initial?: RunDigest | null;
+  /** The server's clock for `initial.at`; rebased before comparing. */
+  serverNow?: number | null;
 }) {
   const fromTab = useTabResults()[id];
-  const d = fromTab && (!initial || fromTab.at >= initial.at) ? fromTab : initial;
+  const d = pickNewer(fromTab, initial, serverNow);
   return (
     <span className="flex flex-wrap items-center gap-2">
       <RunStatus m={{ ready, known }} d={d} />

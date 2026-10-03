@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { missingFor, type RunDigest } from "@/lib/finding";
-import { useTabResults } from "@/lib/tab-results";
+import { pickNewer, useTabResults } from "@/lib/tab-results";
 import { LastResult } from "./last-result";
 import { RailChips } from "./rail-chips";
 import { EmptyState } from "./ui/empty-state";
@@ -22,14 +22,14 @@ export type MerchantRow = {
 };
 
 /** The merchants list, searchable in the browser. Nothing here runs a check. */
-export function MerchantsTable({ rows }: { rows: MerchantRow[] }) {
+export function MerchantsTable({ rows, serverNow }: { rows: MerchantRow[]; serverNow: number }) {
   const [q, setQ] = useState("");
   const tab = useTabResults();
   const term = q.trim().toLowerCase();
   const shown = rows.filter((m) => !term || m.name.toLowerCase().includes(term) || m.id.toLowerCase().includes(term));
   const ready = rows.filter((m) => m.known && missingFor(m).length === 0).length;
   const withFindings = rows.filter((m) => {
-    const d = tab[m.id] && (!m.cached || tab[m.id].at >= m.cached.at) ? tab[m.id] : m.cached;
+    const d = pickNewer(tab[m.id], m.cached, serverNow);
     return d?.ok && d.open > 0;
   }).length;
 
@@ -71,7 +71,7 @@ export function MerchantsTable({ rows }: { rows: MerchantRow[] }) {
                 </Td>
                 <Td><code className="font-mono text-xs text-ink-soft">{m.id}</code></Td>
                 <Td><RailChips ready={m.ready} partial={m.partial} known={m.known} /></Td>
-                <Td><LastResult id={m.id} ready={m.ready} known={m.known} initial={m.cached} /></Td>
+                <Td><LastResult id={m.id} ready={m.ready} known={m.known} initial={m.cached} serverNow={serverNow} /></Td>
               </tr>
             ))}
           </tbody>
