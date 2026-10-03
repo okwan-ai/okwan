@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { ATTENTION, atStake, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, what } from "@/lib/finding";
 import { downloadFindings } from "@/lib/csv";
 import { formatMinor } from "@/lib/money";
-import type { AttentionRow } from "@/lib/runs";
+import type { AttentionRow } from "@/lib/finding";
 import { MiniTrail } from "./money-trail";
 import { OrderDrawer } from "./order-drawer";
 import { Badge } from "./ui/badge";
@@ -21,12 +21,16 @@ import { Table, Td, Th } from "./ui/table";
  * every merchant's fold. Filters live in the URL (replaceState, no server
  * round trip), so `/findings?outcome=collected_twice` can be linked.
  */
-export function FindingsTable({ rows, merchants }: { rows: AttentionRow[]; merchants: { id: string; name: string }[] }) {
+export function FindingsTable({ rows, merchants, apiBase }: {
+  rows: AttentionRow[];
+  merchants: { id: string; name: string }[];
+  apiBase: string;
+}) {
   const params = useSearchParams();
   const [outcome, setOutcome] = useState(() => valid(params.get("outcome")));
   const [merchant, setMerchant] = useState(() => params.get("merchant") ?? "");
   const [q, setQ] = useState(() => params.get("q") ?? "");
-  const [proof, setProof] = useState<AttentionRow | null>(null);
+  const [proof, setProof] = useState<number | null>(null);
 
   function sync(next: { outcome?: string; merchant?: string; q?: string }) {
     const u = new URL(window.location.href);
@@ -101,7 +105,7 @@ export function FindingsTable({ rows, merchants }: { rows: AttentionRow[]; merch
               const s = atStake(r);
               return (
                 <li key={`${r.merchantId}-${r.order}-${i}`}>
-                  <button type="button" onClick={() => setProof(r)} className="block w-full px-4 py-3 text-left">
+                  <button type="button" onClick={() => setProof(i)} className="block w-full px-4 py-3 text-left">
                     <span className="flex items-center justify-between gap-3">
                       <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome]}</Badge>
                       <span className="text-right text-sm font-semibold tabular-nums">
@@ -137,7 +141,7 @@ export function FindingsTable({ rows, merchants }: { rows: AttentionRow[]; merch
                       <Td>
                         <button
                           type="button"
-                          onClick={() => setProof(r)}
+                          onClick={() => setProof(i)}
                           aria-label={`Show the proof for order ${r.order}`}
                           className="inline-flex min-h-11 items-center font-mono text-[13px] underline underline-offset-4 decoration-line-strong hover:decoration-ink"
                         >
@@ -163,7 +167,7 @@ export function FindingsTable({ rows, merchants }: { rows: AttentionRow[]; merch
           </div>
         </>
       )}
-      <OrderDrawer row={proof} onClose={() => setProof(null)} />
+      <OrderDrawer rows={shown} index={proof} onIndex={setProof} onClose={() => setProof(null)} apiBase={apiBase} />
     </div>
   );
 }

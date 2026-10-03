@@ -1,37 +1,56 @@
 "use client";
 
 import Link from "next/link";
-import { atStake, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency } from "@/lib/finding";
+import {
+  type AttentionRow, atStake, checkedAgo, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency,
+} from "@/lib/finding";
 import { formatMinor } from "@/lib/money";
+import { mcpCall, restCall } from "@/lib/reproduce";
 import { MoneyTrail } from "./money-trail";
 import { Badge } from "./ui/badge";
-import { buttonClass } from "./ui/button";
-import { CopyButton } from "./ui/copy-button";
+import { Button, buttonClass } from "./ui/button";
+import { CodeBlock, CopyButton } from "./ui/copy-button";
 import { SlideOver } from "./ui/dialog";
 
-export type DrawerRow = FindingRow & { merchantId: string; merchantName: string };
+export type DrawerRow = FindingRow & { merchantId: string; merchantName: string; at?: number; partial?: boolean };
 
 /**
  * One order's proof, where the operator already is: the verdict, what is at
- * stake, the money trail, and each rail's evidence. Built from the row the
- * page holds, so opening it reads nothing and runs nothing. A person makes
- * any refund on the rail; Okwan only prepares the facts.
+ * stake, the money trail, each source's evidence, and how to reproduce it.
+ * Built from rows the page holds, so opening it reads nothing and runs
+ * nothing. Previous and Next step through the list it was opened from. A
+ * person makes any refund on the rail; Okwan only prepares the facts.
  */
-export function OrderDrawer({ row, onClose }: { row: DrawerRow | null; onClose: () => void }) {
-  const r = row;
+export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
+  rows: (DrawerRow | AttentionRow)[];
+  index: number | null;
+  onIndex: (i: number) => void;
+  onClose: () => void;
+  apiBase: string;
+}) {
+  const r = index === null ? null : rows[index] ?? null;
   const stake = r ? atStake(r) : null;
   return (
     <SlideOver
       open={r !== null}
       onClose={onClose}
       title={r ? `Order ${r.order}` : ""}
-      description={r?.merchantName}
+      description={r ? (
+        <>
+          {r.merchantName}
+          {r.at ? <> · <span suppressHydrationWarning>{checkedAgo(r.at).toLowerCase()}</span></> : null}
+        </>
+      ) : null}
     >
-      {r && (
+      {r && index !== null && (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
-            <code className="font-mono text-xs text-ink-soft">{r.outcome}</code>
+            <div className="flex items-center gap-1">
+              <span className="mr-1 text-xs text-ink-soft tabular-nums">{index + 1} of {rows.length}</span>
+              <Button variant="ghost" aria-label="Previous finding" disabled={index === 0} onClick={() => onIndex(index - 1)}>←</Button>
+              <Button variant="ghost" aria-label="Next finding" disabled={index === rows.length - 1} onClick={() => onIndex(index + 1)}>→</Button>
+            </div>
           </div>
 
           {stake && (
@@ -64,6 +83,19 @@ export function OrderDrawer({ row, onClose }: { row: DrawerRow | null; onClose: 
             {r.reason && (r.outcome === "unverifiable" || r.paid.length === 0 || !sameCurrency(r)) && (
               <p className="mt-2 text-xs break-words text-ink-soft">Reason: {r.reason}</p>
             )}
+            {r.partial && (
+              <p className="mt-2 text-xs text-ink">
+                <span aria-hidden className="mr-1 font-mono">?</span>This merchant&apos;s result was cut short, so other orders may
+                have findings this list doesn&apos;t show.
+              </p>
+            )}
+          </section>
+
+          <section aria-labelledby="drawer-repro" className="space-y-2">
+            <h3 id="drawer-repro" className="text-sm font-semibold">Reproduce this verdict</h3>
+            <CodeBlock label="Hosted MCP" code={mcpCall(r)} />
+            <CodeBlock label="REST · curl + jq" code={restCall(apiBase, r)} />
+            <p className="text-xs text-ink-soft">With a key issued for {r.merchantName}. Each call is a fresh, metered check.</p>
           </section>
 
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
@@ -102,6 +134,7 @@ function summary(r: DrawerRow): string {
     `${r.merchantName} · order ${r.order}: ${OUTCOME_LABEL[r.outcome] ?? r.outcome}`,
     `Order total ${formatMinor(r.total_minor, r.currency)}${takes ? `; taken: ${takes}` : "; no matching payment"}.`,
     stake ? `${formatMinor(stake.minor, r.currency)} ${stake.label}.` : "",
+    r.at ? `Checked ${new Date(r.at).toISOString()}.` : "",
     "Source: Okwan reconciliation (rails), read-only.",
   ].filter(Boolean).join("\n");
 }

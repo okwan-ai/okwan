@@ -221,12 +221,16 @@ function Glyph({ d }: { d: RunDigest | undefined }) {
 
 function Logo() {
   return (
-    <Link href="/overview" className="flex min-h-11 items-center gap-2 rounded-lg px-2">
+    <Link href="/overview" prefetch={false} className="flex min-h-11 items-center gap-2 rounded-lg px-2">
       <span className="inline-block h-6 w-6 rounded-md bg-volt ring-1 ring-ink" aria-hidden />
       <span className="font-display text-xl font-medium">Okwan</span>
     </Link>
   );
 }
+
+/** Overview and Findings run a metered check per ready merchant when they
+ *  render, so a link to them is never prefetched: only a click may cost. */
+export const RUNS_CHECKS = new Set(["/overview", "/findings"]);
 
 function Item({ href, path, icon, count, exact = false, children }: {
   href: string;
@@ -240,6 +244,7 @@ function Item({ href, path, icon, count, exact = false, children }: {
   return (
     <Link
       href={href}
+      prefetch={RUNS_CHECKS.has(href) ? false : undefined}
       aria-current={active ? "page" : undefined}
       className={`flex min-h-11 items-center gap-3 rounded-lg px-3 ${
         active ? "bg-ink/[0.06] font-medium text-ink" : "text-ink-soft hover:bg-ink/[0.04] hover:text-ink"

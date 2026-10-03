@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { apiUrl } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { attentionRows, caveats, checkedAgo, digest, oldestAt, runAll, seenFindings } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
@@ -67,10 +68,11 @@ async function FindingsBody() {
           title="Nothing checked yet"
           action={<ButtonLink href="/merchants" variant="primary">Go to merchants</ButtonLink>}
         >
-          A merchant is checked once it has a ledger and at least one payment rail connected.
+          A merchant is checked once Shopify, PayPal and Stripe are all connected.
         </EmptyState>
       ) : (
         <FindingsTable
+          apiBase={apiUrl()}
           rows={rows}
           merchants={checked.map((r) => ({ id: r.merchant.tenant.id, name: r.merchant.tenant.name }))}
         />

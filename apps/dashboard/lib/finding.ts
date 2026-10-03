@@ -235,6 +235,35 @@ export function toFinding(page: AcrossPage): Finding {
   };
 }
 
+/** Paid once, but another rail couldn't rule out a second payment. From the
+ *  rows on the page, so a partial page undercounts; it never overcounts. */
+export function unconfirmedRows(f: Finding): number {
+  return f.rows.filter((r) => (r.outcome === "collected" || r.outcome === "split_tender") && r.unverified.length > 0).length;
+}
+
+/** A side was cut at its record cap, so later records weren't read. */
+export function truncated(f: Finding): boolean {
+  return Boolean(f.summary.ledger_coverage?.truncated)
+    || Object.values(f.summary.rails).some((r) => r.coverage?.truncated);
+}
+
+export function checkedAgo(at: number | null, now = Date.now()): string {
+  if (at === null) return "";
+  const min = Math.floor((now - at) / 60000);
+  return min < 1 ? "Checked just now" : `Checked ${min} min ago`;
+}
+
+/** A finding as the cross-merchant pages and the order drawer carry it. */
+export type AttentionRow = FindingRow & {
+  merchantId: string;
+  merchantName: string;
+  /** When the check that produced it ran (ms epoch). */
+  at: number;
+  /** The check's result was cut short (more than 1,000 orders, or a side
+   *  hit its record cap), so this list may not be the whole of it. */
+  partial: boolean;
+};
+
 /** What the browser's in-tab results store needs from a run. */
 export type RunDigest = {
   id: string;
@@ -248,6 +277,8 @@ export type RunDigest = {
   /** What was taken beyond the order totals: the amount owed back. */
   overMinor: number;
   unverifiable: number;
+  /** Paid once with another rail unable to rule out a second payment. */
+  unconfirmed: number;
   currency: string | null;
   detail?: string;
 };
@@ -263,10 +294,11 @@ export function digestOf(id: string, f: Finding, at: number): RunDigest {
     twiceMinor: s.collected_twice_minor,
     overMinor: s.overcollected_minor,
     unverifiable: s.unverifiable,
+    unconfirmed: unconfirmedRows(f),
     currency: f.twice_currency,
   };
 }
 
 export function failedDigest(id: string, detail: string, at: number): RunDigest {
-  return { id, ok: false, at, open: 0, twice: 0, twiceMinor: 0, overMinor: 0, unverifiable: 0, currency: null, detail };
+  return { id, ok: false, at, open: 0, twice: 0, twiceMinor: 0, overMinor: 0, unverifiable: 0, unconfirmed: 0, currency: null, detail };
 }
