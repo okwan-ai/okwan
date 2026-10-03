@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { requireTenant } from "@/lib/guard";
+import { digestOf } from "@/lib/finding";
 import { merchantsWithRails } from "@/lib/merchants";
+import { cachedRun } from "@/lib/runs";
 import { AddMerchant } from "../_components/add-merchant";
-import { LastResult } from "../_components/last-result";
-import { Readiness } from "../_components/merchant-status";
-import { RailChips } from "../_components/rail-chips";
+import { MerchantsTable } from "../_components/merchants-table";
 import { EmptyState } from "../_components/ui/empty-state";
 import { PageHeader } from "../_components/ui/page-header";
-import { Table, Td, Th } from "../_components/ui/table";
+
+export const metadata = { title: "Merchants" };
 
 export default async function MerchantsPage() {
   await requireTenant();
@@ -35,35 +36,21 @@ export default async function MerchantsPage() {
           merchant, not your account.
         </EmptyState>
       ) : (
-        <Table label="Merchants" minWidth={760}>
-          <thead>
-            <tr>
-              <Th>Name</Th>
-              <Th>ID</Th>
-              <Th>Rails</Th>
-              <Th>Status</Th>
-              <Th>Last result</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {merchants.map((m) => (
-              <tr key={m.tenant.id} className="hover:bg-canvas/60">
-                <Td>
-                  <Link href={`/merchants/${encodeURIComponent(m.tenant.id)}`} className="font-medium underline-offset-4 hover:underline">
-                    {m.tenant.name}
-                  </Link>
-                  <span className="block text-xs text-ink-soft">
-                    Added {new Date(m.tenant.created_at).toLocaleDateString("en-US", { dateStyle: "medium" })}
-                  </span>
-                </Td>
-                <Td><code className="font-mono text-xs text-ink-soft">{m.tenant.id}</code></Td>
-                <Td><RailChips ready={m.ready} partial={m.partial} known={m.known} /></Td>
-                <Td><Readiness m={m} /></Td>
-                <Td><LastResult id={m.tenant.id} ready={m.ready} known={m.known} /></Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
+        <MerchantsTable
+          rows={merchants.map((m) => {
+            // Listed under this session, so the caller may see it; memory only, never a run.
+            const c = cachedRun(m.tenant.id, m.ready);
+            return {
+              id: m.tenant.id,
+              name: m.tenant.name,
+              createdAt: m.tenant.created_at,
+              ready: m.ready,
+              partial: m.partial,
+              known: m.known,
+              cached: c ? digestOf(m.tenant.id, c.finding, c.at) : null,
+            };
+          })}
+        />
       )}
     </>
   );

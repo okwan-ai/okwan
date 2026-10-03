@@ -98,7 +98,7 @@ export const TEST_LABEL: Record<TestResult["status"], { symbol: string; label: s
 
 const TONE_BOX = {
   ok: "border-ok/30 bg-ok-soft text-ok",
-  warn: "border-volt-deep/60 bg-volt/20 text-ink",
+  warn: "border-ink-soft/50 bg-surface text-ink",
   danger: "border-danger/30 bg-danger-soft text-danger",
   neutral: "border-line bg-canvas text-ink-soft",
 };

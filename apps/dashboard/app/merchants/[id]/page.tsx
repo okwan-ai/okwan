@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/api";
 import { configured, connectors } from "@/lib/merchants";
 import { tabOf } from "@/lib/merchant-tabs";
 import { ConnectionsGrid } from "../../_components/connections-grid";
@@ -24,10 +25,11 @@ export default async function MerchantPage({
     return (
       <>
         <p className="mb-6 max-w-2xl text-sm text-ink-soft">
-          A run needs the Shopify ledger and at least one payment rail. Credentials go straight to an encrypted vault under
-          this merchant and are never shown again; each test makes one real read.
+          Credentials go straight to an encrypted vault under this merchant and are never shown again. Each test makes one real
+          read from the rail.
         </p>
         <ConnectionsGrid
+          fold
           tenantId={id}
           tenantKey={id}
           connectors={catalog.data.map((c) => ({ ...c, stored: stored.data.configured[c.name] ?? [] }))}
@@ -50,5 +52,5 @@ export default async function MerchantPage({
     );
   }
 
-  return <FindingsPanel />;
+  return <FindingsPanel apiBase={apiUrl()} />;
 }

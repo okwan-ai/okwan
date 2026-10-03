@@ -1,0 +1,42 @@
+"use client";
+
+import { atStake, type FindingRow, OUTCOME_LABEL, railLabel, sameCurrency } from "./finding";
+import { minorToDecimal } from "./money";
+
+/** CSV from rows already in the browser: no request, no run. Amounts are
+ *  decimal strings built from minor units without floating point. */
+export function downloadFindings(rows: (FindingRow & { merchantName: string; merchantId: string })[], name = "findings") {
+  const head = ["merchant", "merchant_id", "order", "outcome", "outcome_code", "currency", "order_total", "taken", "at_stake", "at_stake_kind", "taken_by_rail"];
+  const lines = rows.map((r) => {
+    const s = atStake(r);
+    return [
+      r.merchantName,
+      r.merchantId,
+      r.order,
+      OUTCOME_LABEL[r.outcome] ?? r.outcome,
+      r.outcome,
+      (r.currency ?? "").toUpperCase(),
+      minorToDecimal(r.total_minor, r.currency),
+      // Blank when rails took another currency: the sum would add unlike units.
+      sameCurrency(r) ? minorToDecimal(r.collected_minor, r.currency) : "",
+      s ? minorToDecimal(s.minor, r.currency) : "",
+      s?.label ?? "",
+      r.paid.map((p) => `${railLabel(p.rail)} ${minorToDecimal(p.minor, p.currency ?? r.currency)} ${(p.currency ?? r.currency ?? "").toUpperCase()}`.trim()).join("; "),
+    ];
+  });
+  const csv = [head, ...lines].map((row) => row.map(cell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `okwan-${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** RFC 4180 quoting, and a leading quote on anything a spreadsheet would
+ *  read as a formula (CSV injection). */
+function cell(v: string): string {
+  const numeric = /^-?\d+(\.\d+)?$/.test(v);
+  const safe = !numeric && /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { VerifyForm } from "../_components/verify-form";
 
+export const metadata = { title: "Confirm your email" };
+
 export default async function VerifyPage({
   searchParams,
 }: {

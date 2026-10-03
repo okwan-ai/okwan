@@ -4,6 +4,8 @@ import { configured, connectors } from "@/lib/merchants";
 import { ConnectionsGrid } from "../_components/connections-grid";
 import { PageHeader } from "../_components/ui/page-header";
 
+export const metadata = { title: "Your own rails" };
+
 /** The signed-in workspace's own rails. A merchant's live on its own page. */
 export default async function ConnectionsPage() {
   const tenant = await requireTenant();

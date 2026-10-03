@@ -1,38 +1,74 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { railLabel } from "@/lib/finding";
+import { FOLD_READS, railLabel } from "@/lib/finding";
 import { useTabTests } from "@/lib/tab-results";
 import { ConnectorForm, type ConnectorView, TEST_LABEL } from "./connector-form";
 import { Badge } from "./ui/badge";
+import { buttonClass } from "./ui/button";
 import { SlideOver } from "./ui/dialog";
 
-const GROUPS: { title: string; names: string[] }[] = [
+const GROUPS: { title: string; note?: string; names: string[] }[] = [
   { title: "Ledger", names: ["shopify"] },
-  { title: "Payment rails", names: ["stripe", "paypal", "paystack"] },
+  { title: "Payment rails in the check", names: ["paypal", "stripe"] },
+  { title: "Not in the check yet", note: "Connected rails here are readable over REST, SQL and MCP, but the reconciliation doesn't fold them in yet.", names: ["paystack"] },
 ];
 
 /** Rail tiles, grouped; Manage opens the credential form in a slide-over.
  *  `tenantKey` names whose tests the tiles show (the merchant, or "self"). */
-export function ConnectionsGrid({ connectors, tenantId, tenantKey }: {
+export function ConnectionsGrid({ connectors, tenantId, tenantKey, fold = false }: {
   connectors: ConnectorView[];
   tenantId?: string;
   tenantKey: string;
+  /** Show what the reconciliation still needs (a merchant's page). */
+  fold?: boolean;
 }) {
-  const [managing, setManaging] = useState<string | null>(null);
+  // ?connect=paypal (from "Connect PayPal" anywhere) opens that form directly.
+  const asked = useSearchParams().get("connect");
+  const [managing, setManaging] = useState<string | null>(
+    asked && connectors.some((c) => c.name === asked) ? asked : null,
+  );
   const tests = useTabTests();
   const grouped = new Set(GROUPS.flatMap((g) => g.names));
   const groups = [
     ...GROUPS.map((g) => ({ ...g, items: g.names.flatMap((n) => connectors.filter((c) => c.name === n)) })),
-    { title: "Other", items: connectors.filter((c) => !grouped.has(c.name)) },
+    { title: "Other connectors", note: undefined, items: connectors.filter((c) => !grouped.has(c.name)) },
   ].filter((g) => g.items.length);
   const current = connectors.find((c) => c.name === managing) ?? null;
 
+  const complete = (c: ConnectorView) => c.credential_fields.every((f) => c.stored.includes(f));
+  const needed = FOLD_READS.map((name) => connectors.find((c) => c.name === name)).filter((c) => c !== undefined);
+  const missing = needed.filter((c) => !complete(c));
+
   return (
     <div className="space-y-8">
+      {fold && needed.length > 0 && (
+        <section aria-label="What a check needs" className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-line bg-surface px-5 py-3">
+          <p className="text-sm font-medium">A check needs</p>
+          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            {needed.map((c) => (
+              <li key={c.name} className="inline-flex items-center gap-1.5">
+                <span aria-hidden className={complete(c) ? "text-ok" : "text-ink-soft"}>{complete(c) ? "●" : "○"}</span>
+                {railLabel(c.name)}
+                <span className="sr-only">{complete(c) ? " connected" : " not connected"}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-ink-soft tabular-nums">{needed.length - missing.length} of {needed.length}</p>
+          {missing.length > 0 ? (
+            <button type="button" onClick={() => setManaging(missing[0].name)} className={buttonClass("primary", "ml-auto")}>
+              Connect {railLabel(missing[0].name)}
+            </button>
+          ) : (
+            <p className="ml-auto text-sm text-ok"><span aria-hidden className="mr-1 font-mono">✓</span>Ready to check: use Run reconciliation above</p>
+          )}
+        </section>
+      )}
       {groups.map((g) => (
-        <section key={g.title} aria-labelledby={`group-${g.title}`}>
-          <h3 id={`group-${g.title}`} className="mb-3 text-xs font-medium tracking-wide text-ink-soft uppercase">{g.title}</h3>
+        <section key={g.title} aria-labelledby={`group-${g.title.replace(/\W+/g, "-")}`}>
+          <h2 id={`group-${g.title.replace(/\W+/g, "-")}`} className="mb-1 text-xs font-medium tracking-wide text-ink-soft uppercase">{g.title}</h2>
+          {g.note ? <p className="mb-3 max-w-2xl text-xs text-ink-soft">{g.note}</p> : <div className="mb-3" />}
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {g.items.map((c) => {
               const test = tests[`${tenantKey}:${c.name}`];
@@ -54,7 +90,7 @@ export function ConnectionsGrid({ connectors, tenantId, tenantKey }: {
                     type="button"
                     onClick={() => setManaging(c.name)}
                     aria-label={`Manage ${railLabel(c.name)}`}
-                    className="mt-3 inline-flex min-h-11 items-center self-start rounded-lg border border-line px-3 text-sm font-medium hover:border-ink"
+                    className={buttonClass("secondary", "mt-3 self-start")}
                   >
                     Manage
                   </button>

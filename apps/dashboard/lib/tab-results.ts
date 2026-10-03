@@ -12,6 +12,9 @@ import type { RunDigest } from "./finding";
  * are not persisted server-side, and every run is metered.
  */
 let results: Record<string, RunDigest> = {};
+/** Findings this tab has seen, for order search in the palette. */
+export type SeenFinding = { merchantId: string; merchantName: string; order: string; outcome: string; stake: string };
+let findings: Record<string, SeenFinding[]> = {};
 /** The last credential test per `${tenant}:${connector}`, same lifetime. */
 let tests: Record<string, TestResult> = {};
 const listeners = new Set<() => void>();
@@ -44,9 +47,12 @@ export function useTabTests(): Record<string, TestResult> {
   return useSyncExternalStore(subscribe, () => tests, () => EMPTY);
 }
 
+/** Keeps the newest result per merchant: a page re-rendering an older
+ *  cached run must not overwrite a fresh run from the merchant's page. */
 export function report(digests: RunDigest[]) {
-  if (!digests.length) return;
-  results = { ...results, ...Object.fromEntries(digests.map((d) => [d.id, d])) };
+  const newer = digests.filter((d) => !results[d.id] || d.at >= results[d.id].at);
+  if (!newer.length) return;
+  results = { ...results, ...Object.fromEntries(newer.map((d) => [d.id, d])) };
   emit();
 }
 
@@ -54,8 +60,19 @@ export function useTabResults(): Record<string, RunDigest> {
   return useSyncExternalStore(subscribe, () => results, () => EMPTY);
 }
 
-/** Rendered by a server page to hand its runs to the store. Renders nothing. */
-export function ReportRuns({ digests }: { digests: RunDigest[] }) {
-  useEffect(() => report(digests), [digests]);
+export function useTabFindings(): Record<string, SeenFinding[]> {
+  return useSyncExternalStore(subscribe, () => findings, () => EMPTY);
+}
+
+/** Rendered by a server page to hand its runs (and, optionally, their
+ *  findings, keyed by merchant) to the store. Renders nothing. */
+export function ReportRuns({ digests, seen }: { digests: RunDigest[]; seen?: Record<string, SeenFinding[]> }) {
+  useEffect(() => {
+    report(digests);
+    if (seen) {
+      findings = { ...findings, ...seen };
+      emit();
+    }
+  }, [digests, seen]);
   return null;
 }

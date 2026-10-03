@@ -4,7 +4,9 @@ export type Tone = "danger" | "warn" | "ok" | "neutral" | "ink";
 
 const TONE: Record<Tone, string> = {
   danger: "border-danger/30 bg-danger-soft text-danger",
-  warn: "border-volt-deep/60 bg-volt/20 text-ink",
+  // Not volt: volt is for primary actions and the one hero figure (§2).
+  // The symbol and label carry "warn"; the stronger border sets it apart.
+  warn: "border-ink-soft/50 bg-surface text-ink",
   ok: "border-ok/30 bg-ok-soft text-ok",
   neutral: "border-line bg-canvas text-ink-soft",
   ink: "border-ink bg-ink text-canvas",
