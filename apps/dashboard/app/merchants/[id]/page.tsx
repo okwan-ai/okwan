@@ -1,63 +1,54 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { api, session, type Tenant } from "@/lib/api";
-import { requireTenant } from "@/lib/guard";
+import { configured, connectors } from "@/lib/merchants";
+import { tabOf } from "@/lib/merchant-tabs";
 import { ConnectionsGrid } from "../../_components/connections-grid";
-import type { ConnectorView } from "../../_components/connector-form";
+import { DevSnippets } from "../../_components/dev-snippets";
+import { FindingsPanel } from "../../_components/findings-panel";
 import { IssueKey } from "../../_components/issue-key";
-import { RunReconciliation } from "../../_components/run-reconciliation";
+import { Section } from "../../_components/ui/page-header";
 
-type Connector = Omit<ConnectorView, "stored">;
+/** The active tab's content. The layout has already checked access and
+ * fetched what this reads; React's per-render cache answers here. */
+export default async function MerchantPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const [{ id }, { tab }] = await Promise.all([params, searchParams]);
+  const active = tabOf(tab);
 
-/**
- * One merchant's Connections and API key. The id goes to the API as given:
- * whether the caller may administer it is the subtree guard's answer, and
- * its 404 (foreign or unknown) becomes this page's 404.
- */
-export default async function MerchantPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireTenant();
-  const { id } = await params;
-  const token = await session();
-  const [connectors, configured, tenants] = await Promise.all([
-    api<Connector[]>("/v1/connectors"),
-    api<{ configured: Record<string, string[]> }>(
-      `/v1/tenants/${encodeURIComponent(id)}/credentials`,
-      { session: token },
-    ),
-    api<{ children: Tenant[] }>("/v1/tenants", { session: token }),
-  ]);
-  if (!configured.ok && configured.status === 404) notFound();
-  if (!connectors.ok || !configured.ok) {
-    return <p className="text-ink-soft">The Okwan API did not answer. Try again in a moment.</p>;
+  if (active === "connections") {
+    const [catalog, stored] = await Promise.all([connectors(), configured(id)]);
+    if (!catalog.ok || !stored.ok) return null;
+    return (
+      <>
+        <p className="mb-6 max-w-2xl text-sm text-ink-soft">
+          A run needs the Shopify ledger and at least one payment rail. Credentials go straight to an encrypted vault under
+          this merchant and are never shown again; each test makes one real read.
+        </p>
+        <ConnectionsGrid
+          tenantId={id}
+          tenantKey={id}
+          connectors={catalog.data.map((c) => ({ ...c, stored: stored.data.configured[c.name] ?? [] }))}
+        />
+      </>
+    );
   }
-  // Display only: a grandchild is not in the direct list, so it shows its id.
-  const name = (tenants.ok && tenants.data.children.find((c) => c.id === id)?.name) || id;
 
-  return (
-    <>
-      <Link href="/merchants" className="text-sm text-ink-soft hover:text-ink">← Merchants</Link>
-      <h1 className="mt-4 font-display text-5xl font-light tracking-tight">{name}</h1>
-      <code className="mt-2 block font-mono text-xs text-ink-soft">{id}</code>
-      <div className="mt-10">
-        <RunReconciliation tenantId={id} />
-      </div>
+  if (active === "keys") {
+    return (
+      <>
+        <p className="mb-4 max-w-2xl text-sm text-ink-soft">
+          A key for this merchant reads only this merchant&apos;s rails. Issued once, shown once.
+        </p>
+        <IssueKey tenantId={id} />
+        <Section title="Use the key">
+          <DevSnippets />
+        </Section>
+      </>
+    );
+  }
 
-      <h2 className="mt-16 font-display text-3xl font-light tracking-tight">Connections</h2>
-      <p className="mt-3 mb-6 max-w-2xl text-ink-soft">
-        This merchant&apos;s rail credentials. They go straight to an encrypted vault under this
-        merchant and are never shown again. Each test makes one real read from the rail.
-      </p>
-      <ConnectionsGrid
-        tenantId={id}
-        tenantKey={id}
-        connectors={connectors.data.map((c) => ({ ...c, stored: configured.data.configured[c.name] ?? [] }))}
-      />
-
-      <h2 className="mt-16 font-display text-3xl font-light tracking-tight">API key</h2>
-      <p className="mt-3 mb-6 max-w-2xl text-ink-soft">
-        A key for this merchant reads only this merchant&apos;s rails. Issued once, shown once.
-      </p>
-      <IssueKey tenantId={id} />
-    </>
-  );
+  return <FindingsPanel />;
 }

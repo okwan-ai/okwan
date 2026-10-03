@@ -23,7 +23,7 @@ export function ConnectionsGrid({ connectors, tenantId, tenantKey }: {
   const tests = useTabTests();
   const grouped = new Set(GROUPS.flatMap((g) => g.names));
   const groups = [
-    ...GROUPS.map((g) => ({ ...g, items: connectors.filter((c) => g.names.includes(c.name)) })),
+    ...GROUPS.map((g) => ({ ...g, items: g.names.flatMap((n) => connectors.filter((c) => c.name === n)) })),
     { title: "Other", items: connectors.filter((c) => !grouped.has(c.name)) },
   ].filter((g) => g.items.length);
   const current = connectors.find((c) => c.name === managing) ?? null;

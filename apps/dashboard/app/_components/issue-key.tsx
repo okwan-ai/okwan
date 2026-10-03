@@ -33,7 +33,7 @@ export function IssueKey({ tenantId }: { tenantId?: string } = {}) {
         <p className="text-sm font-medium">Copy this key now. Okwan stores only a hash and can&apos;t show it again.</p>
         <div className="mt-3 flex items-center gap-2">
           <code className="field flex-1 overflow-x-auto font-mono text-sm whitespace-nowrap">{issued.secret}</code>
-          <CopyButton value={issued.secret} label="Copy key" showText />
+          <CopyButton value={issued.secret} label="Copy key" text="Copy" />
         </div>
         <p className="mt-3 text-xs text-ink-soft">
           Key id <code className="font-mono">{issued.key_id}</code>. Send it as{" "}
