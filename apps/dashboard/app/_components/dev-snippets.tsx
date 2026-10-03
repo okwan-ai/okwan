@@ -25,7 +25,7 @@ export function DevSnippets({ server = "okwan" }: { server?: string }) {
   const curl = `curl "${base}/v1/reconciliations/across/rails?outcome=collected_twice" \\
   -H "Authorization: Bearer okw_…"`;
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <CodeBlock label="MCP client config" code={mcp} />
       <CodeBlock label="REST · curl" code={curl} />
       <p className="text-xs text-ink-soft">
