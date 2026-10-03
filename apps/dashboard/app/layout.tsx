@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { me } from "@/lib/api";
-import { SignOut } from "./_components/sign-out";
+import { tenantTree } from "@/lib/api";
+import { Sidebar } from "./_components/sidebar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +12,7 @@ export const metadata: Metadata = {
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const tenant = await me();
+  const tree = await tenantTree();
   return (
     <html lang="en">
       <head>
@@ -25,25 +24,36 @@ export default async function RootLayout({
         />
       </head>
       <body className="min-h-screen">
-        <header className="border-b border-line">
-          <div className="mx-auto flex max-w-[920px] items-center justify-between gap-4 px-6 py-4">
-            <Link href="/" className="flex items-center gap-2">
-              <span className="inline-block h-6 w-6 rounded-md bg-volt ring-1 ring-ink" aria-hidden />
-              <span className="font-display text-xl font-medium">Okwan</span>
-            </Link>
-            {tenant && (
-              <nav className="flex items-center gap-5 text-sm text-ink-soft">
-                <Link href="/connections" className="hover:text-ink">Connections</Link>
-                <Link href="/merchants" className="hover:text-ink">Merchants</Link>
-                <Link href="/key" className="hover:text-ink">API key</Link>
-                <Link href="/results" className="hover:text-ink">Results</Link>
-                <SignOut />
-              </nav>
-            )}
+        {tree ? (
+          <div className="min-[900px]:flex">
+            <Sidebar
+              tenant={tree.self.name}
+              merchants={tree.children.length}
+            />
+            <main className="min-w-0 flex-1">
+              <div className="mx-auto max-w-[1120px] px-4 py-8 sm:px-8 sm:py-10">{children}</div>
+            </main>
           </div>
-        </header>
-        <main className="mx-auto max-w-[920px] px-6 py-12">{children}</main>
+        ) : (
+          <SignedOut>{children}</SignedOut>
+        )}
       </body>
     </html>
+  );
+}
+
+function SignedOut({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <header className="border-b border-line">
+        <div className="mx-auto flex max-w-[920px] items-center px-4 py-4 sm:px-6">
+          <a href="/signup" className="flex min-h-11 items-center gap-2">
+            <span className="inline-block h-6 w-6 rounded-md bg-volt ring-1 ring-ink" aria-hidden />
+            <span className="font-display text-xl font-medium">Okwan</span>
+          </a>
+        </div>
+      </header>
+      <main className="mx-auto max-w-[920px] px-4 py-12 sm:px-6">{children}</main>
+    </>
   );
 }
