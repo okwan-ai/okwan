@@ -1,22 +1,24 @@
-import type { MerchantRails } from "@/lib/merchants";
+import { railLabel } from "@/lib/finding";
 
-export function RailChips({ m }: { m: MerchantRails }) {
+/** Connected rails as compact chips: ● every field stored, ◐ some. */
+export function RailChips({ ready, partial, known = true }: { ready: string[]; partial: string[]; known?: boolean }) {
+  if (!known) return <span className="text-xs text-ink-soft">Connections unavailable</span>;
+  if (ready.length + partial.length === 0) return <span className="text-xs text-ink-soft">No rails yet</span>;
   return (
-    <div className="flex flex-wrap gap-2">
-      {!m.known && <span className="text-xs text-ink-soft">Connections unavailable</span>}
-      {m.known && m.ready.length + m.partial.length === 0 && (
-        <span className="text-xs text-ink-soft">No connectors configured</span>
-      )}
-      {m.ready.map((name) => (
-        <span key={name} className="rounded-full bg-ink px-3 py-1 text-xs font-medium capitalize text-canvas">
-          {name}
-        </span>
+    <ul className="flex flex-wrap gap-1.5" aria-label="Rails">
+      {ready.map((name) => (
+        <li key={name} className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs">
+          <span aria-hidden className="text-ok">●</span>
+          {railLabel(name)}
+        </li>
       ))}
-      {m.partial.map((name) => (
-        <span key={name} className="rounded-full border border-line px-3 py-1 text-xs capitalize text-ink-soft">
-          {name} · partial
-        </span>
+      {partial.map((name) => (
+        <li key={name} className="inline-flex items-center gap-1 rounded-md border border-dashed border-line px-1.5 py-0.5 text-xs text-ink-soft">
+          <span aria-hidden>◐</span>
+          {railLabel(name)} <span className="sr-only">(partly configured)</span>
+          <span aria-hidden>· partial</span>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
