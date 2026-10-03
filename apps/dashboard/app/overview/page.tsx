@@ -8,6 +8,8 @@ import {
   attentionRows, caveats, checkedAgo, digest, eligible, type MerchantRun, oldestAt, runAll, seenFindings, twiceTotals,
 } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
+import { myUsage } from "@/lib/usage";
+import { today, type Usage } from "@/lib/usage-shape";
 import { AttentionList } from "../_components/attention-list";
 import { owedAmount, RunStatus } from "../_components/merchant-status";
 import { RailChips } from "../_components/rail-chips";
@@ -41,7 +43,7 @@ export default async function OverviewPage() {
 }
 
 async function OverviewBody() {
-  const runs = await runAll();
+  const [runs, usage] = await Promise.all([runAll(), myUsage(30)]);
   if (!runs) {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
   }
@@ -70,7 +72,7 @@ async function OverviewBody() {
   return (
     <>
       <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
-      <VerdictStrip runs={runs} />
+      <VerdictStrip runs={runs} usage={usage} />
 
       <Section
         title="Needs attention"
@@ -102,7 +104,7 @@ async function OverviewBody() {
  * merchant) beside every order checked, split by verdict. Caveats sit next
  * to the figure, so "None" never hides a merchant that couldn't run.
  */
-function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
+function VerdictStrip({ runs, usage }: { runs: MerchantRun[]; usage: Usage | null }) {
   const t = twiceTotals(runs);
   const ok = runs.flatMap((r) => (r.state === "ok" ? [r.finding.summary] : []));
   const sum = (k: "orders" | "collected" | "split_tender" | "collected_twice" | "collected_inconsistent" | "uncollected" | "unverifiable") =>
@@ -169,6 +171,11 @@ function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
         />
         <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
           <span>{checkedAgo(oldestAt(runs))}</span>
+          {usage && (
+            <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">
+              {usage.plan.used.toLocaleString("en-US")}{usage.plan.unmetered ? "" : ` of ${usage.plan.limit.toLocaleString("en-US")}`} requests this month · {today(usage).toLocaleString("en-US")} today
+            </Link>
+          )}
           {warn.map((w) => (
             <span key={w} className="inline-flex items-center gap-1 text-ink">
               <span aria-hidden className="font-mono">?</span>{w}

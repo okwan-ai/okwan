@@ -16,9 +16,10 @@ export const metadata = { title: "Settings" };
 /** What the API holds about the workspace, and nothing it doesn't: there
  *  is no profile, no team, no self-serve plan change. Each tab says so
  *  where it matters rather than draw an empty form. */
-export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string; days?: string }> }) {
   await requireTenant();
-  const [{ tab }, tree] = await Promise.all([searchParams, tenantTree()]);
+  const [{ tab, days: daysParam }, tree] = await Promise.all([searchParams, tenantTree()]);
+  const days = [7, 30, 90].includes(Number(daysParam)) ? Number(daysParam) : 30;
   const active = settingsTabOf(tab);
   if (!tree) return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
 
@@ -54,7 +55,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </dl>
         )}
 
-        {active === "plan" && <PlanTab names={Object.fromEntries(tree.children.map((c) => [c.id, c.name]))} selfId={tree.self.id} />}
+        {active === "plan" && <PlanTab names={Object.fromEntries(tree.children.map((c) => [c.id, c.name]))} selfId={tree.self.id} days={days} />}
 
         {active === "keys" && (
           <div className="space-y-6">
@@ -98,12 +99,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   );
 }
 
-async function PlanTab({ names, selfId }: { names: Record<string, string>; selfId: string }) {
-  const usage = await myUsage(30);
+async function PlanTab({ names, selfId, days }: { names: Record<string, string>; selfId: string; days: number }) {
+  const usage = await myUsage(days);
   if (!usage) {
     return <EmptyState title="Usage isn't available right now">The Okwan API didn&apos;t answer. Try again in a moment.</EmptyState>;
   }
-  return <PlanUsage usage={usage} names={names} selfId={selfId} />;
+  return <PlanUsage usage={usage} names={names} selfId={selfId} rangeHref={(d) => `/settings?tab=plan&days=${d}`} />;
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
