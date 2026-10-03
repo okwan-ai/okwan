@@ -4,11 +4,20 @@ import { Suspense } from "react";
 import { tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors, railState } from "@/lib/merchants";
+import { cachedRun } from "@/lib/runs";
+import { missingFor } from "@/lib/finding";
 import { MerchantRunProvider, RunButton } from "../../_components/merchant-run";
 import { MerchantTabs } from "../../_components/merchant-tabs";
 import { RailChips } from "../../_components/rail-chips";
 import { CopyButton } from "../../_components/ui/copy-button";
 import { PageHeader } from "../../_components/ui/page-header";
+
+/** The merchant's name in the tab title; the tab itself is in the page. */
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const tree = await tenantTree();
+  return { title: tree?.children.find((c) => c.id === id)?.name ?? "Merchant" };
+}
 
 /**
  * One merchant: header, tabs, and the run they share. The run lives here,
@@ -33,9 +42,12 @@ export default async function MerchantLayout({
   // Display only: a grandchild is not in the direct list, so it shows its id.
   const name = tree?.children.find((c) => c.id === id)?.name || id;
   const rails = railState(catalog.data, stored.data.configured);
+  // After the credentials read above passed the API's subtree guard, so the
+  // caller may see this merchant. Reads memory only; never runs.
+  const initial = cachedRun(id, rails.ready);
 
   return (
-    <MerchantRunProvider tenantId={id}>
+    <MerchantRunProvider tenantId={id} tenantName={name} initial={initial} serverNow={Date.now()} missing={missingFor(rails)}>
       <PageHeader
         eyebrow={
           <nav aria-label="Breadcrumb">
