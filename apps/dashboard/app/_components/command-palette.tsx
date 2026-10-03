@@ -18,6 +18,7 @@ const PAGES: Command[] = [
   { id: "p-keys", group: "Pages", label: "API keys", href: "/key", keywords: "token secret" },
   { id: "p-mcp", group: "Pages", label: "MCP for agents", href: "/mcp", keywords: "claude agent tools" },
   { id: "p-rails", group: "Pages", label: "Your own rails", href: "/connections", keywords: "connections credentials" },
+  { id: "p-catalog", group: "Pages", label: "Connector catalog", href: "/catalog", keywords: "connectors rest sql mcp tables routes" },
   { id: "p-settings", group: "Pages", label: "Settings", href: "/settings", keywords: "workspace account" },
   { id: "p-usage", group: "Pages", label: "Plan & usage", href: "/settings?tab=plan", keywords: "billing meter requests quota" },
   { id: "a-add", group: "Actions", label: "Add a merchant", href: "/merchants?add=1", keywords: "new create" },
