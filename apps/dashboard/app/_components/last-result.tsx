@@ -1,17 +1,25 @@
 "use client";
 
+import type { RunDigest } from "@/lib/finding";
 import { useTabResults } from "@/lib/tab-results";
-import { RunStatus, twiceAmount } from "./merchant-status";
+import { owedAmount, RunStatus } from "./merchant-status";
 
-/** The last run this tab saw for a merchant. Results aren't persisted, so
- *  before Overview, Findings or the merchant's Run button, there is none. */
-export function LastResult({ id, ready, known }: { id: string; ready: string[]; known: boolean }) {
-  const d = useTabResults()[id];
-  if (!d) return <span className="text-xs text-ink-soft">Not run this session</span>;
+/** The newest result for a merchant: from this tab's store, or one the
+ *  server still holds (`initial`, read from memory, never a run). Without
+ *  either, the merchant's readiness. */
+export function LastResult({ id, ready, known, initial = null }: {
+  id: string;
+  ready: string[];
+  known: boolean;
+  initial?: RunDigest | null;
+}) {
+  const fromTab = useTabResults()[id];
+  const d = fromTab && (!initial || fromTab.at >= initial.at) ? fromTab : initial;
   return (
     <span className="flex flex-wrap items-center gap-2">
       <RunStatus m={{ ready, known }} d={d} />
-      {d.ok && d.twice > 0 && <span className="text-sm font-medium tabular-nums">{twiceAmount(d)}</span>}
+      {d?.ok && d.twice > 0 && <span className="text-sm font-medium tabular-nums">{owedAmount(d)} owed back</span>}
+      {d && !d.ok && d.detail && <span className="block w-full max-w-[260px] text-xs break-words text-danger">{d.detail}</span>}
     </span>
   );
 }

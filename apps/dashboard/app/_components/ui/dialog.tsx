@@ -4,8 +4,9 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { IconClose } from "./icons";
 
 /** Shared behaviour: Escape closes, focus moves in on open and back on close,
- *  Tab stays inside, and the page behind does not scroll. */
-function useDialog(open: boolean, onClose: () => void) {
+ *  Tab stays inside, and the page behind does not scroll. Exported for the
+ *  narrow-screen menu, which is a dialog too. */
+export function useDialog(open: boolean, onClose: () => void) {
   const panel = useRef<HTMLDivElement>(null);
   // Held in a ref so a parent re-render does not re-run the effect and pull focus.
   const close = useRef(onClose);
@@ -26,6 +27,13 @@ function useDialog(open: boolean, onClose: () => void) {
       if (!f.length) return;
       const first = f[0];
       const last = f[f.length - 1];
+      // Focus can fall out (a submit button that disabled itself drops it on
+      // <body>); bring it back inside rather than let Tab reach the page.
+      if (!el?.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
@@ -35,7 +43,7 @@ function useDialog(open: boolean, onClose: () => void) {
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = overflow;
-      before?.focus();
+      if (before && before !== document.body && document.contains(before)) before.focus();
     };
   }, [open]);
   return panel;
@@ -58,6 +66,7 @@ export function SlideOver({ open, onClose, title, description, children }: {
         role="dialog"
         aria-modal="true"
         aria-labelledby="slideover-title"
+        tabIndex={-1}
         className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-line bg-surface shadow-xl"
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
@@ -82,13 +91,14 @@ export function Modal({ open, onClose, title, children }: {
   const panel = useDialog(open, onClose);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[15vh]">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 pt-[min(15vh,4rem)] pb-4">
       <div className="absolute inset-0 bg-navy/40" onClick={onClose} aria-hidden />
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
+        tabIndex={-1}
         className="relative w-full max-w-sm rounded-xl border border-line bg-surface shadow-xl"
       >
         <div className="flex items-center justify-between gap-4 border-b border-line py-2 pr-2 pl-5">

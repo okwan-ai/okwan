@@ -47,3 +47,12 @@ export const IconPlus = ({ className }: P) => (
 export const IconSignOut = ({ className }: P) => (
   <svg {...base} className={className}><path d="M15 4h4v16h-4" /><path d="M10 8l-4 4 4 4" /><path d="M6 12h10" /></svg>
 );
+export const IconSearch = ({ className }: P) => (
+  <svg {...base} className={className}><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></svg>
+);
+export const IconDownload = ({ className }: P) => (
+  <svg {...base} className={className}><path d="M12 4v11" /><path d="m7 10 5 5 5-5" /><path d="M5 20h14" /></svg>
+);
+export const IconTerminal = ({ className }: P) => (
+  <svg {...base} className={className}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3" /><path d="M13 15h4" /></svg>
+);
