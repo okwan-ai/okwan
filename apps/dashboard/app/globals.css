@@ -42,21 +42,24 @@ body {
   outline-offset: 2px;
 }
 
-.field {
-  width: 100%;
-  min-height: 2.75rem;
-  border: 1px solid var(--color-line);
-  background: var(--color-surface);
-  border-radius: 8px;
-  padding: 0.55rem 0.75rem;
-  font-size: 0.9rem;
-}
-.field:focus { outline: 2px solid var(--color-ink); outline-offset: 1px; }
+/* In the components layer so a utility on the same element wins. */
+@layer components {
+  .field {
+    width: 100%;
+    min-height: 2.75rem;
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.9rem;
+  }
+  .field:focus { outline: 2px solid var(--color-ink); outline-offset: 1px; }
 
-.card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: 12px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
