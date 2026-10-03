@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { tenantQuery } from "./connector-card";
 
 type Issued = { key_id: string; prefix: string; secret: string };
 
-export function IssueKey() {
+/** `tenantId` issues for a merchant's tenant; without it, the signed-in tenant. */
+export function IssueKey({ tenantId }: { tenantId?: string } = {}) {
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [copied, setCopied] = useState(false);
@@ -13,7 +15,7 @@ export function IssueKey() {
   async function issue() {
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/key", {
+    const res = await fetch(`/api/key${tenantQuery(tenantId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",

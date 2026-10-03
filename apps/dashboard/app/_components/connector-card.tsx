@@ -29,7 +29,8 @@ const TONE: Record<TestResult["status"], string> = {
   untestable: "border-line bg-canvas text-ink-soft",
 };
 
-export function ConnectorCard({ c }: { c: ConnectorView }) {
+/** `tenantId` targets a merchant's tenant; without it, the signed-in tenant. */
+export function ConnectorCard({ c, tenantId }: { c: ConnectorView; tenantId?: string }) {
   const router = useRouter();
   const form = useRef<HTMLFormElement>(null);
   const [busy, setBusy] = useState(false);
@@ -50,7 +51,7 @@ export function ConnectorCard({ c }: { c: ConnectorView }) {
     setBusy(true);
     setError(null);
     setResult(null);
-    const res = await fetch(`/api/connections/${c.name}`, {
+    const res = await fetch(`/api/connections/${c.name}${tenantQuery(tenantId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fields }),
@@ -130,4 +131,8 @@ export function ConnectorCard({ c }: { c: ConnectorView }) {
       )}
     </article>
   );
+}
+
+export function tenantQuery(tenantId?: string): string {
+  return tenantId ? `?tenant=${encodeURIComponent(tenantId)}` : "";
 }
