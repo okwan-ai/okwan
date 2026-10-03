@@ -237,6 +237,27 @@ class PostgresStore:
             root_id, since,
         )
 
+    async def usage_buckets(
+        self, root_id: str, since
+    ) -> list[tuple[str, datetime, str, int]]:
+        """The hourly counters behind `usage_since`, per tenant and surface,
+        so a dashboard can show where a subtree's allowance went."""
+        rows = await self.pool.fetch(
+            """
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM tenants WHERE id = $1
+                UNION ALL
+                SELECT t.id FROM tenants t JOIN subtree s ON t.parent_id = s.id
+            )
+            SELECT u.tenant_id, u.hour, u.surface, u.requests
+            FROM usage u JOIN subtree s ON s.id = u.tenant_id
+            WHERE u.hour >= $2
+            ORDER BY u.tenant_id, u.hour, u.surface
+            """,
+            root_id, since,
+        )
+        return [(r["tenant_id"], r["hour"], r["surface"], r["requests"]) for r in rows]
+
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         row = await self.pool.fetchrow(
             "SELECT name, monthly_requests FROM plans WHERE tenant_id = $1",

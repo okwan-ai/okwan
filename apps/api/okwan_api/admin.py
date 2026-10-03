@@ -21,6 +21,7 @@ MCP) stay key-only.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -37,6 +38,7 @@ from okwan_recon.registry import get as get_reconciliation
 from okwan_recon.registry import get_across
 from okwan_recon.runner import run
 from okwan_vault.authz import Forbidden, require_administer
+from okwan_vault.usage import Quota, billing_root, month_start
 
 from .auth import admin_actor, check_quota, get_store, meter
 from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
@@ -150,6 +152,48 @@ def build_router() -> APIRouter:
         await _guard(actor, tenant_id)
         configured = await get_store().connectors_configured(tenant_id)
         return {"tenant_id": tenant_id, "configured": configured}
+
+    @router.get("/{tenant_id}/usage")
+    async def usage(
+        tenant_id: str,
+        days: int = Query(30, ge=1, le=92),
+        actor=Depends(admin_actor),
+    ) -> dict[str, Any]:
+        """Where a tenant's requests went: the plan it is held to, the month
+        so far, and the hourly counters behind that total for the window.
+
+        The plan and the month's total belong to the paying account, so a
+        merchant sees the allowance it shares (the 402 it would get already
+        says as much). The buckets are the target's own subtree only: a
+        merchant never sees a sibling's traffic. Not metered: reading the
+        meter must not move it.
+        """
+        await _guard(actor, tenant_id)
+        store = get_store()
+        root = await billing_root(store, tenant_id)
+        plan, limit = await store.get_plan(root)
+        quota = Quota(plan=plan, limit=limit,
+                      used=await store.usage_since(root, month_start()))
+        since = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) \
+            - timedelta(days=days)
+        buckets = await store.usage_buckets(tenant_id, since)
+        return {
+            "tenant_id": tenant_id,
+            "plan": {
+                "name": quota.plan,
+                "limit": quota.limit,
+                "used": quota.used,
+                "remaining": quota.remaining,
+                "unmetered": quota.unmetered,
+                "month_start": month_start().isoformat(),
+            },
+            "window": {"since": since.isoformat(), "days": days},
+            "buckets": [
+                {"tenant_id": tid, "hour": hour.isoformat(), "surface": surface,
+                 "requests": n}
+                for tid, hour, surface, n in buckets
+            ],
+        }
 
     @router.post("/{tenant_id}/connectors/{connector_name}/test")
     async def test_connector(
