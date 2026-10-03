@@ -14,7 +14,7 @@ export const OUTCOME_LABEL: Record<string, string> = {
 };
 
 /** Display names for rails whose casing a capital letter can't recover. */
-const RAIL_LABEL: Record<string, string> = { paypal: "PayPal", momo: "MoMo" };
+const RAIL_LABEL: Record<string, string> = { paypal: "PayPal", momo: "MoMo", whatsapp: "WhatsApp" };
 
 export function railLabel(name: string): string {
   return RAIL_LABEL[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
