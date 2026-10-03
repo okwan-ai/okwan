@@ -31,7 +31,7 @@ export default async function ResultsPage() {
             <li key={m.tenant.id} className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
               <div className="min-w-0">
                 <p className="font-display text-xl">{m.tenant.name}</p>
-                <div className="mt-2"><RailChips m={m} /></div>
+                <div className="mt-2"><RailChips {...m} /></div>
               </div>
               <Link href={`/merchants/${encodeURIComponent(m.tenant.id)}#run`} className="btn btn-secondary">
                 Run
