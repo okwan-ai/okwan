@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { requireTenant } from "@/lib/guard";
-import { attentionRows, digest, runAll } from "@/lib/runs";
+import { attentionRows, checkedAgo, digest, oldestAt, runAll } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
 import { FindingsTable } from "../_components/findings-table";
 import { ButtonLink } from "../_components/ui/button";
@@ -15,7 +15,7 @@ export default async function FindingsPage() {
     <>
       <PageHeader
         title="Findings"
-        description="Orders collected twice, not adding up, or with no payment, across every merchant with two rails connected. Checked when this page loads; not saved."
+        description="Orders collected twice, not adding up, or with no payment, across every merchant with two rails connected. Checked when this page loads, at most once every 10 minutes; not saved."
       />
       <Suspense fallback={<FindingsSkeleton />}>
         <FindingsBody />
@@ -38,6 +38,7 @@ async function FindingsBody() {
       <p className="mb-4 text-sm text-ink-soft">
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
         {skipped > 0 && <> · {skipped} need{skipped === 1 ? "s" : ""} two rails first</>}
+        {checked.length > 0 && <> · {checkedAgo(oldestAt(runs))}</>}
       </p>
       {failed.length > 0 && (
         <ul role="alert" className="mb-4 space-y-1 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm">
