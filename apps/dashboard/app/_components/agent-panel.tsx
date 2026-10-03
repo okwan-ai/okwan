@@ -22,12 +22,14 @@ const LABEL: Record<View, string> = {
  * page never holds one. Read-only by construction: the prompt says so, and
  * no Okwan surface can write to a rail.
  */
-export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"], server = "okwan" }: {
+export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"], server = "okwan", scope = "merchant" }: {
   apiBase: string;
   /** An outcome to filter on (e.g. "collected_twice"); all when absent. */
   outcome?: string;
   views?: View[];
   server?: string;
+  /** Whose key the footer asks for: a merchant's, or the workspace's own. */
+  scope?: "merchant" | "workspace";
 }) {
   const [view, setView] = useState<View>(views[0]);
   const status = outcome ?? "all";
@@ -83,7 +85,7 @@ export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"]
       {/* Focusable so a keyboard can scroll a long line; the ring is light on navy. */}
       <pre tabIndex={0} aria-label={LABEL[view]} className="overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre text-sky focus-visible:outline-canvas focus-visible:-outline-offset-2"><code>{code[view]}</code></pre>
       <p className="border-t border-canvas/15 px-4 py-2 text-[11px] text-canvas/70">
-        Use a key issued for this merchant in place of <code className="font-mono">okw_…</code>. Every Okwan surface is read-only.
+        Use a key issued for this {scope} in place of <code className="font-mono">okw_…</code>. Every Okwan surface is read-only.
       </p>
     </section>
   );
