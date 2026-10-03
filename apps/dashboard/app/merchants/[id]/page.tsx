@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { api, session, type Tenant } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
-import { ConnectorCard, type ConnectorView } from "../../_components/connector-card";
+import { ConnectionsGrid } from "../../_components/connections-grid";
+import type { ConnectorView } from "../../_components/connector-form";
 import { IssueKey } from "../../_components/issue-key";
 import { RunReconciliation } from "../../_components/run-reconciliation";
 
@@ -46,15 +47,11 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
         This merchant&apos;s rail credentials. They go straight to an encrypted vault under this
         merchant and are never shown again. Each test makes one real read from the rail.
       </p>
-      <div className="grid gap-6">
-        {connectors.data.map((c) => (
-          <ConnectorCard
-            key={c.name}
-            tenantId={id}
-            c={{ ...c, stored: configured.data.configured[c.name] ?? [] }}
-          />
-        ))}
-      </div>
+      <ConnectionsGrid
+        tenantId={id}
+        tenantKey={id}
+        connectors={connectors.data.map((c) => ({ ...c, stored: configured.data.configured[c.name] ?? [] }))}
+      />
 
       <h2 className="mt-16 font-display text-3xl font-light tracking-tight">API key</h2>
       <p className="mt-3 mb-6 max-w-2xl text-ink-soft">

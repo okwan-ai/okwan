@@ -12,6 +12,13 @@
   --color-sky: #b9c6f2;
   --color-line: #e2ded4;
 
+  /* Status, not brand: each pairs with a symbol and a label, never alone.
+   * Text on its -soft fill and on canvas is at least 5.5:1. */
+  --color-danger: #a1231c;
+  --color-danger-soft: #f8e6e3;
+  --color-ok: #1e6b40;
+  --color-ok-soft: #e4efe6;
+
   --font-display: "Fraunces", Georgia, serif;
   --font-body: "Poppins", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
@@ -29,36 +36,29 @@ body {
   color: var(--color-ink);
 }
 
-/* Primary: volt fill, black text. Secondary: outlined black on cream. §2.3 */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  border-radius: 999px;
-  padding: 0.6rem 1.25rem;
-  font-weight: 500;
-  font-size: 0.9rem;
-  transition: background-color 120ms, opacity 120ms;
+/* One visible focus ring everywhere a keyboard can land. */
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
 }
-.btn-primary { background: var(--color-volt); color: var(--color-ink); }
-.btn-primary:hover { background: var(--color-volt-deep); }
-.btn-secondary { border: 1.5px solid var(--color-ink); background: transparent; }
-.btn-secondary:hover { background: var(--color-surface); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .field {
   width: 100%;
+  min-height: 2.75rem;
   border: 1px solid var(--color-line);
   background: var(--color-surface);
-  border-radius: 10px;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.95rem;
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
 }
 .field:focus { outline: 2px solid var(--color-ink); outline-offset: 1px; }
 
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-line);
-  border-radius: 14px;
+  border-radius: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
