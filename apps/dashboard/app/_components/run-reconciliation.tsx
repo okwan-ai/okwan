@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { type Coverage, type Finding, OUTCOME_LABEL } from "@/lib/finding";
+import { type Coverage, type Finding, type FindingRow, OUTCOME_LABEL, railLabel } from "@/lib/finding";
 import { formatMinor } from "@/lib/money";
 
 /** Symbol + label, never colour alone. */
@@ -131,15 +131,17 @@ function Result({ f, ranAt }: { f: Finding; ranAt: Date | null }) {
                       </span>
                       <code className="mt-1 block font-mono text-[11px] text-ink-soft">{r.outcome}</code>
                     </td>
-                    <td className="px-4 py-3 capitalize">
-                      {r.collected_on.join(" + ") || "—"}
+                    <td className="px-4 py-3">
+                      {r.collected_on.map(railLabel).join(" + ") || "—"}
                       {r.unverified.length > 0 && (
-                        <span className="block text-xs normal-case text-ink-soft">
-                          unread: {r.unverified.join(", ")}
+                        <span className="block text-xs text-ink-soft">
+                          unread: {r.unverified.map(railLabel).join(", ")}
                         </span>
                       )}
                     </td>
-                    <td className="max-w-[280px] px-4 py-3 text-xs break-words text-ink-soft">{r.reason ?? ""}</td>
+                    <td className="max-w-[280px] px-4 py-3 text-xs break-words text-ink-soft" title={r.reason ?? undefined}>
+                      {detail(r)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -193,10 +195,19 @@ function Headline({ f }: { f: Finding }) {
   );
 }
 
+/** Collected-twice reads from the per-rail amounts; the API reason
+ *  carries raw minor units and stays as the tooltip. */
+function detail(r: FindingRow): string {
+  if (r.outcome === "collected_twice" && r.paid.length > 0) {
+    return r.paid.map((p) => `${railLabel(p.rail)} ${formatMinor(p.minor, p.currency ?? r.currency)}`).join(" · ");
+  }
+  return r.reason ?? "";
+}
+
 function Tile({ label, value, note, mark }: { label: string; value: string; note?: string; mark?: string }) {
   return (
     <div className="rounded-xl border border-line bg-canvas px-4 py-3">
-      <dt className="text-xs text-ink-soft">{label}</dt>
+      <dt className="min-h-[2lh] text-xs text-ink-soft">{label}</dt>
       <dd className="mt-1 flex items-baseline gap-1.5 text-2xl font-semibold">
         {value}
         {mark && <span className="text-xs font-medium text-red-800" aria-hidden>{mark}</span>}
@@ -207,8 +218,9 @@ function Tile({ label, value, note, mark }: { label: string; value: string; note
 }
 
 function CoverageStrip({ s }: { s: Finding["summary"] }) {
+  const ledger = s.ledger_coverage?.source.split(".")[0] ?? "ledger";
   const sides: { name: string; cov: Coverage | null; orphans?: number }[] = [
-    { name: s.ledger_coverage?.source.split(".")[0] ?? "ledger", cov: s.ledger_coverage },
+    { name: ledger, cov: s.ledger_coverage },
     ...Object.entries(s.rails).map(([name, r]) => ({
       name: r.coverage?.source.split(".")[0] ?? name,
       cov: r.coverage,
@@ -221,9 +233,9 @@ function CoverageStrip({ s }: { s: Finding["summary"] }) {
       <ul className="grid gap-3 sm:grid-cols-3">
         {sides.map((side, i) => (
           <li key={`${side.name}-${i}`} className="rounded-xl border border-line px-4 py-3 text-sm">
-            <p className="font-medium capitalize">
-              {side.name}
-              {i === 0 && <span className="ml-1.5 text-xs font-normal normal-case text-ink-soft">ledger</span>}
+            <p className="font-medium">
+              {railLabel(side.name)}
+              {i === 0 && <span className="ml-1.5 text-xs font-normal text-ink-soft">ledger</span>}
             </p>
             {side.cov ? (
               <>
@@ -238,7 +250,8 @@ function CoverageStrip({ s }: { s: Finding["summary"] }) {
               <p className="mt-1 text-ink-soft">No coverage reported</p>
             )}
             {side.orphans ? (
-              <p className="mt-1 text-xs text-ink-soft">{side.orphans} with no matching order</p>
+              <p className="mt-1 text-xs text-ink-soft">{side.orphans.toLocaleString("en-US")} {side.orphans === 1 ? "payment" : "payments"} with no{" "}
+                {railLabel(ledger)} order (outside this check)</p>
             ) : null}
           </li>
         ))}
