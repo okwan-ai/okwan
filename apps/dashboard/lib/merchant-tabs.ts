@@ -3,6 +3,7 @@ export const MERCHANT_TABS = [
   { id: "findings", label: "Findings" },
   { id: "connections", label: "Connections" },
   { id: "keys", label: "API keys" },
+  { id: "usage", label: "Usage" },
 ] as const;
 
 export type MerchantTab = (typeof MERCHANT_TABS)[number]["id"];

@@ -45,7 +45,7 @@ export function FindingsPanel({ apiBase }: { apiBase: string }) {
     return missing.length ? (
       <EmptyState
         icon={<IconPlug />}
-        title={`Connect ${missing.map(railLabel).join(" and ")} to check this merchant`}
+        title={`Connect ${listOf(missing.map(railLabel))} to check this merchant`}
         benefits={[
           "Reads the Shopify ledger, PayPal and Stripe once",
           "One verdict per order: paid once, twice, short, or not at all",
@@ -459,3 +459,6 @@ function taken(r: FindingRow): string {
   return r.collected_minor === null ? "—" : formatMinor(r.collected_minor, r.currency);
 }
 
+function listOf(items: string[]): string {
+  return items.length <= 1 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
