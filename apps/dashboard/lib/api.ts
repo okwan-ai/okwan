@@ -118,6 +118,7 @@ export async function clearSession(): Promise<void> {
 }
 
 export type Me = { id: string; name: string };
+export type Tenant = Me & { parent_id: string | null; created_at: string };
 
 /** The signed-in tenant, or null when the session is missing or expired. */
 export async function me(): Promise<Me | null> {
@@ -125,6 +126,18 @@ export async function me(): Promise<Me | null> {
   if (!token) return null;
   const r = await api<{ self: Me }>("/v1/tenants", { session: token });
   return r.ok ? r.data.self : null;
+}
+
+/**
+ * The tenant a route handler acts on: `?tenant=` when given (a merchant),
+ * else the signed-in tenant. Not an authorization decision. The id passes
+ * through as given, the API's subtree guard answers, and a foreign or
+ * unknown id comes back as its 404.
+ */
+export async function targetTenant(req: Request): Promise<string | null> {
+  const id = new URL(req.url).searchParams.get("tenant");
+  if (id) return id;
+  return (await me())?.id ?? null;
 }
 
 /** Same-origin check for mutating route handlers. SameSite=Lax already keeps

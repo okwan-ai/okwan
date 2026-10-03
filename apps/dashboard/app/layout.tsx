@@ -34,6 +34,7 @@ export default async function RootLayout({
             {tenant && (
               <nav className="flex items-center gap-5 text-sm text-ink-soft">
                 <Link href="/connections" className="hover:text-ink">Connections</Link>
+                <Link href="/merchants" className="hover:text-ink">Merchants</Link>
                 <Link href="/key" className="hover:text-ink">API key</Link>
                 <Link href="/results" className="hover:text-ink">Results</Link>
                 <SignOut />

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { api, session } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { ConnectorCard, type ConnectorView } from "../_components/connector-card";
@@ -23,7 +24,12 @@ export default async function ConnectionsPage() {
       <h1 className="font-display text-5xl font-light tracking-tight">Connections</h1>
       <p className="mt-4 mb-10 max-w-2xl text-ink-soft">
         Credentials go straight to an encrypted vault and are never shown again. Each test makes one
-        real read from the rail, so you see rows rather than a promise.
+        real read from the rail, so you see rows rather than a promise. These are your own rails; a
+        merchant you serve keeps its rails under{" "}
+        <Link href="/merchants" className="underline decoration-volt-deep underline-offset-4 hover:text-ink">
+          Merchants
+        </Link>
+        .
       </p>
       <div className="grid gap-6">
         {connectors.data.map((c) => (
