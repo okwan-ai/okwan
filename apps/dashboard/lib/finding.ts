@@ -13,6 +13,13 @@ export const OUTCOME_LABEL: Record<string, string> = {
   collected: "Paid once",
 };
 
+/** Display names for rails whose casing a capital letter can't recover. */
+const RAIL_LABEL: Record<string, string> = { paypal: "PayPal", momo: "MoMo" };
+
+export function railLabel(name: string): string {
+  return RAIL_LABEL[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 /** Non-clean outcomes, in the order the table leads with them. */
 export const NEEDS_LOOK = ["collected_twice", "collected_inconsistent", "uncollected", "unverifiable"];
 
@@ -49,6 +56,8 @@ export type FindingRow = {
   collected_on: string[];
   unverified: string[];
   reason: string | null;
+  /** What each matched rail took, so the page can format it. */
+  paid: { rail: string; minor: number | null; currency: string | null }[];
 };
 
 export type Finding = {
@@ -68,6 +77,7 @@ type ApiRow = {
   collected_on: string[];
   unverified_rails: string[];
   reason: string | null;
+  rails: { rail: string; status: string; collected_minor: number | null; currency: string | null }[];
 };
 
 export type AcrossPage = { summary: Summary; data: ApiRow[]; has_more: boolean };
@@ -88,6 +98,9 @@ export function toFinding(page: AcrossPage): Finding {
       collected_on: r.collected_on,
       unverified: r.unverified_rails,
       reason: r.reason,
+      paid: (r.rails ?? [])
+        .filter((v) => v.status === "matched")
+        .map((v) => ({ rail: v.rail, minor: v.collected_minor, currency: v.currency })),
     }));
   const twice = new Set(rows.filter((r) => r.outcome === "collected_twice").map((r) => r.currency));
   return {
