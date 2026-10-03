@@ -5,6 +5,10 @@ import type { NextConfig } from "next";
 // stay server-side. The browser holds an httpOnly cookie and nothing else.
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // /results became /findings in v1.12; old links and bookmarks follow.
+  async redirects() {
+    return [{ source: "/results", destination: "/findings", permanent: true }];
+  },
   async headers() {
     return [
       {
