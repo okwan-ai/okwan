@@ -8,7 +8,7 @@ import { useTabResults } from "@/lib/tab-results";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
-import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconKey, IconMenu, IconSearch, IconSignOut, IconStore } from "./ui/icons";
+import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconKey, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore } from "./ui/icons";
 import { PlanMeter } from "./usage/plan-meter";
 
 /** Shown only when the usage read fails: the plan every tenant is held to,
@@ -68,6 +68,7 @@ export function Sidebar({ tenant, merchants, plan }: { tenant: string; merchants
         <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Developers</p>
         <Item href="/key" path={path} icon={<IconKey />}>API keys</Item>
         <Item href="/mcp" path={path} icon={<IconAgent />}>MCP for agents</Item>
+        <Item href="/catalog" path={path} icon={<IconPlug />}>Connector catalog</Item>
         <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Manage</p>
         <Item href="/settings" path={path} icon={<IconGear />}>Settings</Item>
       </nav>

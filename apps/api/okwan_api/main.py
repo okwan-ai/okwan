@@ -40,6 +40,7 @@ from okwan_api.signup import build_router as build_signup_router
 from okwan_api.auth import (
     check_quota, close_store, current_tenant, load_credentials, meter, open_store,
 )
+from okwan_query.catalog import tables_for
 from okwan_query.mcp_http import build_server as build_mcp_server
 from okwan_query.rest import build_router as build_query_router
 from okwan_recon.emitters.rest import build_router
@@ -103,6 +104,9 @@ class ConnectorInfo(BaseModel):
     credential_fields: list[str]
     #: The list call a credential test runs, or None when none can run blind.
     probe: str | None
+    #: The SQL tables this connector generates (connector.resource), the
+    #: same set the query layer serves and the hosted MCP describes.
+    sql_tables: list[str]
 
 
 def _probe_name(c: Connector) -> str | None:
@@ -120,6 +124,7 @@ async def list_connectors() -> list[ConnectorInfo]:
             resources={r.name: sorted(r.operations) for r in c.resources.values()},
             credential_fields=list(c.auth.required_fields),
             probe=_probe_name(c),
+            sql_tables=[f"{t.connector}.{t.resource}" for t in tables_for(c)],
         )
         for c in all_connectors()
     ]
