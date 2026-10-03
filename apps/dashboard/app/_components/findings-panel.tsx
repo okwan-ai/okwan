@@ -13,7 +13,7 @@ import { useMerchantRun } from "./merchant-run";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
-import { IconChevron, IconDownload } from "./ui/icons";
+import { IconChevron, IconDownload, IconPlay, IconPlug } from "./ui/icons";
 import { OutcomeSpectrum } from "./ui/outcome-spectrum";
 import { Skeleton, SkeletonRows } from "./ui/skeleton";
 import { Table, Td, Th } from "./ui/table";
@@ -43,12 +43,19 @@ export function FindingsPanel({ apiBase }: { apiBase: string }) {
   }
   if (!finding) {
     return missing.length ? (
-      <EmptyState title={`Connect ${missing.map(railLabel).join(" and ")} to check this merchant`}>
-        A check reads the Shopify order ledger and both payment rails, PayPal and Stripe, and says whether each order was paid
-        exactly once, twice, or not at all. Open Connections above to add what&apos;s missing.
+      <EmptyState
+        icon={<IconPlug />}
+        title={`Connect ${missing.map(railLabel).join(" and ")} to check this merchant`}
+        benefits={[
+          "Reads the Shopify ledger, PayPal and Stripe once",
+          "One verdict per order: paid once, twice, short, or not at all",
+          "Credentials go to the vault and are never shown again",
+        ]}
+      >
+        Use the Connect button above, or the Connections tab.
       </EmptyState>
     ) : (
-      <EmptyState title="No check yet">
+      <EmptyState icon={<IconPlay />} title="No check yet">
         Run reconciliation, above, reads the Shopify ledger, PayPal and Stripe once and says whether each order was paid exactly
         once, twice, or not at all. Each run counts as one request against your plan.
       </EmptyState>

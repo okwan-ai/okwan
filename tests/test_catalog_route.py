@@ -40,3 +40,18 @@ def test_postgres_raw_sql_is_not_a_table():
 
 def test_stripe_charges_is_a_table():
     assert "stripe.charges" in _listed()["stripe"]["sql_tables"]
+
+
+def test_writes_name_the_operations_that_are_not_read_only():
+    listed = _listed()
+    assert "messages.send_text" in listed["whatsapp"]["writes"]
+    assert "messages.send_template" in listed["whatsapp"]["writes"]
+    for name in ("stripe", "paypal", "shopify", "paystack"):
+        assert listed[name]["writes"] == [], name
+
+
+def test_every_write_is_a_listed_operation():
+    for c in _listed().values():
+        for w in c["writes"]:
+            resource, op = w.split(".", 1)
+            assert op in c["resources"][resource]

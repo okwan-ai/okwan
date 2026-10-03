@@ -107,6 +107,10 @@ class ConnectorInfo(BaseModel):
     #: The SQL tables this connector generates (connector.resource), the
     #: same set the query layer serves and the hosted MCP describes.
     sql_tables: list[str]
+    #: Operations that are not read-only ("messages.send_text"). A
+    #: reconciliation may not be declared over one; connector REST mounts
+    #: them like any other, so a catalog must say which they are.
+    writes: list[str]
 
 
 def _probe_name(c: Connector) -> str | None:
@@ -125,6 +129,7 @@ async def list_connectors() -> list[ConnectorInfo]:
             credential_fields=list(c.auth.required_fields),
             probe=_probe_name(c),
             sql_tables=[f"{t.connector}.{t.resource}" for t in tables_for(c)],
+            writes=[f"{r.name}.{op.name}" for r, op in c.iter_operations() if not op.is_read_only],
         )
         for c in all_connectors()
     ]

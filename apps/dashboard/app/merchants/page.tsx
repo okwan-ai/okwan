@@ -6,7 +6,9 @@ import { merchantsWithRails } from "@/lib/merchants";
 import { cachedRun } from "@/lib/runs";
 import { AddMerchant } from "../_components/add-merchant";
 import { MerchantsTable } from "../_components/merchants-table";
+import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
+import { IconStore } from "../_components/ui/icons";
 import { PageHeader } from "../_components/ui/page-header";
 
 export const metadata = { title: "Merchants" };
@@ -25,15 +27,23 @@ export default async function MerchantsPage() {
             workspace are under <Link href="/connections" className="underline underline-offset-4 hover:text-ink">your own rails</Link>.
           </>
         }
-        actions={<Suspense><AddMerchant /></Suspense>}
+        actions={<Suspense><AddMerchant variant={merchants && merchants.length === 0 ? "secondary" : "primary"} /></Suspense>}
       />
 
       {!merchants ? (
         <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>
       ) : merchants.length === 0 ? (
-        <EmptyState title="No merchants yet">
-          Add one for each business you serve. Its Shopify, Stripe or PayPal credentials are stored against that
-          merchant, not your account.
+        <EmptyState
+          icon={<IconStore />}
+          title="No merchants yet"
+          benefits={[
+            "Each merchant keeps its own rails, keys and plan gate",
+            "Connect Shopify, PayPal and Stripe once; every surface reads them",
+            "One check says whether each order was paid once, twice or not at all",
+          ]}
+          action={<ButtonLink href="/merchants?add=1" variant="primary">Add your first merchant</ButtonLink>}
+        >
+          Add one for each business you serve.
         </EmptyState>
       ) : (
         <MerchantsTable

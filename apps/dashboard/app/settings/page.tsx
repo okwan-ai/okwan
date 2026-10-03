@@ -78,8 +78,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             </Row>
             <Row label="API keys">Stored as a hash and a public prefix. Shown once at issue. Revoked by id, effective on the next request.</Row>
             <Row label="Read-only">
-              No Okwan surface can write to a rail. A reconciliation is declared over read operations only, and the SQL guard refuses
-              anything but a read.
+              A reconciliation can only be declared over read operations, the SQL guard refuses anything but a read, and the hosted
+              MCP&apos;s tools are read-only. Connector REST mounts each declared operation; the catalog marks the ones that write
+              (today, WhatsApp&apos;s two send operations). No surface can move money on a payment rail.
             </Row>
             <Row label="Isolation">
               A merchant is its own tenant: its vault, its keys, its plan gate. Anything outside your subtree answers as if it did

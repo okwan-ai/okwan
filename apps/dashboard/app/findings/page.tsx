@@ -7,6 +7,7 @@ import { ReportRuns } from "@/lib/tab-results";
 import { FindingsTable } from "../_components/findings-table";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
+import { IconAlert } from "../_components/ui/icons";
 import { PageHeader } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
 
@@ -65,7 +66,13 @@ async function FindingsBody() {
       ))}
       {checked.length === 0 ? (
         <EmptyState
+          icon={<IconAlert />}
           title="Nothing checked yet"
+          benefits={[
+            "Every order collected twice, with the amount owed back",
+            "Orders where the rails don't add up to the order total",
+            "Orders with no payment on any rail, ready to export for refunds",
+          ]}
           action={<ButtonLink href="/merchants" variant="primary">Go to merchants</ButtonLink>}
         >
           A merchant is checked once Shopify, PayPal and Stripe are all connected.
