@@ -32,7 +32,7 @@ export function CopyButton({ value, label = "Copy", text }: { value: string; lab
 /** A code block with a copy control, for snippets meant to be pasted. */
 export function CodeBlock({ code, label }: { code: string; label: string }) {
   return (
-    <div className="relative rounded-xl border border-line bg-canvas">
+    <div className="relative min-w-0 rounded-xl border border-line bg-canvas">
       <div className="flex items-center justify-between border-b border-line py-1 pr-1 pl-4">
         <span className="text-xs font-medium text-ink-soft">{label}</span>
         <CopyButton value={code} label={`Copy ${label}`} text="Copy" />

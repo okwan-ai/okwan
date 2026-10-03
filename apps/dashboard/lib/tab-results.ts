@@ -6,9 +6,10 @@ import type { RunDigest } from "./finding";
 /**
  * The last result per merchant that this browser tab has seen: Overview and
  * Findings report every run they made, a merchant's Run button reports its
- * own. Memory only, gone on reload, never sent anywhere. It lets the sidebar
- * badge and the Merchants list show a result without running anything:
- * results are not persisted server-side, and every run is metered.
+ * own; Test and Save reports each credential test. Memory only, gone on
+ * reload, never sent anywhere. It lets the sidebar badge, the Merchants
+ * list and the rail tiles show a result without running anything: results
+ * are not persisted server-side, and every run is metered.
  */
 let results: Record<string, RunDigest> = {};
 /** The last credential test per `${tenant}:${connector}`, same lifetime. */
