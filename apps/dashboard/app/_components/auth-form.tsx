@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { buttonClass } from "./ui/button";
 
 type Mode = "signup" | "signin";
 
@@ -24,13 +25,13 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setBusy(false);
     if (!res.ok) return setError(data.detail ?? "something went wrong");
     if (mode === "signup") return setSent(true);
-    window.location.href = "/connections";
+    window.location.href = "/overview";
   }
 
   if (sent) {
     return (
       <div className="card p-8">
-        <h2 className="font-display text-2xl">Check your inbox</h2>
+        <h2 className="text-lg font-semibold">Check your inbox</h2>
         <p className="mt-3 text-ink-soft">
           If this address can be registered, a verification link is on its way. Your
           account and workspace are created when you open it. The link expires in 24
@@ -41,7 +42,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   }
 
   return (
-    <form onSubmit={submit} className="card space-y-5 p-8">
+    <form onSubmit={submit} className="card space-y-5 p-6 sm:p-8">
       <label className="block space-y-1.5">
         <span className="text-sm font-medium">Work email</span>
         <input name="email" type="email" required autoComplete="email" className="field" />
@@ -60,14 +61,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
           <span className="block text-xs text-ink-soft">At least 12 characters.</span>
         )}
       </label>
-      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div className="flex items-center justify-between gap-4 pt-1">
-        <button className="btn btn-primary" disabled={busy}>
+        <button type="submit" className={buttonClass("primary")} disabled={busy}>
           {busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}
         </button>
         <Link
           href={mode === "signup" ? "/signup?mode=signin" : "/signup"}
-          className="text-sm text-ink-soft underline-offset-4 hover:underline"
+          className="inline-flex min-h-11 items-center text-sm text-ink-soft underline-offset-4 hover:underline"
         >
           {mode === "signup" ? "Have an account? Sign in" : "New here? Create an account"}
         </Link>
