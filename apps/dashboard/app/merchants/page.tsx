@@ -1,27 +1,16 @@
 import Link from "next/link";
-import { api, session, type Tenant } from "@/lib/api";
+import { session } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
+import { merchantsWithRails } from "@/lib/merchants";
 import { AddMerchant } from "../_components/add-merchant";
-
-type Connector = { name: string; credential_fields: string[] };
-type Configured = { configured: Record<string, string[]> };
+import { RailChips } from "../_components/rail-chips";
 
 export default async function MerchantsPage() {
   await requireTenant();
-  const token = await session();
-  const [tenants, connectors] = await Promise.all([
-    api<{ self: Tenant; children: Tenant[] }>("/v1/tenants", { session: token }),
-    api<Connector[]>("/v1/connectors"),
-  ]);
-  if (!tenants.ok || !connectors.ok) {
+  const merchants = await merchantsWithRails(await session());
+  if (!merchants) {
     return <p className="text-ink-soft">The Okwan API did not answer. Try again in a moment.</p>;
   }
-  const merchants = tenants.data.children;
-  const stored = await Promise.all(
-    merchants.map((m) =>
-      api<Configured>(`/v1/tenants/${encodeURIComponent(m.id)}/credentials`, { session: token }),
-    ),
-  );
 
   return (
     <>
@@ -42,45 +31,20 @@ export default async function MerchantsPage() {
         </div>
       ) : (
         <ul className="mb-6 grid gap-4">
-          {merchants.map((m, i) => {
-            const s = stored[i];
-            const fields = s.ok ? s.data.configured : {};
-            const ready = connectors.data.filter((c) =>
-              c.credential_fields.every((f) => fields[c.name]?.includes(f)),
-            );
-            const partial = connectors.data.filter(
-              (c) => fields[c.name]?.length && !ready.includes(c),
-            );
-            return (
-              <li key={m.id}>
-                <Link href={`/merchants/${encodeURIComponent(m.id)}`} className="card block p-6 hover:border-ink">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <h2 className="font-display text-2xl">{m.name}</h2>
-                    <span className="text-xs text-ink-soft">
-                      Added {new Date(m.created_at).toLocaleDateString("en-US", { dateStyle: "medium" })}
-                    </span>
-                  </div>
-                  <code className="mt-1 block font-mono text-xs text-ink-soft">{m.id}</code>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {!s.ok && <span className="text-xs text-ink-soft">Connections unavailable</span>}
-                    {s.ok && ready.length + partial.length === 0 && (
-                      <span className="text-xs text-ink-soft">No connectors configured</span>
-                    )}
-                    {ready.map((c) => (
-                      <span key={c.name} className="rounded-full bg-ink px-3 py-1 text-xs font-medium capitalize text-canvas">
-                        {c.name}
-                      </span>
-                    ))}
-                    {partial.map((c) => (
-                      <span key={c.name} className="rounded-full border border-line px-3 py-1 text-xs capitalize text-ink-soft">
-                        {c.name} · partial
-                      </span>
-                    ))}
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
+          {merchants.map((m) => (
+            <li key={m.tenant.id}>
+              <Link href={`/merchants/${encodeURIComponent(m.tenant.id)}`} className="card block p-6 hover:border-ink">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 className="font-display text-2xl">{m.tenant.name}</h2>
+                  <span className="text-xs text-ink-soft">
+                    Added {new Date(m.tenant.created_at).toLocaleDateString("en-US", { dateStyle: "medium" })}
+                  </span>
+                </div>
+                <code className="mt-1 block font-mono text-xs text-ink-soft">{m.tenant.id}</code>
+                <div className="mt-4"><RailChips m={m} /></div>
+              </Link>
+            </li>
+          ))}
         </ul>
       )}
 

@@ -32,7 +32,7 @@ export function AddMerchant() {
       <label className="block space-y-1.5">
         <span className="text-sm font-medium">Add merchant</span>
         <div className="flex flex-wrap gap-3">
-          <input name="name" required maxLength={200} className="field flex-1" placeholder="Kofi's Store" />
+          <input name="name" required maxLength={200} className="field flex-1" placeholder="Merchant name" />
           <button className="btn btn-primary" disabled={busy}>
             {busy ? "Adding…" : "Add merchant"}
           </button>

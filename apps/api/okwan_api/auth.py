@@ -107,8 +107,11 @@ async def admin_actor(
     """An API key or a dashboard session, for the admin routes only.
 
     Data routes and the hosted MCP stay on `current_tenant`, so a session
-    can provision its tenant but cannot read from a rail — that still
-    takes a key the customer chose to issue.
+    cannot reach them; those take a key the customer chose to issue. A
+    session reads a rail only through the admin routes built for the
+    dashboard: the connection test and the reconciliation runs, each
+    subtree-guarded and metered to the target. The runs also pass the
+    same plan gate as `check_quota`.
     """
     token = x_okwan_key.strip()
     if not token and authorization.lower().startswith("bearer "):

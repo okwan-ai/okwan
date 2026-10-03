@@ -4,6 +4,7 @@ import { api, session, type Tenant } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { ConnectorCard, type ConnectorView } from "../../_components/connector-card";
 import { IssueKey } from "../../_components/issue-key";
+import { RunReconciliation } from "../../_components/run-reconciliation";
 
 type Connector = Omit<ConnectorView, "stored">;
 
@@ -36,7 +37,12 @@ export default async function MerchantPage({ params }: { params: Promise<{ id: s
       <Link href="/merchants" className="text-sm text-ink-soft hover:text-ink">← Merchants</Link>
       <h1 className="mt-4 font-display text-5xl font-light tracking-tight">{name}</h1>
       <code className="mt-2 block font-mono text-xs text-ink-soft">{id}</code>
-      <p className="mt-4 mb-10 max-w-2xl text-ink-soft">
+      <div className="mt-10">
+        <RunReconciliation tenantId={id} />
+      </div>
+
+      <h2 className="mt-16 font-display text-3xl font-light tracking-tight">Connections</h2>
+      <p className="mt-3 mb-6 max-w-2xl text-ink-soft">
         This merchant&apos;s rail credentials. They go straight to an encrypted vault under this
         merchant and are never shown again. Each test makes one real read from the rail.
       </p>

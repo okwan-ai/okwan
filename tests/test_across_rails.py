@@ -356,3 +356,28 @@ def _app() -> FastAPI:
     app = FastAPI()
     app.include_router(build_router())
     return app
+
+
+# --- match rate --------------------------------------------------------
+
+def test_match_rate_counts_orders_paid_exactly_once():
+    result = run(
+        [order("#1002", 99900), order("#1003", 15000), order("#1004", 20000),
+         order("#1005", 10000)],
+        [pp("#1002", 99900), pp("#1004", 8000)],
+        [st("#1002", 99900), st("#1003", 15000), st("#1004", 12000)],
+    )
+    s = result.summary
+    assert (s["collected_twice"], s["collected"], s["split_tender"], s["uncollected"]) == (1, 1, 1, 1)
+    assert s["match_rate"] == 0.5
+
+
+def test_match_rate_is_withheld_while_any_order_is_unverifiable():
+    result = run([order("#1002", 99900), order("#1003", 15000)], [],
+                 [st("#1003", 15000)], paypal_cut=True)
+    assert result.summary["unverifiable"] >= 1
+    assert result.summary["match_rate"] is None
+
+
+def test_match_rate_of_no_orders_is_zero():
+    assert run([], [], []).summary["match_rate"] == 0.0
