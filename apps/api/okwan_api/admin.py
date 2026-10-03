@@ -12,19 +12,33 @@ between the product and the first ISV.
 
 Every route here accepts an API key or a dashboard session. Anything
 outside the caller's subtree answers 404, never 403.
+
+Two routes here read rails beyond a connection test: the reconciliation
+runs, so the dashboard can show a merchant's finding (§9 2026-10-03).
+They run *as the target tenant*: its vault, its plan gate, its meter.
+The data routes (`/v1/reconciliations/*`, SQL, connector REST, hosted
+MCP) stay key-only.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from okwan_core import OkwanError, UpstreamError, all_connectors
 from okwan_core import get as get_connector
+from okwan_recon.across import OUTCOMES, run_across
+from okwan_recon.emitters.mcp import paged
+from okwan_recon.emitters.rest import mapped, rest_page, vault_resolver
+from okwan_recon.engine import STATUSES
+from okwan_recon.paging import DEFAULT_ROWS, MAX_ROWS
+from okwan_recon.registry import get as get_reconciliation
+from okwan_recon.registry import get_across
+from okwan_recon.runner import run
 from okwan_vault.authz import Forbidden, require_administer
 
-from .auth import admin_actor, get_store, meter
+from .auth import admin_actor, check_quota, get_store, meter
 from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
 
 
@@ -155,7 +169,61 @@ def build_router() -> APIRouter:
         enforce(request, (TEST_IP, client_ip(request)), (TEST_TENANT, tenant_id))
         return await _probe(tenant_id, connector)
 
+    @router.post("/{tenant_id}/reconciliations/across/{name}")
+    async def reconcile_across_as(
+        tenant_id: str,
+        name: str,
+        limit: int = Query(DEFAULT_ROWS, ge=1, le=MAX_ROWS),
+        outcome: str = Query("all", pattern=f"^(all|{'|'.join(OUTCOMES)})$"),
+        cursor: str | None = None,
+        actor=Depends(admin_actor),
+    ) -> dict[str, Any]:
+        """Run an across-rails fold as a tenant in the caller's subtree.
+
+        Same result and errors as `GET /v1/reconciliations/across/{name}`
+        with that tenant's key. POST because it runs, and is metered.
+        """
+        target = await _run_as(actor, tenant_id)
+        try:
+            spec = get_across(name)
+        except KeyError:
+            raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
+        result = await mapped(run_across(spec, await vault_resolver(target)))
+        await meter(target, "dashboard:across")
+        return rest_page(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
+
+    @router.post("/{tenant_id}/reconciliations/{name}")
+    async def reconcile_as(
+        tenant_id: str,
+        name: str,
+        limit: int = Query(DEFAULT_ROWS, ge=1, le=MAX_ROWS),
+        status: str = Query("all", pattern=f"^(all|{'|'.join(STATUSES)})$"),
+        cursor: str | None = None,
+        actor=Depends(admin_actor),
+    ) -> dict[str, Any]:
+        """Run a two-sided reconciliation as a tenant in the caller's
+        subtree. Same result and errors as `GET /v1/reconciliations/{name}`."""
+        target = await _run_as(actor, tenant_id)
+        try:
+            spec = get_reconciliation(name)
+        except KeyError:
+            raise HTTPException(404, f"unknown reconciliation '{name}'") from None
+        result = await mapped(run(spec, await vault_resolver(target)))
+        await meter(target, "dashboard:reconcile")
+        return rest_page(paged(result.summary, result.rows(), "status", status, limit, cursor))
+
     return router
+
+
+async def _run_as(actor, tenant_id: str):
+    """The tenant a run acts as, after the subtree guard (404) and then
+    the plan gate (402) — the guard first, so a foreign id never learns
+    anything about another account's quota."""
+    await _guard(actor, tenant_id)
+    target = await get_store().get_tenant(tenant_id)
+    if target is None:
+        raise HTTPException(404, f"no such tenant: {tenant_id}")
+    return await check_quota(target)
 
 
 def _connector(name: str, status: int):

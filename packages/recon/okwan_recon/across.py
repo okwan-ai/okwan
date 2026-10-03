@@ -233,6 +233,16 @@ class AcrossResult:
             "overcollected_minor": sum(
                 (v.collected_minor or 0) - (v.order_total_minor or 0) for v in twice
             ),
+            # Orders paid exactly once, in full: on one rail, or split across
+            # rails to the total. Withheld while any order is unverifiable,
+            # as the engine's match_rate is: an unread order is evidence of
+            # nothing, and counting it either way states more than was read.
+            "match_rate": (
+                None if counts["unverifiable"]
+                else round((counts["collected"] + counts["split_tender"]) / len(self.orders), 4)
+                if self.orders
+                else 0.0
+            ),
             "ledger_coverage": (
                 self.ledger_coverage.as_dict() if self.ledger_coverage else None
             ),

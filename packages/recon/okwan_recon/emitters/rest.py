@@ -13,6 +13,7 @@ upstream calls the two sides make.
 """
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -26,7 +27,7 @@ from ..runner import run
 from .mcp import across_metadata, paged, tool_metadata
 
 
-def _rest(out: dict[str, Any]) -> dict[str, Any]:
+def rest_page(out: dict[str, Any]) -> dict[str, Any]:
     """REST names the page `data`; a stale cursor is a 409, not a 200."""
     if "error" in out:
         raise HTTPException(409, out["error"])
@@ -34,11 +35,24 @@ def _rest(out: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-async def _vault_resolver(tenant):
+async def vault_resolver(tenant):
     from okwan_api.auth import get_store
     from okwan_vault import resolver_for
 
     return await resolver_for(get_store(), tenant.id)
+
+
+async def mapped[T](awaitable: Awaitable[T]) -> T:
+    """Await a run, mapping SDK errors to HTTP. Shared by every REST
+    surface that runs a reconciliation, so they fail the same way."""
+    try:
+        return await awaitable
+    except CredentialError as exc:
+        raise HTTPException(401, str(exc)) from exc
+    except UpstreamError as exc:
+        raise HTTPException(exc.status, exc.body) from exc
+    except OkwanError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 def build_router() -> APIRouter:
@@ -65,16 +79,9 @@ def build_router() -> APIRouter:
             spec = get_across(name)
         except KeyError:
             raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
-        try:
-            result = await run_across(spec, await _vault_resolver(tenant))
-        except CredentialError as exc:
-            raise HTTPException(401, str(exc)) from exc
-        except UpstreamError as exc:
-            raise HTTPException(exc.status, exc.body) from exc
-        except OkwanError as exc:
-            raise HTTPException(502, str(exc)) from exc
+        result = await mapped(run_across(spec, await vault_resolver(tenant)))
         await meter(tenant, "rest:across")
-        return _rest(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
+        return rest_page(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
 
     @router.get("/{name}")
     async def read_reconciliation(
@@ -88,15 +95,8 @@ def build_router() -> APIRouter:
             spec = get(name)
         except KeyError:
             raise HTTPException(404, f"unknown reconciliation '{name}'") from None
-        try:
-            result = await run(spec, await _vault_resolver(tenant))
-        except CredentialError as exc:
-            raise HTTPException(401, str(exc)) from exc
-        except UpstreamError as exc:
-            raise HTTPException(exc.status, exc.body) from exc
-        except OkwanError as exc:
-            raise HTTPException(502, str(exc)) from exc
+        result = await mapped(run(spec, await vault_resolver(tenant)))
         await meter(tenant, "rest:reconcile")
-        return _rest(paged(result.summary, result.rows(), "status", status, limit, cursor))
+        return rest_page(paged(result.summary, result.rows(), "status", status, limit, cursor))
 
     return router
