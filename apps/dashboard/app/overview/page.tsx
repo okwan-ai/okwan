@@ -4,7 +4,7 @@ import { tenantTree } from "@/lib/api";
 import { OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, sentence } from "@/lib/finding";
 import { requireTenant } from "@/lib/guard";
 import { formatMinor } from "@/lib/money";
-import { attentionRows, digest, eligible, type MerchantRun, runAll, twiceTotals } from "@/lib/runs";
+import { attentionRows, checkedAgo, digest, eligible, type MerchantRun, oldestAt, runAll, twiceTotals } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
 import { RunStatus, twiceAmount } from "../_components/merchant-status";
 import { RailChips } from "../_components/rail-chips";
@@ -26,7 +26,7 @@ export default async function OverviewPage() {
     <>
       <PageHeader
         title="Overview"
-        description="Every merchant with two rails connected is checked when this page loads. Results aren't saved."
+        description="Every merchant with two rails connected is checked when this page loads, at most once every 10 minutes. Results aren't saved."
         actions={<ButtonLink href="/merchants?add=1" variant="secondary">Add merchant</ButtonLink>}
       />
       <Suspense fallback={<OverviewSkeleton />}>
@@ -69,7 +69,7 @@ async function OverviewBody() {
         <StatTile
           label="Merchants · rails"
           value={`${runs.length} · ${runs.reduce((n, r) => n + r.merchant.ready.length, 0)}`}
-          sub={`${plural(checked.length, "merchant")} checked${failedNote(runs)}`}
+          sub={`${plural(checked.length, "merchant")} checked${failedNote(runs)}${checked.length ? ` · ${checkedAgo(oldestAt(runs))}` : ""}`}
         />
       </div>
 
