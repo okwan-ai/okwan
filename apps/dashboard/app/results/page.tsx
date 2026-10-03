@@ -1,12 +1,11 @@
 import Link from "next/link";
-import { session } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { merchantsWithRails } from "@/lib/merchants";
 import { RailChips } from "../_components/rail-chips";
 
 export default async function ResultsPage() {
   await requireTenant();
-  const merchants = await merchantsWithRails(await session());
+  const merchants = await merchantsWithRails();
 
   return (
     <>

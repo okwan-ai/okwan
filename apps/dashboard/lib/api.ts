@@ -1,5 +1,6 @@
 import "server-only";
 import { cookies, headers as incoming } from "next/headers";
+import { cache } from "react";
 
 /**
  * The dashboard's only route to the Okwan API. Server-side by construction:
@@ -120,12 +121,22 @@ export async function clearSession(): Promise<void> {
 export type Me = { id: string; name: string };
 export type Tenant = Me & { parent_id: string | null; created_at: string };
 
-/** The signed-in tenant, or null when the session is missing or expired. */
-export async function me(): Promise<Me | null> {
+/**
+ * The signed-in tenant and its direct children, or null when the session is
+ * missing or expired. One API call per render: the shell, the guard and the
+ * page all ask, and React's per-request cache answers after the first.
+ */
+export const tenantTree = cache(async (): Promise<{ self: Tenant; children: Tenant[] } | null> => {
   const token = await session();
   if (!token) return null;
-  const r = await api<{ self: Me }>("/v1/tenants", { session: token });
-  return r.ok ? r.data.self : null;
+  const r = await api<{ self: Tenant; children: Tenant[] }>("/v1/tenants", { session: token });
+  return r.ok ? r.data : null;
+});
+
+/** The signed-in tenant, or null when the session is missing or expired. */
+export async function me(): Promise<Me | null> {
+  const tree = await tenantTree();
+  return tree ? { id: tree.self.id, name: tree.self.name } : null;
 }
 
 /**

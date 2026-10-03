@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { session } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { merchantsWithRails } from "@/lib/merchants";
 import { AddMerchant } from "../_components/add-merchant";
@@ -7,7 +6,7 @@ import { RailChips } from "../_components/rail-chips";
 
 export default async function MerchantsPage() {
   await requireTenant();
-  const merchants = await merchantsWithRails(await session());
+  const merchants = await merchantsWithRails();
   if (!merchants) {
     return <p className="text-ink-soft">The Okwan API did not answer. Try again in a moment.</p>;
   }
