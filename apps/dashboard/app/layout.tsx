@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { tenantTree } from "@/lib/api";
+import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import "./globals.css";
 
@@ -14,6 +15,8 @@ export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const tree = await tenantTree();
+  // The meter in the sidebar: one unmetered read per render, never a run.
+  const usage = tree ? await myUsage(30) : null;
   return (
     <html lang="en">
       <head>
@@ -36,6 +39,7 @@ export default async function RootLayout({
             <Sidebar
               tenant={tree.self.name}
               merchants={tree.children.map((c) => ({ id: c.id, name: c.name }))}
+              plan={usage?.plan ?? null}
             />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
               <div className="mx-auto max-w-[1120px] px-4 py-8 sm:px-8 sm:py-10">{children}</div>

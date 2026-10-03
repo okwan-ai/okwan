@@ -7,10 +7,12 @@ import { type RunDigest, verdictOf } from "@/lib/finding";
 import { useTabResults } from "@/lib/tab-results";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
-import { IconAgent, IconAlert, IconClose, IconHome, IconKey, IconMenu, IconSearch, IconSignOut, IconStore } from "./ui/icons";
+import type { Usage } from "@/lib/usage-shape";
+import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconKey, IconMenu, IconSearch, IconSignOut, IconStore } from "./ui/icons";
+import { PlanMeter } from "./usage/plan-meter";
 
-/** Nothing sets a plan or exposes usage yet (§10), so this states the plan
- * every tenant is held to and draws no meter it cannot fill. */
+/** Shown only when the usage read fails: the plan every tenant is held to,
+ * with no meter drawn from numbers the page doesn't have. */
 const PLAN_NAME = "Free plan";
 const PLAN_QUOTA = "5,000 requests/month";
 
@@ -22,7 +24,7 @@ export type MerchantLink = { id: string; name: string };
 /** `tenant` is the workspace name. A self-serve workspace is named by its
  * verified address, so for most accounts this line is the email; the API
  * exposes no other. */
-export function Sidebar({ tenant, merchants }: { tenant: string; merchants: MerchantLink[] }) {
+export function Sidebar({ tenant, merchants, plan }: { tenant: string; merchants: MerchantLink[]; plan: Usage["plan"] | null }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -66,6 +68,8 @@ export function Sidebar({ tenant, merchants }: { tenant: string; merchants: Merc
         <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Developers</p>
         <Item href="/key" path={path} icon={<IconKey />}>API keys</Item>
         <Item href="/mcp" path={path} icon={<IconAgent />}>MCP for agents</Item>
+        <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Manage</p>
+        <Item href="/settings" path={path} icon={<IconGear />}>Settings</Item>
       </nav>
       {merchants.length > 0 && <MerchantSwitcher merchants={merchants} results={results} path={path} />}
     </>
@@ -73,10 +77,16 @@ export function Sidebar({ tenant, merchants }: { tenant: string; merchants: Merc
 
   const footer = (
     <div className="space-y-3 border-t border-line pt-4 text-xs">
-      <div>
-        <p className="font-medium text-ink">{PLAN_NAME}</p>
-        <p className="text-ink-soft">{PLAN_QUOTA}</p>
-      </div>
+      {plan ? (
+        <Link href="/settings?tab=plan" className="block rounded-lg hover:bg-ink/[0.04]">
+          <PlanMeter plan={plan} compact />
+        </Link>
+      ) : (
+        <div>
+          <p className="font-medium text-ink">{PLAN_NAME}</p>
+          <p className="text-ink-soft">{PLAN_QUOTA}</p>
+        </div>
+      )}
       <div className="min-w-0">
         <p className="text-ink-soft">Workspace</p>
         <p className="truncate font-medium text-ink" title={tenant}>{tenant}</p>
