@@ -2,7 +2,9 @@
 
 import { type ReactNode, useId, useRef, useState } from "react";
 import { MCP_CLIENTS, type McpClientId, mcpClientOf } from "@/lib/mcp-clients";
+import { BrandMark, CLIENT_MARK } from "./ui/brand-mark";
 import { CodeBlock } from "./ui/copy-button";
+import { IconPlug } from "./ui/icons";
 
 /**
  * The integrations catalog, as four rows: each MCP client and how it
@@ -54,7 +56,10 @@ export function McpClients({ apiBase, server, initial }: { apiBase: string; serv
               onKeyDown={(e) => onKey(e, i)}
               className={`min-h-9 rounded-md border-b-2 px-3 text-left text-sm font-medium ${active ? "border-ink bg-surface text-ink shadow-sm" : "border-transparent text-ink-soft hover:text-ink"}`}
             >
-              {c.label}
+              <span className="flex items-center gap-1.5">
+                {CLIENT_MARK[c.id] ? <BrandMark name={CLIENT_MARK[c.id]} size={14} /> : <span aria-hidden className="inline-flex size-3.5 items-center justify-center [&_svg]:size-3.5"><IconPlug /></span>}
+                {c.label}
+              </span>
               <span className="block text-xs font-normal text-ink-soft">{c.via}</span>
             </button>
           );

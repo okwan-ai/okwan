@@ -19,6 +19,7 @@ import { EmptyState } from "../_components/ui/empty-state";
 import { OutcomeSpectrum } from "../_components/ui/outcome-spectrum";
 import { PageHeader, Section } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
+import { BrandMark } from "../_components/ui/brand-mark";
 import { Table, Td, Th } from "../_components/ui/table";
 import { PlanStrip } from "../_components/usage/plan-strip";
 
@@ -274,7 +275,11 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
           <thead>
             <tr>
               <Th>Merchant</Th>
-              {FOLD_READS.map((c) => <Th key={c}>{railLabel(c)}{c === "shopify" ? <span className="font-normal"> · ledger</span> : null}</Th>)}
+              {FOLD_READS.map((c) => (
+                <Th key={c}>
+                  <span className="inline-flex items-center gap-1.5"><BrandMark name={c} label={railLabel(c)} size={13} />{railLabel(c)}{c === "shopify" ? <span className="font-normal"> · ledger</span> : null}</span>
+                </Th>
+              ))}
               <Th>Status</Th>
               <Th className="text-right">Owed back</Th>
             </tr>

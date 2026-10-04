@@ -9,6 +9,7 @@ import { formatMinor } from "@/lib/money";
 import { mcpCall, restCall } from "@/lib/reproduce";
 import { MoneyTrail } from "./money-trail";
 import { Badge } from "./ui/badge";
+import { BrandMark } from "./ui/brand-mark";
 import { Button, buttonClass } from "./ui/button";
 import { CodeBlock, CopyButton } from "./ui/copy-button";
 import { SlideOver } from "./ui/dialog";
@@ -81,12 +82,12 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
           <section aria-labelledby="drawer-evidence">
             <h3 id="drawer-evidence" className="mb-2 text-sm font-semibold">Evidence by source</h3>
             <dl className="divide-y divide-line overflow-hidden rounded-xl border border-line">
-              <Fact label="Shopify (ledger)" value={`Order total ${formatMinor(r.total_minor, r.currency)}`} />
+              <Fact mark="shopify" label="Shopify (ledger)" value={`Order total ${formatMinor(r.total_minor, r.currency)}`} />
               {r.paid.map((p, i) => (
-                <Fact key={`${p.rail}-${i}`} label={railLabel(p.rail)} value={`Matched · took ${formatMinor(p.minor, p.currency ?? r.currency)}`} />
+                <Fact key={`${p.rail}-${i}`} mark={p.rail} label={railLabel(p.rail)} value={`Matched · took ${formatMinor(p.minor, p.currency ?? r.currency)}`} />
               ))}
               {r.unverified.map((u) => (
-                <Fact key={u} label={railLabel(u)} value="Couldn't rule out a payment" muted />
+                <Fact key={u} mark={u} label={railLabel(u)} value="Couldn't rule out a payment" muted />
               ))}
               {r.paid.length === 0 && r.unverified.length === 0 && (
                 <Fact label="PayPal and Stripe" value="No matching payment" muted />
@@ -129,10 +130,10 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
   );
 }
 
-function Fact({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+function Fact({ label, value, mark, muted = false }: { label: string; value: string; mark?: string; muted?: boolean }) {
   return (
     <div className="grid grid-cols-[130px_1fr] gap-3 px-4 py-2.5 text-sm">
-      <dt className="text-ink-soft">{label}</dt>
+      <dt className="flex items-center gap-1.5 text-ink-soft">{mark && <BrandMark name={mark} label={label} size={13} />}{label}</dt>
       <dd className={`tabular-nums ${muted ? "text-ink-soft" : ""}`}>{value}</dd>
     </div>
   );

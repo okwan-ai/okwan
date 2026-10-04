@@ -6,6 +6,7 @@ import { Badge } from "../_components/ui/badge";
 import { ButtonLink } from "../_components/ui/button";
 import { CopyButton } from "../_components/ui/copy-button";
 import { PageHeader } from "../_components/ui/page-header";
+import { BrandMark } from "../_components/ui/brand-mark";
 
 export const metadata = { title: "Connector catalog" };
 
@@ -67,7 +68,8 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
     <article aria-labelledby={`cat-${c.name}`} className="rounded-xl border border-line bg-surface">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div className="min-w-0">
-          <h2 id={`cat-${c.name}`} className="text-lg font-semibold">
+          <h2 id={`cat-${c.name}`} className="flex items-center gap-2 text-lg font-semibold">
+            <BrandMark name={c.name} label={railLabel(c.name)} size={22} />
             {railLabel(c.name)}
             {c.version && <code className="ml-2 font-mono text-xs text-ink-soft">v{c.version}</code>}
           </h2>
