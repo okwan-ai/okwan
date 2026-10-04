@@ -14,6 +14,19 @@ const PLANS: [string, string][] = [
   ["Enterprise", "Unmetered"],
 ];
 
+/** True of every tier: nothing reads the plan but the quota gate
+ *  (okwan_api/auth.py check_quota), and the plans table holds only a name
+ *  and a monthly number. The day a feature gates by tier, this list and
+ *  that gate change together. */
+const INCLUDED = [
+  "Every connector in the catalog",
+  "REST, SQL and the hosted MCP",
+  "Unlimited merchants and keys",
+  "Listings and this meter, free",
+  "Read-only on every surface",
+  "The same engine on every plan",
+];
+
 const RANGES = [7, 30, 90] as const;
 
 /** Presets as links, one row above what they scope; the plan meter above
@@ -47,6 +60,9 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
   const windowTotal = days.reduce((n, d) => n + d.total, 0);
   const channels = byChannel(usage);
   const tenants = byTenant(usage, names, selfId);
+  // Set OKWAN_CONTACT_EMAIL on the dashboard to turn the sentence into a
+  // mailto; there is no sales desk to promise hours for.
+  const contact = process.env.OKWAN_CONTACT_EMAIL?.trim() || null;
   return (
     <div className="space-y-8">
       <section aria-label="Plan" className="rounded-xl border border-line bg-surface p-5">
@@ -96,7 +112,22 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
             </div>
           ))}
         </dl>
-        <p className="px-5 py-3 text-xs text-ink-soft">Changing plan isn&apos;t self-serve yet. Every workspace is on Free until it is.</p>
+        <div className="border-t border-line px-5 py-4">
+          <h4 className="text-xs font-medium">What every plan includes</h4>
+          <ul className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+            {INCLUDED.map((line) => (
+              <li key={line} className="flex gap-2"><span aria-hidden className="font-mono text-ok">✓</span>{line}</li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-ink-soft">
+            Plans differ only in the monthly request number.{" "}
+            {contact ? (
+              <>To change plan, email <a href={`mailto:${contact}?subject=Okwan%20plan`} className="underline underline-offset-4 hover:text-ink">{contact}</a>.</>
+            ) : (
+              <>Changing plan isn&apos;t self-serve yet. Every workspace is on Free until it is.</>
+            )}
+          </p>
+        </div>
       </section>
       )}
     </div>

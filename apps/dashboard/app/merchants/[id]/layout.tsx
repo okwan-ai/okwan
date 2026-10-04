@@ -6,6 +6,7 @@ import { requireTenant } from "@/lib/guard";
 import { configured, connectors, railState } from "@/lib/merchants";
 import { cachedRun } from "@/lib/runs";
 import { myUsage } from "@/lib/usage";
+import { PlanStrip } from "../../_components/usage/plan-strip";
 import { missingFor } from "@/lib/finding";
 import { MerchantRunProvider, RunButton } from "../../_components/merchant-run";
 import { MerchantTabs } from "../../_components/merchant-tabs";
@@ -79,6 +80,7 @@ export default async function MerchantLayout({
         }
         actions={<Suspense><RunButton /></Suspense>}
       />
+      <PlanStrip usage={usage} spend={`Run checks ${name} once: one request.`} />
       <Suspense><MerchantTabs rails={rails.ready.length} /></Suspense>
       <div className="pt-6">{children}</div>
     </MerchantRunProvider>
