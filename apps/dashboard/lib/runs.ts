@@ -43,7 +43,7 @@ export function fromStored(merchant: MerchantRails, run: StoredRun | undefined):
   return {
     merchant,
     state: "ok",
-    finding: toFinding({ summary: run.summary, rows: run.rows ?? [], has_more: run.has_more ?? false }),
+    finding: toFinding({ summary: run.summary, rows: run.rows ?? [], has_more: run.has_more ?? false, twice_currency: run.twice_currency }),
     at,
     runId: run.id,
     surface: run.surface,
@@ -133,7 +133,7 @@ export function digest(r: MerchantRun): RunDigest | null {
   const id = r.merchant.tenant.id;
   if (r.state === "skipped" || r.state === "none") return null;
   const d = r.state === "failed" ? failedDigest(id, r.detail, r.at) : digestOf(id, r.finding, r.at);
-  return { ...d, name: r.merchant.tenant.name };
+  return { ...d, name: r.merchant.tenant.name, surface: r.surface };
 }
 
 /** Findings per merchant in the shape the palette's order search needs. */

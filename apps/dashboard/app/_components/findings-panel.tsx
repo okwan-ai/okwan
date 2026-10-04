@@ -23,30 +23,33 @@ import { Table, Td, Th } from "./ui/table";
  *  (ATTENTION); couldn't-verify is its own group, never folded into either. */
 type Filter = "all" | "findings" | "paid" | "unverifiable";
 
-export function FindingsPanel({ apiBase, view = null, newKeys = [] }: {
+export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys = [] }: {
   apiBase: string;
   /** A stored run chosen from the history, shown instead of the newest. */
   view?: Shown | null;
+  /** The chosen run failed: its scrubbed error and when. */
+  viewError?: { detail: string; at: number } | null;
   /** Findings not present in the run before this one. */
   newKeys?: string[];
 }) {
-  const { busy, shown: current, error, missing, run } = useMerchantRun();
-  const shown = view ?? current;
+  const { busy, shown: current, error: currentError, missing, run } = useMerchantRun();
+  const shown = view ?? (viewError ? null : current);
+  const error = viewError ? { status: 0, ...viewError } : view ? null : currentError;
   // A new ?order= on the same page (palette, drawer) remounts the result so
   // the filter, the open row and the scroll follow the link.
   const order = useSearchParams().get("order");
 
   if (busy) return <Loading />;
-  if (error && !view) {
+  if (error) {
     return (
       <div role="alert" className="rounded-xl border border-danger/30 bg-danger-soft px-5 py-4">
         <p className="font-medium text-danger">
           <span aria-hidden className="mr-1.5 font-mono">!</span>
-          The {error.at ? "last" : ""} run didn&apos;t finish{error.status ? ` (${error.status})` : ""}
+          {viewError ? "This" : error.at ? "The last" : "The"} run didn&apos;t finish{error.status ? ` (${error.status})` : ""}
           {error.at ? <span className="font-normal text-ink-soft" suppressHydrationWarning> · {ago(error.at)}</span> : null}
         </p>
         <p className="mt-1 text-sm break-words text-ink">{error.detail}</p>
-        <Button variant="secondary" className="mt-4" onClick={() => void run()}>Try again</Button>
+        <Button variant="secondary" className="mt-4" onClick={() => void run()}>{viewError ? "Run again" : "Try again"}</Button>
       </div>
     );
   }
@@ -75,7 +78,7 @@ export function FindingsPanel({ apiBase, view = null, newKeys = [] }: {
 }
 
 function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; apiBase: string }) {
-  const { tenantId, tenantName } = useMerchantRun();
+  const { tenantId, tenantName, justRan } = useMerchantRun();
   const order = useSearchParams().get("order");
   const f = shown.finding;
   const ranAt = new Date(shown.at);
@@ -120,7 +123,7 @@ function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; 
               : <><span className="font-semibold text-ink tabular-nums">{(s.match_rate * 100).toFixed(1)}%</span> paid exactly once</>}
           </p>
         </div>
-        <OutcomeSpectrum summary={s} unconfirmed={unconfirmedRows(f)} animate={shown.surface === "dashboard" && Date.now() - shown.at < 60_000} />
+        <OutcomeSpectrum summary={s} unconfirmed={unconfirmedRows(f)} animate={justRan !== null && shown.runId === justRan} />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
