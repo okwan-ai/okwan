@@ -57,6 +57,7 @@ async def mapped[T](awaitable: Awaitable[T]) -> T:
 
 def build_router() -> APIRouter:
     from okwan_api.auth import check_quota, current_tenant, meter
+    from okwan_api.runs import record_run, run_clock
 
     router = APIRouter(prefix="/v1/reconciliations", tags=["reconciliations"])
 
@@ -79,7 +80,14 @@ def build_router() -> APIRouter:
             spec = get_across(name)
         except KeyError:
             raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
-        result = await mapped(run_across(spec, await vault_resolver(tenant)))
+        resolver = await vault_resolver(tenant)
+        started = run_clock()
+        try:
+            result = await mapped(run_across(spec, resolver))
+        except HTTPException as exc:
+            await record_run(tenant, spec, "rest", started, error=exc.detail, resolver=resolver)
+            raise
+        await record_run(tenant, spec, "rest", started, result=result)
         await meter(tenant, "rest:across")
         return rest_page(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
 
@@ -95,7 +103,14 @@ def build_router() -> APIRouter:
             spec = get(name)
         except KeyError:
             raise HTTPException(404, f"unknown reconciliation '{name}'") from None
-        result = await mapped(run(spec, await vault_resolver(tenant)))
+        resolver = await vault_resolver(tenant)
+        started = run_clock()
+        try:
+            result = await mapped(run(spec, resolver))
+        except HTTPException as exc:
+            await record_run(tenant, spec, "rest", started, error=exc.detail, resolver=resolver)
+            raise
+        await record_run(tenant, spec, "rest", started, result=result)
         await meter(tenant, "rest:reconcile")
         return rest_page(paged(result.summary, result.rows(), "status", status, limit, cursor))
 

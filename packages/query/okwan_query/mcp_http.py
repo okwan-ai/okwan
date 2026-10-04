@@ -224,16 +224,24 @@ def _reconcile_tool():
                 "rows": [], "summary": {},
             }
 
+        from okwan_api.auth import meter
+        from okwan_api.runs import record_run, run_clock
+        from okwan_api.scrub import scrub, secrets_of
+
+        started = run_clock()
         try:
             if isinstance(spec, AcrossRails):
                 result = await run_across(spec, resolver)
             else:
                 result = await run_recon(spec, resolver)
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as data
-            return {"error": f"{type(exc).__name__}: {exc}", "rows": [], "summary": {}}
+            # Scrubbed like every other surface: a rail may quote the key
+            # it rejected, and an agent's transcript is not a vault.
+            detail = scrub(f"{type(exc).__name__}: {exc}", secrets_of(resolver))
+            await record_run(tenant, spec, "mcp", started, error=detail, resolver=resolver)
+            return {"error": detail, "rows": [], "summary": {}}
 
-        from okwan_api.auth import meter
-
+        await record_run(tenant, spec, "mcp", started, result=result)
         await meter(tenant, "mcp:reconcile")
         return paged(result.summary, result.rows(), key, status, limit, cursor)
 
