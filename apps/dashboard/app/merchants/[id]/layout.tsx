@@ -5,6 +5,8 @@ import { tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors, railState } from "@/lib/merchants";
 import { cachedRun } from "@/lib/runs";
+import { myUsage } from "@/lib/usage";
+import { PlanStrip } from "../../_components/usage/plan-strip";
 import { missingFor } from "@/lib/finding";
 import { MerchantRunProvider, RunButton } from "../../_components/merchant-run";
 import { MerchantTabs } from "../../_components/merchant-tabs";
@@ -34,7 +36,7 @@ export default async function MerchantLayout({
 }) {
   await requireTenant();
   const { id } = await params;
-  const [catalog, stored, tree] = await Promise.all([connectors(), configured(id), tenantTree()]);
+  const [catalog, stored, tree, usage] = await Promise.all([connectors(), configured(id), tenantTree(), myUsage(30)]);
   if (!stored.ok && stored.status === 404) notFound();
   if (!catalog.ok || !stored.ok) {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
@@ -66,10 +68,19 @@ export default async function MerchantLayout({
               <CopyButton value={id} label="Copy merchant id" />
             </div>
             <RailChips ready={rails.ready} partial={rails.partial} />
+            {usage && !usage.plan.unmetered && (
+              <p className="text-xs text-ink-soft">
+                A run is one request:{" "}
+                <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">
+                  {usage.plan.used.toLocaleString("en-US")} of {usage.plan.limit.toLocaleString("en-US")} used this month
+                </Link>
+              </p>
+            )}
           </div>
         }
         actions={<Suspense><RunButton /></Suspense>}
       />
+      <PlanStrip usage={usage} spend={`Run checks ${name} once: one request.`} />
       <Suspense><MerchantTabs rails={rails.ready.length} /></Suspense>
       <div className="pt-6">{children}</div>
     </MerchantRunProvider>

@@ -38,6 +38,9 @@ class Store(Protocol):
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]: ...
     async def record_request(self, tenant_id: str, surface: str) -> None: ...
     async def usage_since(self, root_id: str, since) -> int: ...
+    async def usage_buckets(
+        self, root_id: str, since
+    ) -> list[tuple[str, datetime, str, int]]: ...
     async def get_plan(self, tenant_id: str) -> tuple[str, int]: ...
     async def set_plan(self, tenant_id: str, name: str) -> None: ...
     async def key_owner(self, key_id: str) -> str | None: ...
@@ -169,7 +172,7 @@ class MemoryStore:
         key = (tenant_id, hour_bucket(), surface)
         self._usage[key] = self._usage.get(key, 0) + 1
 
-    async def usage_since(self, root_id: str, since) -> int:
+    def _subtree(self, root_id: str) -> set[str]:
         subtree = {root_id}
         changed = True
         while changed:
@@ -178,8 +181,22 @@ class MemoryStore:
                 if t.parent_id in subtree and t.id not in subtree:
                     subtree.add(t.id)
                     changed = True
+        return subtree
+
+    async def usage_since(self, root_id: str, since) -> int:
+        subtree = self._subtree(root_id)
         return sum(
             n for (tid, hour, _), n in self._usage.items()
+            if tid in subtree and hour >= since
+        )
+
+    async def usage_buckets(
+        self, root_id: str, since
+    ) -> list[tuple[str, datetime, str, int]]:
+        subtree = self._subtree(root_id)
+        return sorted(
+            (tid, hour, surface, n)
+            for (tid, hour, surface), n in self._usage.items()
             if tid in subtree and hour >= since
         )
 

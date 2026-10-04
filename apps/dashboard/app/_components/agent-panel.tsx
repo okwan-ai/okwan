@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { claudeDesktopConfig } from "@/lib/mcp-clients";
 import { CopyButton } from "./ui/copy-button";
 
 type View = "mcp" | "rest" | "prompt" | "config";
@@ -20,14 +21,16 @@ const LABEL: Record<View, string> = {
  *
  * The key is always a placeholder: a key is shown once at issue, and this
  * page never holds one. Read-only by construction: the prompt says so, and
- * no Okwan surface can write to a rail.
+ * no surface an agent reaches can write to a rail.
  */
-export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"], server = "okwan" }: {
+export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"], server = "okwan", scope = "merchant" }: {
   apiBase: string;
   /** An outcome to filter on (e.g. "collected_twice"); all when absent. */
   outcome?: string;
   views?: View[];
   server?: string;
+  /** Whose key the footer asks for: a merchant's, or the workspace's own. */
+  scope?: "merchant" | "workspace";
 }) {
   const [view, setView] = useState<View>(views[0]);
   const status = outcome ?? "all";
@@ -41,20 +44,8 @@ export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"]
       outcome === "collected_twice" ? "Total what was taken beyond the order totals: that is owed back to customers." : "Say which orders need a person to look, and why.",
       "Read only: do not attempt refunds or any write to a payment rail. Okwan cannot make one.",
     ].join("\n"),
-    config: JSON.stringify(
-      {
-        mcpServers: {
-          [server]: {
-            command: "npx",
-            // mcp-remote drops a --header not in exact Name:Value form (§11).
-            args: ["mcp-remote", `${apiBase}/mcp/`, "--header", "Authorization:Bearer ${OKWAN_KEY}"],
-            env: { OKWAN_KEY: "okw_…" },
-          },
-        },
-      },
-      null,
-      2,
-    ),
+    // Claude Desktop's form, shared with the client tabs (lib/mcp-clients.ts).
+    config: claudeDesktopConfig(apiBase, server),
   };
 
   return (
@@ -82,8 +73,8 @@ export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"]
       </div>
       {/* Focusable so a keyboard can scroll a long line; the ring is light on navy. */}
       <pre tabIndex={0} aria-label={LABEL[view]} className="overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre text-sky focus-visible:outline-canvas focus-visible:-outline-offset-2"><code>{code[view]}</code></pre>
-      <p className="border-t border-canvas/15 px-4 py-2 text-[11px] text-canvas/70">
-        Use a key issued for this merchant in place of <code className="font-mono">okw_…</code>. Every Okwan surface is read-only.
+      <p className="border-t border-canvas/15 px-4 py-2 text-xs text-canvas/70">
+        Use a key issued for this {scope} in place of <code className="font-mono">okw_…</code>. The hosted MCP and SQL are read-only; no surface can move money on a payment rail.
       </p>
     </section>
   );

@@ -4,9 +4,16 @@ import { api, session, tenantTree, type Tenant } from "./api";
 
 export type Connector = {
   name: string;
+  version?: string;
   description: string;
+  /** Resource → its operations, as the SDK declares them. */
+  resources?: Record<string, string[]>;
   credential_fields: string[];
   probe: string | null;
+  /** SQL tables this connector generates ("stripe.charges"). */
+  sql_tables?: string[];
+  /** Operations that are not read-only ("messages.send_text"). */
+  writes?: string[];
 };
 
 export type MerchantRails = {

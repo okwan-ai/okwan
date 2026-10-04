@@ -8,6 +8,8 @@ import {
   attentionRows, caveats, checkedAgo, digest, eligible, type MerchantRun, oldestAt, runAll, seenFindings, twiceTotals,
 } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
+import { myUsage } from "@/lib/usage";
+import { today, type Usage } from "@/lib/usage-shape";
 import { AttentionList } from "../_components/attention-list";
 import { owedAmount, RunStatus } from "../_components/merchant-status";
 import { RailChips } from "../_components/rail-chips";
@@ -18,6 +20,7 @@ import { OutcomeSpectrum } from "../_components/ui/outcome-spectrum";
 import { PageHeader, Section } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
 import { Table, Td, Th } from "../_components/ui/table";
+import { PlanStrip } from "../_components/usage/plan-strip";
 
 export const metadata = { title: "Overview" };
 
@@ -41,12 +44,26 @@ export default async function OverviewPage() {
 }
 
 async function OverviewBody() {
-  const runs = await runAll();
+  const [runs, usage] = await Promise.all([runAll(), myUsage(30)]);
   if (!runs) {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
   }
   const checked = runs.filter((r) => r.state === "ok");
-  const steps = setupSteps(runs);
+  // The meter confirms what the API can't list: any request on a key-only
+  // surface (REST, SQL, MCP) proves a key was issued; one over MCP proves an
+  // agent connected with it. A confirmation sticks (Step.sticky) so a quiet
+  // month doesn't undo it.
+  const surfaces = usage?.buckets.map((b) => b.surface) ?? [];
+  const keySeen = surfaces.some((s) => s.startsWith("mcp:") || s.startsWith("rest:"));
+  const agentSeen = surfaces.some((s) => s.startsWith("mcp:"));
+  const steps = setupSteps(runs, keySeen, agentSeen);
+  const readyNow = runs.filter((r) => eligible(r.merchant)).length;
+  const strip = (
+    <PlanStrip
+      usage={usage}
+      spend={`A load of this page checks each ready merchant at most once per 10 minutes (${readyNow} ready now); each check is one request.`}
+    />
+  );
 
   // Before the first check there is nothing to report: setup leads.
   if (checked.length === 0) {
@@ -54,6 +71,7 @@ async function OverviewBody() {
     return (
       <>
         <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
+        {strip}
         <SetupChecklist steps={steps} prominent />
         {failed.length > 0 && <FailedNote runs={failed} />}
         {runs.length > 0 && (
@@ -70,7 +88,8 @@ async function OverviewBody() {
   return (
     <>
       <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
-      <VerdictStrip runs={runs} />
+      {strip}
+      <VerdictStrip runs={runs} usage={usage} />
 
       <Section
         title="Needs attention"
@@ -102,7 +121,7 @@ async function OverviewBody() {
  * merchant) beside every order checked, split by verdict. Caveats sit next
  * to the figure, so "None" never hides a merchant that couldn't run.
  */
-function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
+function VerdictStrip({ runs, usage }: { runs: MerchantRun[]; usage: Usage | null }) {
   const t = twiceTotals(runs);
   const ok = runs.flatMap((r) => (r.state === "ok" ? [r.finding.summary] : []));
   const sum = (k: "orders" | "collected" | "split_tender" | "collected_twice" | "collected_inconsistent" | "uncollected" | "unverifiable") =>
@@ -169,6 +188,11 @@ function VerdictStrip({ runs }: { runs: MerchantRun[] }) {
         />
         <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
           <span>{checkedAgo(oldestAt(runs))}</span>
+          {usage && (
+            <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">
+              {usage.plan.used.toLocaleString("en-US")}{usage.plan.unmetered ? "" : ` of ${usage.plan.limit.toLocaleString("en-US")}`} requests this month · {today(usage).toLocaleString("en-US")} today
+            </Link>
+          )}
           {warn.map((w) => (
             <span key={w} className="inline-flex items-center gap-1 text-ink">
               <span aria-hidden className="font-mono">?</span>{w}
@@ -325,7 +349,7 @@ function FailedNote({ runs }: { runs: MerchantRun[] }) {
   );
 }
 
-function setupSteps(runs: MerchantRun[]): Step[] {
+function setupSteps(runs: MerchantRun[], keySeen: boolean, agentSeen: boolean): Step[] {
   const first = runs[0]?.merchant;
   const closest = [...runs].map((r) => r.merchant).sort((a, b) => missingFor(a).length - missingFor(b).length)[0];
   const ready = runs.find((r) => eligible(r.merchant))?.merchant;
@@ -344,8 +368,8 @@ function setupSteps(runs: MerchantRun[]): Step[] {
       done: Boolean(ready),
     },
     { id: "run", label: "Run the first check", href: ready ? at(ready.tenant.id) : "/merchants", done: runs.some((r) => r.state === "ok") },
-    { id: "key", label: "Issue an API key for a merchant", href: first ? at(first.tenant.id, "keys") : "/key", done: null },
-    { id: "mcp", label: "Connect an agent over MCP", href: "/mcp", done: null },
+    { id: "key", label: "Issue an API key for a merchant", hint: "Confirmed by the first request made with one.", href: first ? at(first.tenant.id, "keys") : "/key", done: keySeen ? true : null, sticky: true },
+    { id: "mcp", label: "Connect an agent over MCP", hint: "Confirmed by the first request an agent makes.", href: "/mcp", done: agentSeen ? true : null, sticky: true },
   ];
 }
 
