@@ -34,6 +34,17 @@ OUTCOMES = (
     "uncollected",
 )
 
+#: Worst first, how every surface lists orders: the money findings, then
+#: what could not be read, then the clean outcomes.
+DISPLAY_ORDER = (
+    "collected_twice",
+    "collected_inconsistent",
+    "uncollected",
+    "unverifiable",
+    "split_tender",
+    "collected",
+)
+
 
 class Rail(Frozen):
     """One member declaration and where its rail states what it took."""
@@ -273,6 +284,67 @@ class AcrossResult:
             }
             for v in self.orders
         ]
+
+    def trimmed_rows(
+        self, ledger_currency: str = "currency", limit: int | None = None
+    ) -> list[Row]:
+        """The rows a page renders and nothing else, worst outcome first and
+        the largest order first within one, cut at `limit`. This is the
+        shape that is stored and the shape the dashboard consumes; the
+        trimming is defined here, once, next to the summary, so no surface
+        keeps its own copy of what a customer's record may not carry."""
+        rank = {o: i for i, o in enumerate(DISPLAY_ORDER)}
+        verdicts = sorted(
+            self.orders,
+            key=lambda v: (rank.get(v.outcome, len(rank)), -(v.order_total_minor or 0)),
+        )
+        if limit is not None:
+            verdicts = verdicts[:limit]
+        return [trim_verdict(v, ledger_currency) for v in verdicts]
+
+
+def order_ref(order: Row) -> str | None:
+    """The ledger row's human reference: Shopify's `name` ("#1002"), else
+    an id. Never the row itself."""
+    if not isinstance(order, dict):
+        return None
+    for key in ("name", "id", "order_number", "reference"):
+        value = order.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def trim_verdict(v: OrderVerdict, ledger_currency: str = "currency") -> Row:
+    """One order's verdict without its records: outcome, reference,
+    currency, totals, what each rail took and said, the reason. A rail
+    record (and anything on it: a customer's email, a payer id, a card
+    fingerprint) never leaves the process this way."""
+    return {
+        "outcome": v.outcome,
+        "order": {
+            "ref": order_ref(v.order),
+            "currency": _cur(dig(v.order, ledger_currency)),
+        },
+        "order_total_minor": v.order_total_minor,
+        "collected_minor": v.collected_minor,
+        "collected_on": v.collected_on,
+        "unverified_rails": v.unverified_rails,
+        "reason": v.reason,
+        "rails": [
+            {
+                "rail": r.rail,
+                "reconciliation": r.reconciliation,
+                "status": r.status,
+                "collected_minor": r.collected_minor,
+                "currency": r.currency,
+                "discrepancy_minor": r.discrepancy_minor,
+                "explained_by": r.explained_by,
+                "reason": r.reason,
+            }
+            for r in v.rails
+        ],
+    }
 
 
 # ── fold ────────────────────────────────────────────────────────────

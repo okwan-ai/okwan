@@ -4,7 +4,8 @@ import { Suspense } from "react";
 import { tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors, railState } from "@/lib/merchants";
-import { cachedRun } from "@/lib/runs";
+import { toFinding } from "@/lib/finding";
+import { latestRuns } from "@/lib/stored-runs";
 import { myUsage } from "@/lib/usage";
 import { PlanStrip } from "../../_components/usage/plan-strip";
 import { missingFor } from "@/lib/finding";
@@ -36,7 +37,7 @@ export default async function MerchantLayout({
 }) {
   await requireTenant();
   const { id } = await params;
-  const [catalog, stored, tree, usage] = await Promise.all([connectors(), configured(id), tenantTree(), myUsage(30)]);
+  const [catalog, stored, tree, usage, latest] = await Promise.all([connectors(), configured(id), tenantTree(), myUsage(30), latestRuns(id)]);
   if (!stored.ok && stored.status === 404) notFound();
   if (!catalog.ok || !stored.ok) {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
@@ -44,12 +45,15 @@ export default async function MerchantLayout({
   // Display only: a grandchild is not in the direct list, so it shows its id.
   const name = tree?.children.find((c) => c.id === id)?.name || id;
   const rails = railState(catalog.data, stored.data.configured);
-  // After the credentials read above passed the API's subtree guard, so the
-  // caller may see this merchant. Reads memory only; never runs.
-  const initial = cachedRun(id, rails.ready);
+  // The newest stored run for this merchant: a read, never a run.
+  const last = latest?.[id] ?? null;
+  const initial = last && last.status === "ok" && last.summary
+    ? { finding: toFinding({ summary: last.summary, rows: last.rows ?? [], has_more: last.has_more ?? false, twice_currency: last.twice_currency }), at: Date.parse(last.finished_at), runId: last.id, surface: last.surface }
+    : null;
+  const initialError = last && last.status === "failed" ? { detail: last.error ?? "the run failed", at: Date.parse(last.finished_at) } : null;
 
   return (
-    <MerchantRunProvider tenantId={id} tenantName={name} initial={initial} serverNow={Date.now()} missing={missingFor(rails)}>
+    <MerchantRunProvider tenantId={id} tenantName={name} initial={initial} initialError={initialError} missing={missingFor(rails)}>
       <PageHeader
         eyebrow={
           <nav aria-label="Breadcrumb">

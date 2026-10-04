@@ -1,7 +1,9 @@
 /**
- * The across-rails result, as the dashboard shows it. The API's row
- * carries every rail record it matched; the browser gets only what the
- * page renders, so customer fields on those records stay server-side.
+ * The across-rails result, as the dashboard shows it. The API trims each
+ * row to what a page renders (okwan_recon `trimmed_rows`: outcome, the
+ * order's reference and currency, totals, what each rail took and said)
+ * before it is stored or returned to a session, so a rail record and the
+ * customer fields on it never reach the dashboard at all.
  */
 
 export const OUTCOME_LABEL: Record<string, string> = {
@@ -39,15 +41,9 @@ export function missingFor(m: { ready: string[] }): string[] {
   return FOLD_READS.filter((c) => !m.ready.includes(c));
 }
 
-/** Non-clean outcomes, in the order the table leads with them. */
-export const NEEDS_LOOK = ["collected_twice", "collected_inconsistent", "uncollected", "unverifiable"];
-
 /** Outcomes that are a finding about money, not about what could be read:
  * what Overview and Findings list as needing attention. */
 export const ATTENTION = ["collected_twice", "collected_inconsistent", "uncollected"];
-
-/** Clean outcomes, after every non-clean one. */
-const CLEAN = ["split_tender", "collected"];
 
 /** Symbol + label, never colour alone. */
 export const OUTCOME_MARK: Record<string, string> = {
@@ -189,9 +185,10 @@ export type Finding = {
   twice_currency: string | null;
 };
 
-type ApiRow = {
+/** A trimmed row as the API stores and returns it (okwan_recon `trim_verdict`). */
+export type ApiRow = {
   outcome: string;
-  order: Record<string, unknown>;
+  order: { ref: string | null; currency: string | null };
   order_total_minor: number | null;
   collected_minor: number | null;
   collected_on: string[];
@@ -200,20 +197,18 @@ type ApiRow = {
   rails: { rail: string; status: string; collected_minor: number | null; currency: string | null }[];
 };
 
-export type AcrossPage = { summary: Summary; data: ApiRow[]; has_more: boolean };
+/** A run's rows: `data` from the session run route, `rows` from a stored
+ *  run. Both arrive worst outcome first, largest order first within one
+ *  (okwan_recon `trimmed_rows`), and both carry `twice_currency` as the
+ *  API decides it (okwan_api/runs.py `twice_currency`). */
+export type AcrossPage = { summary: Summary; data?: ApiRow[]; rows?: ApiRow[]; has_more: boolean; twice_currency?: string | null };
 
 export function toFinding(page: AcrossPage): Finding {
-  const order = [...NEEDS_LOOK, ...CLEAN];
-  const rank = (o: string) => order.indexOf(o);
-  const rows = page.data
-    .filter((r) => rank(r.outcome) >= 0)
-    // Worst outcome first, clean ones last; within one, the largest order first.
-    .sort((a, b) => rank(a.outcome) - rank(b.outcome)
-      || (b.order_total_minor ?? 0) - (a.order_total_minor ?? 0))
+  const rows = (page.data ?? page.rows ?? [])
     .map((r) => ({
       outcome: r.outcome,
-      order: String(r.order.name ?? r.order.id ?? "—"),
-      currency: typeof r.order.currency === "string" ? r.order.currency : null,
+      order: r.order.ref ?? "—",
+      currency: r.order.currency,
       total_minor: r.order_total_minor,
       collected_minor: r.collected_minor,
       collected_on: r.collected_on,
@@ -223,15 +218,14 @@ export function toFinding(page: AcrossPage): Finding {
         .filter((v) => v.status === "matched")
         .map((v) => ({ rail: v.rail, minor: v.collected_minor, currency: v.currency })),
     }));
-  const twiceRows = rows.filter((r) => r.outcome === "collected_twice");
-  const twice = new Set(twiceRows.map((r) => r.currency));
   return {
     summary: page.summary,
     rows,
     partial: page.has_more,
-    // A currency only when every collected-twice order is on this page and
-    // they share one; otherwise the total can't be labelled with confidence.
-    twice_currency: twice.size === 1 && twiceRows.length === page.summary.collected_twice ? [...twice][0] : null,
+    // The API labels the collected-twice total with a currency only when
+    // every such order is on hand and they share one; the dashboard does
+    // not decide this twice.
+    twice_currency: page.twice_currency ?? null,
   };
 }
 
@@ -247,10 +241,29 @@ export function truncated(f: Finding): boolean {
     || Object.values(f.summary.rails).some((r) => r.coverage?.truncated);
 }
 
-export function checkedAgo(at: number | null, now = Date.now()): string {
-  if (at === null) return "";
+/** "just now", "12 min ago", "3 h ago", "2 days ago": how old a stored
+ *  run is, in the unit that fits. */
+export function ago(at: number | null, now = Date.now()): string {
+  if (at === null) return "never";
   const min = Math.floor((now - at) / 60000);
-  return min < 1 ? "Checked just now" : `Checked ${min} min ago`;
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+export function ranAgo(at: number | null, now = Date.now()): string {
+  return at === null ? "Never run" : `Last run ${ago(at, now)}`;
+}
+
+/** How a stored run reads in a list: "dashboard · 2 days ago". */
+export const SURFACE_LABEL: Record<string, string> = { dashboard: "Dashboard", rest: "REST", mcp: "Agent (MCP)" };
+
+/** The identity of a finding across two runs of the same merchant. */
+export function rowKey(r: { outcome: string; order: string }): string {
+  return `${r.outcome}:${r.order}`;
 }
 
 /** A finding as the cross-merchant pages and the order drawer carry it. */
@@ -264,19 +277,19 @@ export type AttentionRow = FindingRow & {
   partial: boolean;
 };
 
-/** What the browser's in-tab results store needs from a run. */
+/** A finding as the palette's order search needs it. */
+export type SeenFinding = { merchantId: string; merchantName: string; order: string; outcome: string; stake: string };
+
+/** What a list needs from a run: counts, the owed-back figure, the time. */
 export type RunDigest = {
   id: string;
   /** The merchant's name, for notes that mention it. */
   name?: string;
   ok: boolean;
-  /** When the result was produced (ms epoch, on the browser's clock once in
-   *  the tab store); the store keeps the newest. */
+  /** When the run finished (ms epoch). */
   at: number;
-  /** "server": a page-load check (Overview, Findings), `rawAt` on the
-   *  server's clock. "tab": this tab's Run button, on the browser's clock. */
-  origin?: "server" | "tab";
-  rawAt?: number;
+  /** dashboard · rest · mcp */
+  surface?: string;
   /** Findings: collected twice, doesn't add up, no payment. */
   open: number;
   twice: number;
@@ -313,7 +326,7 @@ export function failedDigest(id: string, detail: string, at: number): RunDigest 
 /** One short verdict for a digest, for places with room for a glyph and a
  *  few words (sidebar, palette). Same precedence as merchant status. */
 export function verdictOf(d: RunDigest | undefined): { mark: string; label: string; tone: "danger" | "ink" | "soft" | "ok" } {
-  if (!d) return { mark: "·", label: "not checked this session", tone: "soft" };
+  if (!d) return { mark: "·", label: "never run", tone: "soft" };
   if (!d.ok) return { mark: "✕", label: "couldn't run", tone: "danger" };
   if (d.twice) return { mark: "×2", label: `collected twice · ${d.open} finding${d.open === 1 ? "" : "s"}`, tone: "danger" };
   if (d.open) return { mark: String(d.open), label: `${d.open} finding${d.open === 1 ? "" : "s"}`, tone: "ink" };

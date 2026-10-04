@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { requireTenant } from "@/lib/guard";
-import { digestOf } from "@/lib/finding";
-import { merchantsWithRails } from "@/lib/merchants";
-import { cachedRun } from "@/lib/runs";
+import { digest, storedRuns } from "@/lib/runs";
 import { AddMerchant } from "../_components/add-merchant";
 import { MerchantsTable } from "../_components/merchants-table";
 import { ButtonLink } from "../_components/ui/button";
@@ -15,7 +13,8 @@ export const metadata = { title: "Merchants" };
 
 export default async function MerchantsPage() {
   await requireTenant();
-  const merchants = await merchantsWithRails();
+  // Each merchant with its newest stored run: a read, never a run.
+  const merchants = await storedRuns();
 
   return (
     <>
@@ -47,20 +46,15 @@ export default async function MerchantsPage() {
         </EmptyState>
       ) : (
         <MerchantsTable
-          serverNow={Date.now()}
-          rows={merchants.map((m) => {
-            // Listed under this session, so the caller may see it; memory only, never a run.
-            const c = cachedRun(m.tenant.id, m.ready);
-            return {
-              id: m.tenant.id,
-              name: m.tenant.name,
-              createdAt: m.tenant.created_at,
-              ready: m.ready,
-              partial: m.partial,
-              known: m.known,
-              cached: c ? digestOf(m.tenant.id, c.finding, c.at) : null,
-            };
-          })}
+          rows={merchants.map((r) => ({
+            id: r.merchant.tenant.id,
+            name: r.merchant.tenant.name,
+            createdAt: r.merchant.tenant.created_at,
+            ready: r.merchant.ready,
+            partial: r.merchant.partial,
+            known: r.merchant.known,
+            digest: digest(r),
+          }))}
         />
       )}
     </>

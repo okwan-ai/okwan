@@ -151,6 +151,37 @@ class ReconResult:
             ),
         }
 
+    def trimmed_rows(
+        self, left_ref: str | None = None, right_ref: str | None = None,
+        limit: int | None = None,
+    ) -> list[Row]:
+        """The rows without their records: status, rule, confidence, the
+        discrepancy and its explanation, the reason, each side's one human
+        reference (the first exact key, see `ref_paths`), and for an
+        ambiguous row how many candidates there were, never the candidates
+        themselves. Findings first (PAIR_DISPLAY_ORDER), so a cut at
+        `limit` drops clean matches, not breaks. What is stored and shown;
+        a record never leaves the process this way."""
+        rank = {s: i for i, s in enumerate(PAIR_DISPLAY_ORDER)}
+        rows = sorted(self.rows(), key=lambda r: rank.get(r["status"], len(rank)))
+        out = [
+            {
+                "status": r["status"],
+                "rule": r.get("rule"),
+                "confidence": r.get("confidence"),
+                "discrepancy": r.get("discrepancy"),
+                "explained_by": r.get("explained_by"),
+                "reason": r.get("reason"),
+                "candidates": (
+                    len(r["candidates"]) if isinstance(r.get("candidates"), list) else None
+                ),
+                "left_ref": _ref(r.get("left"), left_ref),
+                "right_ref": _ref(r.get("right"), right_ref),
+            }
+            for r in rows
+        ]
+        return out[:limit] if limit is not None else out
+
     def rows(self) -> list[Row]:
         """Flat, view-shaped output — what the DuckDB view exposes."""
         out: list[Row] = [
@@ -406,3 +437,32 @@ def _split_unread(
         else:
             unread.append(Unverifiable(r, reason or "counterpart side not read"))
     return missed, unread
+
+
+#: Worst first, how a stored two-sided run lists its rows: the breaks and
+#: misses, then what could not be read, then the clean matches.
+PAIR_DISPLAY_ORDER = (
+    "matched_discrepant",
+    "unmatched_left",
+    "unmatched_right",
+    "ambiguous",
+    "matched_explained",
+    "unverifiable_left",
+    "unverifiable_right",
+    "matched",
+)
+
+
+def ref_paths(spec: Reconciliation) -> tuple[str | None, str | None]:
+    """The one human reference each side carries: the first exact key."""
+    for rule in spec.keys:
+        if isinstance(rule, ExactRef):
+            return rule.left, rule.right
+    return None, None
+
+
+def _ref(record: Row | None, path: str | None) -> str | None:
+    if record is None or not path:
+        return None
+    value = dig(record, path)
+    return None if value in (None, "") else str(value)
