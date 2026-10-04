@@ -27,7 +27,7 @@ export function PlanMeter({ plan, compact = false }: { plan: Usage["plan"]; comp
           <div className={`h-full rounded-full ${fill}`} style={{ width: `${s.share * 100}%` }} />
         </div>
       )}
-      <p className={`mt-1 ${compact ? "text-[11px]" : "text-xs"} ${s.state === "ok" ? "text-ink-soft" : "text-ink"}`}>
+      <p className={`mt-1 text-xs ${s.state === "ok" ? "text-ink-soft" : "text-ink"}`}>
         {mark && <span aria-hidden className="mr-1 font-mono">{mark}</span>}
         {s.text}
       </p>

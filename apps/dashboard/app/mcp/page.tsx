@@ -1,5 +1,6 @@
 import { apiUrl, tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
+import { HOSTED_TOOLS } from "@/lib/hosted-tools";
 import { mcpClientOf } from "@/lib/mcp-clients";
 import { Endpoints } from "../_components/endpoints";
 import { McpSetup } from "../_components/mcp-setup";
@@ -9,13 +10,6 @@ import { EmptyState } from "../_components/ui/empty-state";
 import { PageHeader, Section } from "../_components/ui/page-header";
 
 export const metadata = { title: "MCP for agents" };
-
-const TOOLS: [string, string][] = [
-  ["okwan_list_reconciliations", "What can run for this key, and what credentials anything blocked still needs."],
-  ["okwan_reconcile", "Runs a reconciliation or the rails fold by name; filter a fold with status, e.g. collected_twice."],
-  ["okwan_describe_tables", "The SQL tables (connector.resource) this key can query."],
-  ["okwan_query", "Read-only SQL across live connectors."],
-];
 
 export default async function McpPage({ searchParams }: { searchParams: Promise<{ client?: string }> }) {
   await requireTenant();
@@ -37,13 +31,13 @@ export default async function McpPage({ searchParams }: { searchParams: Promise<
         </EmptyState>
       )}
       <div id="prompts">
-        <Section title="Prompts your agent can run" aside="One question per verdict the check produces, bound to its exact call">
+        <Section title="Prompts your agent can run" aside="One question per verdict that needs a look, and one in SQL, each bound to its exact call">
           <PromptLibrary apiBase={apiBase} />
         </Section>
       </div>
       <Section title="Tools on the hosted server">
         <dl className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
-          {TOOLS.map(([name, what]) => (
+          {HOSTED_TOOLS.map(({ name, what }) => (
             <div key={name} className="grid gap-1 px-5 py-3 sm:grid-cols-[240px_1fr]">
               <dt><code className="font-mono text-[13px]">{name}</code></dt>
               <dd className="text-sm text-ink-soft">{what}</dd>

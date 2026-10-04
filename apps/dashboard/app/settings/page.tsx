@@ -91,8 +91,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               browser.
             </Row>
             <Row label="Errors">
-              A failed connection test or run shows the upstream message with every stored value redacted first. A request the API
-              rejects as malformed is answered with where and why, never with the value sent.
+              A failed connection test or run shows the upstream message with every stored value of that tenant redacted first,
+              cut to 300 characters. A request the API rejects as malformed is answered with where and why, never with the
+              value sent.
             </Row>
             <Row label="Metering">
               One count per tenant, hour and surface. No query text, no row content, no per-call log: the meter is the record.
@@ -103,14 +104,18 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               its own <code className="font-mono text-[13px]">&lt;store&gt;.myshopify.com</code>.
             </Row>
             <Row label="Isolation">
-              A merchant is its own tenant: its vault, its keys, its plan gate. Anything outside your subtree answers as if it did
-              not exist.
+              A merchant is its own tenant: its vault and its keys are its own, and a key for it reads nothing else. The plan
+              allowance is the workspace&apos;s, shared by its merchants. Anything outside your subtree answers as if it did not
+              exist.
             </Row>
             <Row label="Sessions">
               A dashboard session administers a tenant and never acts as an API key: data routes and the hosted MCP take only a key
               you chose to issue.
             </Row>
-            <Row label="Rate limits">Sign-in, sign-up, verification and connection tests are limited per address and per subject.</Row>
+            <Row label="Rate limits">
+              Sign-in and sign-up are limited per address and per account, connection tests per address and per tenant, and
+              verification per address.
+            </Row>
           </dl>
         )}
       </div>

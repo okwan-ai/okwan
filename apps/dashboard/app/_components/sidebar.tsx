@@ -11,11 +11,6 @@ import type { Usage } from "@/lib/usage-shape";
 import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconKey, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
 import { PlanMeter } from "./usage/plan-meter";
 
-/** Shown only when the usage read fails: the plan every tenant is held to,
- * with no meter drawn from numbers the page doesn't have. */
-const PLAN_NAME = "Free plan";
-const PLAN_QUOTA = "5,000 requests/month";
-
 /** Shown in the sidebar before the list asks to be filtered. */
 const MERCHANT_LIST = 8;
 
@@ -100,8 +95,8 @@ export function Sidebar({ tenant, merchants, plan, apiBase }: {
         </Link>
       ) : (
         <div>
-          <p className="font-medium text-ink">{PLAN_NAME}</p>
-          <p className="text-ink-soft">{PLAN_QUOTA}</p>
+          <p className="font-medium text-ink">Plan &amp; usage</p>
+          <p className="text-ink-soft">Usage isn&apos;t available right now.</p>
         </div>
       )}
       <div className="min-w-0">

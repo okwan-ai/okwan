@@ -7,8 +7,10 @@ import { IconCheck, IconChevron } from "./ui/icons";
 
 /** `done: null` marks a step the API can't confirm (it lists no keys and
  *  sees no MCP clients), so the viewer ticks it off; that tick is kept in
- *  this browser only. */
-export type Step = { id: string; label: string; hint?: string; href: string; done: boolean | null };
+ *  this browser only. `sticky` marks a step whose confirmation came from
+ *  evidence with a window (the usage meter): once seen done, it is kept as
+ *  a tick so a quiet month doesn't reopen it. */
+export type Step = { id: string; label: string; hint?: string; href: string; done: boolean | null; sticky?: boolean };
 
 const STORAGE = "okwan.setup.ticked";
 
@@ -31,7 +33,18 @@ export function SetupChecklist({ steps, prominent = false }: { steps: Step[]; pr
   // flashed and vanished on hydration would be worse than one that appears.
   const [ticked, setTicked] = useState<string[] | null>(null);
   const [open, setOpen] = useState(false);
-  useEffect(() => setTicked(readTicked()), []);
+  useEffect(() => {
+    const seen = readTicked();
+    const confirmed = steps.filter((s) => s.sticky && s.done === true && !seen.includes(s.id)).map((s) => s.id);
+    if (confirmed.length) {
+      try {
+        localStorage.setItem(STORAGE, JSON.stringify([...seen, ...confirmed]));
+      } catch {
+        // Storage blocked: the confirmation lasts as long as the evidence.
+      }
+    }
+    setTicked([...seen, ...confirmed]);
+  }, [steps]);
   if (ticked === null) return null;
 
   const isDone = (s: Step) => s.done ?? ticked.includes(s.id);

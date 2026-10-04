@@ -11,6 +11,8 @@
  * line. The Claude Desktop pitfalls are first-hand (OKWAN_PROJECT.md §11).
  */
 
+import { HOSTED_TOOL_NAMES } from "./hosted-tools";
+
 export type McpClient = {
   id: string;
   label: string;
@@ -27,7 +29,7 @@ export type McpClient = {
   docs: { label: string; href: string };
 };
 
-export function mcpUrl(apiBase: string): string {
+function mcpUrl(apiBase: string): string {
   return `${apiBase}/mcp/`;
 }
 
@@ -126,8 +128,8 @@ export const MCP_CLIENTS: McpClient[] = [
         "Header     Authorization: Bearer okw_…",
         "           or x-okwan-key: okw_…",
         "Auth       API key only; no OAuth",
-        "Tools      okwan_list_reconciliations, okwan_reconcile,",
-        "           okwan_describe_tables, okwan_query (all read-only)",
+        `Tools      ${HOSTED_TOOL_NAMES.slice(0, 2).join(", ")},`,
+        `           ${HOSTED_TOOL_NAMES.slice(2).join(", ")} (all read-only)`,
       ].join("\n"),
     docs: { label: "MCP: connecting a client", href: "https://modelcontextprotocol.io/quickstart/user" },
   },

@@ -16,6 +16,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
   const peak = days.reduce((p, d, i) => (d.total > days[p].total ? i : p), 0);
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1];
+  const cols = CHANNELS.filter((c) => days.some((d) => d.byChannel[c.key]));
   const fmt = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
   return (
@@ -43,7 +44,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
                 onPointerLeave={() => setActive((a) => (a === i ? null : a))}
                 onFocus={() => setActive(i)}
                 onBlur={() => setActive((a) => (a === i ? null : a))}
-                className="group relative flex h-full min-w-0 flex-1 items-end justify-center rounded-sm outline-none focus-visible:bg-ink/5"
+                className="group relative flex h-full min-w-0 flex-1 items-end justify-center rounded-sm focus-visible:bg-ink/5"
               >
                 <span
                   aria-hidden
@@ -87,13 +88,21 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
         <summary className="inline-flex min-h-11 cursor-pointer items-center text-ink-soft underline-offset-4 hover:underline">Table view</summary>
         <table className="mt-2 w-full text-left">
           <thead>
-            <tr className="text-ink-soft"><th scope="col" className="py-1 font-medium">Day</th><th scope="col" className="py-1 text-right font-medium">Requests</th></tr>
+            <tr className="text-ink-soft">
+              <th scope="col" className="py-1 font-medium">Day</th>
+              <th scope="col" className="py-1 text-right font-medium">Requests</th>
+              {cols.map((c) => <th key={c.key} scope="col" className="py-1 pl-3 text-right font-medium">{c.label}</th>)}
+            </tr>
           </thead>
           <tbody>
             {days.filter((d) => d.total).map((d) => (
-              <tr key={d.day} className="border-t border-line"><td className="py-1">{fmt(d.day)}</td><td className="py-1 text-right tabular-nums">{d.total.toLocaleString("en-US")}</td></tr>
+              <tr key={d.day} className="border-t border-line">
+                <td className="py-1">{fmt(d.day)}</td>
+                <td className="py-1 text-right tabular-nums">{d.total.toLocaleString("en-US")}</td>
+                {cols.map((c) => <td key={c.key} className="py-1 pl-3 text-right text-ink-soft tabular-nums">{(d.byChannel[c.key] ?? 0).toLocaleString("en-US")}</td>)}
+              </tr>
             ))}
-            {!days.some((d) => d.total) && <tr><td colSpan={2} className="py-2 text-ink-soft">No requests in this window.</td></tr>}
+            {!days.some((d) => d.total) && <tr><td colSpan={2 + cols.length} className="py-2 text-ink-soft">No requests in this window.</td></tr>}
           </tbody>
         </table>
       </details>
