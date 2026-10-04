@@ -1,4 +1,6 @@
 import { apiUrl } from "@/lib/api";
+import { ATTENTION, rowKey, toFinding } from "@/lib/finding";
+import { runHistory, storedRun } from "@/lib/stored-runs";
 import { usageFor } from "@/lib/usage";
 import { configured, connectors } from "@/lib/merchants";
 import { tabOf } from "@/lib/merchant-tabs";
@@ -6,6 +8,7 @@ import { ConnectionsGrid } from "../../_components/connections-grid";
 import { DevSnippets } from "../../_components/dev-snippets";
 import { FindingsPanel } from "../../_components/findings-panel";
 import { IssueKey } from "../../_components/issue-key";
+import { RunHistory } from "../../_components/run-history";
 import { PlanUsage } from "../../_components/settings/plan-usage";
 import { EmptyState } from "../../_components/ui/empty-state";
 import { Section } from "../../_components/ui/page-header";
@@ -17,9 +20,9 @@ export default async function MerchantPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; days?: string }>;
+  searchParams: Promise<{ tab?: string; days?: string; run?: string }>;
 }) {
-  const [{ id }, { tab, days: daysParam }] = await Promise.all([params, searchParams]);
+  const [{ id }, { tab, days: daysParam, run: runParam }] = await Promise.all([params, searchParams]);
   const active = tabOf(tab);
 
   if (active === "connections") {
@@ -72,5 +75,31 @@ export default async function MerchantPage({
     );
   }
 
-  return <FindingsPanel apiBase={apiUrl()} />;
+  // Findings: the newest stored run (held by the layout's provider), or one
+  // chosen from the history (?run=). Findings absent from the run before
+  // the shown one are marked new.
+  const history = (await runHistory(id, 20)) ?? [];
+  const shownId = runParam && history.some((r) => r.id === runParam) ? runParam : (history[0]?.id ?? null);
+  const index = history.findIndex((r) => r.id === shownId);
+  const previousId = index >= 0 ? history.slice(index + 1).find((r) => r.status === "ok")?.id ?? null : null;
+  const [chosen, previous] = await Promise.all([
+    runParam && shownId === runParam && index > 0 ? storedRun(id, shownId) : Promise.resolve(null),
+    previousId ? storedRun(id, previousId) : Promise.resolve(null),
+  ]);
+  const view = chosen && chosen.status === "ok" && chosen.summary
+    ? { finding: toFinding({ summary: chosen.summary, rows: chosen.rows ?? [], has_more: chosen.has_more ?? false }), at: Date.parse(chosen.finished_at), runId: chosen.id, surface: chosen.surface }
+    : null;
+  const before = new Set(
+    previous?.summary ? toFinding({ summary: previous.summary, rows: previous.rows ?? [], has_more: false }).rows.filter((r) => ATTENTION.includes(r.outcome)).map(rowKey) : [],
+  );
+  const shownRows = view?.finding.rows ?? (history[0]?.status === "ok" && history[0].summary
+    ? toFinding({ summary: history[0].summary, rows: (await storedRun(id, history[0].id))?.rows ?? [], has_more: false }).rows
+    : []);
+  const newKeys = previous ? shownRows.filter((r) => ATTENTION.includes(r.outcome)).map(rowKey).filter((k) => !before.has(k)) : [];
+  return (
+    <div className="space-y-6">
+      <FindingsPanel apiBase={apiUrl()} view={view} newKeys={newKeys} />
+      <RunHistory runs={history} selected={shownId} href={(runId) => (runId ? `?run=${encodeURIComponent(runId)}` : "?tab=findings")} />
+    </div>
+  );
 }

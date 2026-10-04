@@ -1,7 +1,9 @@
 /**
- * The across-rails result, as the dashboard shows it. The API's row
- * carries every rail record it matched; the browser gets only what the
- * page renders, so customer fields on those records stay server-side.
+ * The across-rails result, as the dashboard shows it. The API trims each
+ * row to what a page renders (okwan_recon `trimmed_rows`: outcome, the
+ * order's reference and currency, totals, what each rail took and said)
+ * before it is stored or returned to a session, so a rail record and the
+ * customer fields on it never reach the dashboard at all.
  */
 
 export const OUTCOME_LABEL: Record<string, string> = {
@@ -170,6 +172,8 @@ export type Summary = {
 export type FindingRow = {
   outcome: string;
   order: string;
+  /** Set by a page comparing this run with the one before it. */
+  isNew?: boolean;
   currency: string | null;
   total_minor: number | null;
   collected_minor: number | null;
@@ -189,9 +193,10 @@ export type Finding = {
   twice_currency: string | null;
 };
 
-type ApiRow = {
+/** A trimmed row as the API stores and returns it (okwan_recon `trim_verdict`). */
+export type ApiRow = {
   outcome: string;
-  order: Record<string, unknown>;
+  order: { ref: string | null; currency: string | null };
   order_total_minor: number | null;
   collected_minor: number | null;
   collected_on: string[];
@@ -200,20 +205,21 @@ type ApiRow = {
   rails: { rail: string; status: string; collected_minor: number | null; currency: string | null }[];
 };
 
-export type AcrossPage = { summary: Summary; data: ApiRow[]; has_more: boolean };
+/** A run's rows: `data` from the session run route, `rows` from a stored run. */
+export type AcrossPage = { summary: Summary; data?: ApiRow[]; rows?: ApiRow[]; has_more: boolean };
 
 export function toFinding(page: AcrossPage): Finding {
   const order = [...NEEDS_LOOK, ...CLEAN];
   const rank = (o: string) => order.indexOf(o);
-  const rows = page.data
+  const rows = (page.data ?? page.rows ?? [])
     .filter((r) => rank(r.outcome) >= 0)
     // Worst outcome first, clean ones last; within one, the largest order first.
     .sort((a, b) => rank(a.outcome) - rank(b.outcome)
       || (b.order_total_minor ?? 0) - (a.order_total_minor ?? 0))
     .map((r) => ({
       outcome: r.outcome,
-      order: String(r.order.name ?? r.order.id ?? "—"),
-      currency: typeof r.order.currency === "string" ? r.order.currency : null,
+      order: r.order.ref ?? "—",
+      currency: r.order.currency,
       total_minor: r.order_total_minor,
       collected_minor: r.collected_minor,
       collected_on: r.collected_on,
@@ -253,6 +259,34 @@ export function checkedAgo(at: number | null, now = Date.now()): string {
   return min < 1 ? "Checked just now" : `Checked ${min} min ago`;
 }
 
+/** "just now", "12 min ago", "3 h ago", "2 days ago": how old a stored
+ *  run is, in the unit that fits. */
+export function ago(at: number | null, now = Date.now()): string {
+  if (at === null) return "never";
+  const min = Math.floor((now - at) / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+export function ranAgo(at: number | null, now = Date.now()): string {
+  return at === null ? "Never run" : `Last run ${ago(at, now)}`;
+}
+
+/** A stored run older than this is called stale where it is shown. */
+export const STALE_MS = 24 * 60 * 60 * 1000;
+
+/** How a stored run reads in a list: "dashboard · 2 days ago". */
+export const SURFACE_LABEL: Record<string, string> = { dashboard: "Dashboard", rest: "REST", mcp: "Agent (MCP)" };
+
+/** The identity of a finding across two runs of the same merchant. */
+export function rowKey(r: { outcome: string; order: string }): string {
+  return `${r.outcome}:${r.order}`;
+}
+
 /** A finding as the cross-merchant pages and the order drawer carry it. */
 export type AttentionRow = FindingRow & {
   merchantId: string;
@@ -264,19 +298,17 @@ export type AttentionRow = FindingRow & {
   partial: boolean;
 };
 
-/** What the browser's in-tab results store needs from a run. */
+/** A finding as the palette's order search needs it. */
+export type SeenFinding = { merchantId: string; merchantName: string; order: string; outcome: string; stake: string };
+
+/** What a list needs from a run: counts, the owed-back figure, the time. */
 export type RunDigest = {
   id: string;
   /** The merchant's name, for notes that mention it. */
   name?: string;
   ok: boolean;
-  /** When the result was produced (ms epoch, on the browser's clock once in
-   *  the tab store); the store keeps the newest. */
+  /** When the run finished (ms epoch). */
   at: number;
-  /** "server": a page-load check (Overview, Findings), `rawAt` on the
-   *  server's clock. "tab": this tab's Run button, on the browser's clock. */
-  origin?: "server" | "tab";
-  rawAt?: number;
   /** Findings: collected twice, doesn't add up, no payment. */
   open: number;
   twice: number;
@@ -313,7 +345,7 @@ export function failedDigest(id: string, detail: string, at: number): RunDigest 
 /** One short verdict for a digest, for places with room for a glyph and a
  *  few words (sidebar, palette). Same precedence as merchant status. */
 export function verdictOf(d: RunDigest | undefined): { mark: string; label: string; tone: "danger" | "ink" | "soft" | "ok" } {
-  if (!d) return { mark: "·", label: "not checked this session", tone: "soft" };
+  if (!d) return { mark: "·", label: "never run", tone: "soft" };
   if (!d.ok) return { mark: "✕", label: "couldn't run", tone: "danger" };
   if (d.twice) return { mark: "×2", label: `collected twice · ${d.open} finding${d.open === 1 ? "" : "s"}`, tone: "danger" };
   if (d.open) return { mark: String(d.open), label: `${d.open} finding${d.open === 1 ? "" : "s"}`, tone: "ink" };
