@@ -23,7 +23,7 @@ const INCLUDED = [
   "REST, SQL and the hosted MCP",
   "Unlimited merchants and keys",
   "Listings and this meter, free",
-  "Read-only on every surface",
+  "Read-only SQL, hosted MCP and reconciliations",
   "The same engine on every plan",
 ];
 
@@ -31,7 +31,7 @@ const RANGES = [7, 30, 90] as const;
 
 /** Presets as links, one row above what they scope; the plan meter above
  *  them is month-to-date and never windowed. `href(days)` builds the link. */
-export function RangePicker({ days, href }: { days: number; href: (d: number) => string }) {
+function RangePicker({ days, href }: { days: number; href: (d: number) => string }) {
   return (
     <nav aria-label="Window" className="flex items-center gap-1 rounded-lg bg-canvas p-0.5 text-xs">
       {RANGES.map((d) => (
@@ -39,7 +39,7 @@ export function RangePicker({ days, href }: { days: number; href: (d: number) =>
           key={d}
           href={href(d)}
           aria-current={d === days ? "page" : undefined}
-          className={`inline-flex min-h-9 items-center rounded-md px-3 font-medium ${d === days ? "bg-surface text-ink shadow-sm" : "text-ink-soft hover:text-ink"}`}
+          className={`inline-flex min-h-9 items-center rounded-md border-b-2 px-3 font-medium ${d === days ? "border-ink bg-surface text-ink shadow-sm" : "border-transparent text-ink-soft hover:text-ink"}`}
         >
           {d} days
         </Link>
@@ -66,19 +66,19 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
   return (
     <div className="space-y-8">
       <section aria-label="Plan" className="rounded-xl border border-line bg-surface p-5">
-        {scope === "merchant" && <p className="mb-2 text-xs text-ink-soft">The allowance is the workspace&apos;s, shared by every merchant; the figures below are this merchant&apos;s own.</p>}
+        {scope === "merchant" && <p className="mb-2 text-xs text-ink-soft">The allowance, this month&apos;s total and what remains are the workspace&apos;s, shared by every merchant. The chart and the breakdown below are this merchant&apos;s own.</p>}
         <PlanMeter plan={usage.plan} />
         <p className="mt-3 text-xs text-ink-soft">
           Every call that reads a rail counts once: REST, SQL, the hosted MCP, and checks run from this dashboard
           (counted to the merchant they run as). Listing tables or reconciliations is free. Connection tests count but are
-          never refused. The month resets on the 1st, UTC.
+          never refused for quota. The month resets on the 1st, UTC.
         </p>
       </section>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="This month" value={usage.plan.used.toLocaleString("en-US")} sub="requests, month to date" />
+        <StatTile label={scope === "merchant" ? "Workspace this month" : "This month"} value={usage.plan.used.toLocaleString("en-US")} sub="requests, month to date" />
         <StatTile
-          label="Remaining"
+          label={scope === "merchant" ? "Workspace remaining" : "Remaining"}
           value={usage.plan.unmetered ? "∞" : (usage.plan.remaining ?? 0).toLocaleString("en-US")}
           sub={usage.plan.unmetered ? "unmetered plan" : `of ${usage.plan.limit.toLocaleString("en-US")}`}
         />
@@ -99,7 +99,7 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
       {scope === "workspace" && (
       <section aria-labelledby="plans-title" className="rounded-xl border border-line bg-surface">
         <div className="border-b border-line px-5 py-3">
-          <h3 id="plans-title" className="text-sm font-semibold">Plans</h3>
+          <h2 id="plans-title" className="text-sm font-semibold">Plans</h2>
         </div>
         <dl className="divide-y divide-line">
           {PLANS.map(([name, quota]) => (
@@ -113,7 +113,7 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
           ))}
         </dl>
         <div className="border-t border-line px-5 py-4">
-          <h4 className="text-xs font-medium">What every plan includes</h4>
+          <h3 className="text-xs font-medium">What every plan includes</h3>
           <ul className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
             {INCLUDED.map((line) => (
               <li key={line} className="flex gap-2"><span aria-hidden className="font-mono text-ok">✓</span>{line}</li>

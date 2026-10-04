@@ -14,12 +14,15 @@ export type Usage = {
     unmetered: boolean;
     month_start: string;
   };
-  window: { since: string; days: number };
+  window: { since: string; days: number; granularity?: "hour" | "day" };
   buckets: UsageBucket[];
 };
 
 /** A surface ("mcp:reconcile", "rest:stripe", "test:paypal") read as the
- *  channel a customer recognises. Order is the order lists show. */
+ *  channel a customer recognises. Order is the order lists show. The
+ *  prefixes mirror where the API meters: dashboard:* (okwan_api/admin.py),
+ *  mcp:* (okwan_query/mcp_http.py), rest:* (okwan_query/rest.py and
+ *  okwan_recon/emitters/rest.py), test:* (admin.py meter_test). */
 export const CHANNELS: { key: string; label: string; test: (s: string) => boolean }[] = [
   { key: "agents", label: "Agents over MCP", test: (s) => s.startsWith("mcp:") },
   { key: "rest", label: "REST and SQL", test: (s) => s.startsWith("rest:") },
@@ -32,7 +35,7 @@ export function channelOf(surface: string): { key: string; label: string } {
 }
 
 /** The UTC day of an ISO hour: "2026-10-03". */
-export function dayOf(iso: string): string {
+function dayOf(iso: string): string {
   return iso.slice(0, 10);
 }
 

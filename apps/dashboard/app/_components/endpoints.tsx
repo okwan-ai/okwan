@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { HOSTED_TOOL_NAMES } from "@/lib/hosted-tools";
 import { Button } from "./ui/button";
 import { CodeBlock, CopyButton } from "./ui/copy-button";
 import { Modal } from "./ui/dialog";
@@ -27,29 +28,27 @@ export function Endpoints({ apiBase }: { apiBase: string }) {
       <Button variant="secondary" onClick={() => setOpen(true)}>Endpoints</Button>
       <Modal open={open} onClose={() => setOpen(false)} title="Endpoints">
         <p className="text-sm text-ink-soft">What a client needs to reach Okwan directly. Every call takes a key for one merchant.</p>
-        <div role="tablist" aria-label="Endpoint" className="mt-3 flex gap-1 rounded-lg bg-canvas p-0.5 text-xs">
+        <div role="group" aria-label="Endpoint" className="mt-3 flex gap-1 rounded-lg bg-canvas p-0.5 text-xs">
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
-              role="tab"
-              aria-selected={tab === t.id}
+              aria-pressed={tab === t.id}
               onClick={() => setTab(t.id)}
-              className={`min-h-9 flex-1 rounded-md px-2 font-medium ${tab === t.id ? "bg-surface text-ink shadow-sm" : "text-ink-soft hover:text-ink"}`}
+              className={`min-h-9 flex-1 rounded-md border-b-2 px-2 font-medium ${tab === t.id ? "border-ink bg-surface text-ink shadow-sm" : "border-transparent text-ink-soft hover:text-ink"}`}
             >
               {t.label}
             </button>
           ))}
         </div>
-        <div role="tabpanel" className="mt-4 space-y-3 text-sm">
+        <div className="mt-4 space-y-3 text-sm">
           {tab === "mcp" && (
             <>
               <Field label="Remote MCP server (streamable HTTP)" value={`${apiBase}/mcp/`} />
               <Field label="Header" value="Authorization: Bearer okw_…" />
               <p className="text-xs text-ink-soft">
-                Four read-only tools: <code className="font-mono">okwan_list_reconciliations</code>, <code className="font-mono">okwan_reconcile</code>,{" "}
-                <code className="font-mono">okwan_describe_tables</code>, <code className="font-mono">okwan_query</code>. A client that can&apos;t send a
-                header can bridge with <code className="font-mono">mcp-remote</code> (see Client config below).
+                Four read-only tools: {HOSTED_TOOL_NAMES.map((n, i) => <span key={n}>{i > 0 && ", "}<code className="font-mono">{n}</code></span>)}. A client
+                that can&apos;t send a header can bridge with <code className="font-mono">mcp-remote</code>; the Claude Desktop recipe on MCP for agents shows how.
               </p>
             </>
           )}
@@ -87,7 +86,7 @@ function Field({ label, value, copy = true }: { label: string; value: string; co
     <div className="min-w-0">
       <p className="text-xs text-ink-soft">{label}</p>
       <div className="flex items-center gap-1">
-        <code className="min-w-0 flex-1 truncate rounded-md border border-line bg-canvas px-2 py-1.5 font-mono text-[12px]">{value}</code>
+        <code className="min-w-0 flex-1 rounded-md border border-line bg-canvas px-2 py-1.5 font-mono text-[12px] break-all">{value}</code>
         {copy && <CopyButton value={value} label={`Copy ${label}`} />}
       </div>
     </div>

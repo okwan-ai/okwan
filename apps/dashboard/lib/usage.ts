@@ -4,10 +4,11 @@ import { api, session, tenantTree } from "./api";
 import type { Usage } from "./usage-shape";
 
 /** GET /v1/tenants/{id}/usage: the plan the tenant is held to, the month so
- *  far, and the hourly counters for the window. Reading it is not metered.
+ *  far, and the counters for the window, summed per UTC day (all a chart
+ *  needs; bounds the response for a long window). Reading it is not metered.
  *  One call per tenant per render. */
 export const usageFor = cache(async (tenantId: string, days = 30) =>
-  api<Usage>(`/v1/tenants/${encodeURIComponent(tenantId)}/usage?days=${days}`, { session: await session() }),
+  api<Usage>(`/v1/tenants/${encodeURIComponent(tenantId)}/usage?days=${days}&granularity=day`, { session: await session() }),
 );
 
 /** The signed-in workspace's usage, or null when the API doesn't answer. */

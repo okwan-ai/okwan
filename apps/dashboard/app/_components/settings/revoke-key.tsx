@@ -36,10 +36,10 @@ export function RevokeKey() {
         Paste the key id (<code className="font-mono">key_…</code>) shown when it was issued. The key stops working on its
         next request. Issuing another key never revokes this one, so rotate by issuing first, then revoking.
       </p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <label className="min-w-0 flex-1">
-          <span className="sr-only">Key id</span>
-          <input name="key_id" required pattern="key_[A-Za-z0-9]+" className="field font-mono" placeholder="key_…" autoComplete="off" spellCheck={false} />
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <label className="min-w-0 flex-1 text-sm">
+          <span className="mb-1 block font-medium">Key id</span>
+          <input name="key_id" required pattern="key_[A-Za-z0-9]+" title="A key id starts with key_ followed by letters and digits" className="field font-mono" placeholder="key_…" autoComplete="off" spellCheck={false} />
         </label>
         <Button type="submit" variant="secondary" disabled={busy}>{busy ? "Revoking…" : "Revoke"}</Button>
       </div>

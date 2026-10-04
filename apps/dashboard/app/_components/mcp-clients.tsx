@@ -52,10 +52,10 @@ export function McpClients({ apiBase, server, initial }: { apiBase: string; serv
               tabIndex={active ? 0 : -1}
               onClick={() => choose(c.id)}
               onKeyDown={(e) => onKey(e, i)}
-              className={`min-h-9 rounded-md px-3 text-left text-sm font-medium ${active ? "bg-surface text-ink shadow-sm" : "text-ink-soft hover:text-ink"}`}
+              className={`min-h-9 rounded-md border-b-2 px-3 text-left text-sm font-medium ${active ? "border-ink bg-surface text-ink shadow-sm" : "border-transparent text-ink-soft hover:text-ink"}`}
             >
               {c.label}
-              <span className="block text-[11px] font-normal text-ink-soft">{c.via}</span>
+              <span className="block text-xs font-normal text-ink-soft">{c.via}</span>
             </button>
           );
         })}
@@ -98,7 +98,7 @@ export function McpClients({ apiBase, server, initial }: { apiBase: string; serv
 }
 
 /** `**strong**` and `` `code` `` only; nothing else is interpreted. */
-export function Rich({ text }: { text: string }): ReactNode {
+function Rich({ text }: { text: string }): ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
   return parts.map((p, i) => {
     if (p.startsWith("**")) return <strong key={i} className="font-semibold text-ink">{p.slice(2, -2)}</strong>;

@@ -49,7 +49,7 @@ export default async function CatalogPage() {
             <span aria-hidden className="font-mono">✎</span>.
           </>
         }
-        actions={<ButtonLink href={`${base}/docs`} target="_blank" rel="noopener">OpenAPI reference</ButtonLink>}
+        actions={<ButtonLink href={`${base}/docs`} target="_blank" rel="noopener">OpenAPI reference <span aria-hidden>↗</span><span className="sr-only">(opens in a new tab)</span></ButtonLink>}
       />
 
       <div className="grid gap-4">
@@ -90,7 +90,7 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
                 <li key={path} className="flex items-center gap-1">
                   <code className="min-w-0 truncate font-mono text-[12px]">{path}</code>
                   {write && (
-                    <span className="shrink-0 rounded-full border border-ink-soft/50 px-1.5 font-mono text-[10px] text-ink" title="Not read-only: this operation changes something on the rail.">
+                    <span className="shrink-0 rounded-full border border-ink-soft/50 px-1.5 font-mono text-[11px] text-ink" title="Not read-only: this operation changes something on the rail.">
                       ✎ <span className="font-sans">write</span>
                     </span>
                   )}
@@ -129,7 +129,7 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
             {resources.flatMap(([res, ops]) => ops.map((op) => (
               <li key={`${res}-${op}`}>
                 <code className="font-mono">{`${c.name}_${res}_${op}`}</code> <span className="text-ink-soft">SDK</span>
-                {writes.has(`${res}.${op}`) && <span className="ml-1 font-mono text-[10px]" title="Not read-only">✎</span>}
+                {writes.has(`${res}.${op}`) && <span className="ml-1 font-mono text-[11px] text-ink" title="Not read-only: this operation changes something on the rail.">✎ <span className="font-sans">write</span></span>}
               </li>
             )))}
           </ul>

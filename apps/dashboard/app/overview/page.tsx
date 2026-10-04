@@ -49,15 +49,19 @@ async function OverviewBody() {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
   }
   const checked = runs.filter((r) => r.state === "ok");
-  // Any request over MCP in the window proves a key was issued and an agent
-  // connected with it: the meter confirms what the API can't list.
-  const agentSeen = Boolean(usage?.buckets.some((b) => b.surface.startsWith("mcp:")));
-  const steps = setupSteps(runs, agentSeen);
+  // The meter confirms what the API can't list: any request on a key-only
+  // surface (REST, SQL, MCP) proves a key was issued; one over MCP proves an
+  // agent connected with it. A confirmation sticks (Step.sticky) so a quiet
+  // month doesn't undo it.
+  const surfaces = usage?.buckets.map((b) => b.surface) ?? [];
+  const keySeen = surfaces.some((s) => s.startsWith("mcp:") || s.startsWith("rest:"));
+  const agentSeen = surfaces.some((s) => s.startsWith("mcp:"));
+  const steps = setupSteps(runs, keySeen, agentSeen);
   const readyNow = runs.filter((r) => eligible(r.merchant)).length;
   const strip = (
     <PlanStrip
       usage={usage}
-      spend={`A load of this page checks each ready merchant once (${readyNow} ready now); each check is one request.`}
+      spend={`A load of this page checks each ready merchant at most once per 10 minutes (${readyNow} ready now); each check is one request.`}
     />
   );
 
@@ -345,7 +349,7 @@ function FailedNote({ runs }: { runs: MerchantRun[] }) {
   );
 }
 
-function setupSteps(runs: MerchantRun[], agentSeen: boolean): Step[] {
+function setupSteps(runs: MerchantRun[], keySeen: boolean, agentSeen: boolean): Step[] {
   const first = runs[0]?.merchant;
   const closest = [...runs].map((r) => r.merchant).sort((a, b) => missingFor(a).length - missingFor(b).length)[0];
   const ready = runs.find((r) => eligible(r.merchant))?.merchant;
@@ -364,8 +368,8 @@ function setupSteps(runs: MerchantRun[], agentSeen: boolean): Step[] {
       done: Boolean(ready),
     },
     { id: "run", label: "Run the first check", href: ready ? at(ready.tenant.id) : "/merchants", done: runs.some((r) => r.state === "ok") },
-    { id: "key", label: "Issue an API key for a merchant", href: first ? at(first.tenant.id, "keys") : "/key", done: agentSeen ? true : null },
-    { id: "mcp", label: "Connect an agent over MCP", hint: "Confirmed by the first request an agent makes.", href: "/mcp", done: agentSeen ? true : null },
+    { id: "key", label: "Issue an API key for a merchant", hint: "Confirmed by the first request made with one.", href: first ? at(first.tenant.id, "keys") : "/key", done: keySeen ? true : null, sticky: true },
+    { id: "mcp", label: "Connect an agent over MCP", hint: "Confirmed by the first request an agent makes.", href: "/mcp", done: agentSeen ? true : null, sticky: true },
   ];
 }
 

@@ -43,7 +43,7 @@ async function FindingsBody() {
       <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
       <PlanStrip
         usage={usage}
-        spend={`A load of this page checks each ready merchant once (${runs.filter((r) => eligible(r.merchant)).length} ready now); each check is one request.`}
+        spend={`A load of this page checks each ready merchant at most once per 10 minutes (${runs.filter((r) => eligible(r.merchant)).length} ready now); each check is one request.`}
       />
       <p className="mb-4 text-sm text-ink-soft">
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
