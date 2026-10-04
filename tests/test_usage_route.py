@@ -151,3 +151,47 @@ async def test_window_bounds(client, tree):
         r = client.get(f"/v1/tenants/{tree['isv'].id}/usage", params={"days": days},
                        headers=tree["isv_auth"])
         assert r.status_code == 422, days
+
+
+# ── the window is calendar days; a day granularity sums the hours ──
+
+async def test_an_unknown_tenant_reads_like_a_foreign_one(client, tree):
+    """Same status and body as a tenant outside the subtree, so the route
+    cannot be used to tell a real id from a made-up one."""
+    foreign = client.get(f"/v1/tenants/{tree['other'].id}/usage", headers=tree["isv_auth"])
+    unknown = client.get("/v1/tenants/ten_nope/usage", headers=tree["isv_auth"])
+    assert foreign.status_code == unknown.status_code == 404
+    assert unknown.json()["detail"] == "no such tenant: ten_nope"
+    assert foreign.json()["detail"] == f"no such tenant: {tree['other'].id}"
+
+
+async def test_window_is_calendar_days_ending_today(client, store, tree):
+    """days=7 is seven UTC dates: the first midnight is in, the hour
+    before it is out, whatever the time of day now."""
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    first = today - timedelta(days=6)
+    store._usage[(tree["m2"].id, first, "rest:query")] = 5
+    store._usage[(tree["m2"].id, first - timedelta(hours=1), "rest:query")] = 9
+    r = client.get(f"/v1/tenants/{tree['m2'].id}/usage?days=7", headers=tree["isv_auth"])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["window"] == {"since": first.isoformat(), "days": 7, "granularity": "hour"}
+    hours = {b["hour"]: b["requests"] for b in body["buckets"] if b["surface"] == "rest:query"}
+    assert hours == {first.isoformat(): 5}
+
+
+async def test_day_granularity_sums_each_days_hours(client, store, tree):
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    store._usage[(tree["m2"].id, today, "rest:query")] = 2
+    store._usage[(tree["m2"].id, today + timedelta(hours=3), "rest:query")] = 4
+    store._usage[(tree["m2"].id, today + timedelta(hours=3), "mcp:query")] = 1
+    hourly = client.get(f"/v1/tenants/{tree['m2'].id}/usage?days=1", headers=tree["isv_auth"]).json()
+    daily = client.get(f"/v1/tenants/{tree['m2'].id}/usage?days=1&granularity=day", headers=tree["isv_auth"]).json()
+    assert daily["window"]["granularity"] == "day"
+    assert sum(b["requests"] for b in daily["buckets"]) == sum(b["requests"] for b in hourly["buckets"])
+    by = {(b["hour"], b["surface"]): b["requests"] for b in daily["buckets"]}
+    assert by[(today.isoformat(), "rest:query")] == 6
+    assert by[(today.isoformat(), "mcp:query")] == 1
+    assert all(b["hour"] == today.isoformat() for b in daily["buckets"])
+    r = client.get(f"/v1/tenants/{tree['m2'].id}/usage?granularity=week", headers=tree["isv_auth"])
+    assert r.status_code == 422
