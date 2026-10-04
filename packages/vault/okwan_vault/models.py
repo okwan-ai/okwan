@@ -45,6 +45,36 @@ class ApiKey:
 
 
 @dataclass(frozen=True, slots=True)
+class RunRecord:
+    """One reconciliation run as a tenant, on any surface.
+
+    `rows` holds the trimmed rows okwan_recon produces (what a page
+    renders), never raw rail records; None when a listing left them out or
+    the run failed. `error` is scrubbed of stored values and cut to 300
+    characters.
+    """
+
+    id: str
+    tenant_id: str
+    #: across | pair
+    kind: str
+    name: str
+    #: dashboard | rest | mcp
+    surface: str
+    #: ok | failed
+    status: str
+    started_at: datetime
+    finished_at: datetime
+    summary: dict | None = None
+    rows: list | None = None
+    error: str | None = None
+
+
+#: Runs kept per (tenant, kind, name); older ones are pruned on insert.
+RUNS_KEPT = 50
+
+
+@dataclass(frozen=True, slots=True)
 class SealedCredential:
     tenant_id: str
     connector: str

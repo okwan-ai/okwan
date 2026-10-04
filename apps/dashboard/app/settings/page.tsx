@@ -84,11 +84,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               (today, WhatsApp&apos;s two send operations). No surface can move money on a payment rail. A test holds the gate:
               every route outside a named public list must take a key or a session.
             </Row>
-            {/* Changes the day results are persisted (OKWAN_PROJECT.md §10). */}
             <Row label="Results">
-              A check is read, shown and forgotten. A result is reused for ten minutes in the dashboard server&apos;s memory and
-              never written down. Rows are trimmed on the server, so a customer&apos;s fields on a rail record never reach a
-              browser.
+              Every run is stored: its summary and, per order, the verdict, the order reference, currency, totals and what each
+              rail took. A rail record is never written, so a customer&apos;s fields on it reach neither the database nor a
+              browser. The newest 50 runs per merchant and check are kept (okwan_vault RUNS_KEPT); older ones are removed as
+              new ones arrive.
             </Row>
             <Row label="Errors">
               A failed connection test or run shows the upstream message with the stored values that call could have sent

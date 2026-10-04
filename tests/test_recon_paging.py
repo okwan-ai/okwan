@@ -274,3 +274,14 @@ async def test_hosted_pages_with_a_cursor(monkeypatch):
     second = await tool(ctx=None, name=PAIR.name, limit=2, cursor=first["next_cursor"])
     assert len(first["rows"]) == 2 and len(second["rows"]) == 1
     assert second["has_more"] is False
+
+
+def test_fingerprint_tells_trimmed_rows_apart_by_reference():
+    """A trimmed row names its sides by reference, not record; two results
+    that differ only in which order a row is about must not share a cursor."""
+    from okwan_recon.paging import fingerprint
+
+    a = [{"status": "unmatched_left", "left_ref": "#1", "right_ref": None}]
+    b = [{"status": "unmatched_left", "left_ref": "#2", "right_ref": None}]
+    assert fingerprint(a) != fingerprint(b)
+    assert fingerprint(a) == fingerprint([dict(a[0])])

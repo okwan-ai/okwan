@@ -2,10 +2,10 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { apiUrl } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
-import { attentionRows, caveats, checkedAgo, digest, eligible, oldestAt, runAll, seenFindings } from "@/lib/runs";
-import { ReportRuns } from "@/lib/tab-results";
+import { attentionRows, caveats, eligible, oldestAt, ranAgo, storedRuns } from "@/lib/runs";
 import { myUsage } from "@/lib/usage";
 import { FindingsTable } from "../_components/findings-table";
+import { RunAll } from "../_components/run-all";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
 import { PlanStrip } from "../_components/usage/plan-strip";
@@ -21,7 +21,8 @@ export default async function FindingsPage() {
     <>
       <PageHeader
         title="Findings"
-        description="Every order collected twice, not adding up across rails, or unpaid, across every merchant ready for a check. Filter, then export the worksheet for refunds. Checked when this page loads and reused for up to 10 minutes; not saved. A single rail that took less than the order isn't flagged yet; the money trail on the merchant page shows it."
+        description="Every order collected twice, not adding up across rails, or unpaid, from each merchant's newest stored run. Filter, then export the worksheet for refunds. Opening this page runs nothing; Run all checks each ready merchant once and stores the result. A single rail that took less than the order isn't flagged yet; the money trail on the merchant page shows it."
+        actions={<Suspense><RunAllReady /></Suspense>}
       />
       <Suspense fallback={<FindingsSkeleton />}>
         <FindingsBody />
@@ -30,8 +31,14 @@ export default async function FindingsPage() {
   );
 }
 
+async function RunAllReady() {
+  const runs = await storedRuns();
+  const ready = (runs ?? []).filter((r) => eligible(r.merchant)).map((r) => ({ id: r.merchant.tenant.id, name: r.merchant.tenant.name }));
+  return <RunAll merchants={ready} variant="secondary" />;
+}
+
 async function FindingsBody() {
-  const [runs, usage] = await Promise.all([runAll(), myUsage(30)]);
+  const [runs, usage] = await Promise.all([storedRuns(), myUsage(30)]);
   if (!runs) return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
   const rows = attentionRows(runs);
   const checked = runs.filter((r) => r.state === "ok");
@@ -40,15 +47,14 @@ async function FindingsBody() {
 
   return (
     <>
-      <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
       <PlanStrip
         usage={usage}
-        spend={`A load of this page checks each ready merchant at most once per 10 minutes (${runs.filter((r) => eligible(r.merchant)).length} ready now); each check is one request.`}
+        spend={`Opening this page runs nothing. Run all checks each ready merchant once (${runs.filter((r) => eligible(r.merchant)).length} ready now); each check is one request.`}
       />
       <p className="mb-4 text-sm text-ink-soft">
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
         {skipped > 0 && <> · {skipped} not ready (a check needs Shopify, PayPal and Stripe)</>}
-        {checked.length > 0 && <> · {checkedAgo(oldestAt(runs))}</>}
+        {checked.length > 0 && <> · <span suppressHydrationWarning>{ranAgo(oldestAt(runs)).toLowerCase()}{checked.length > 1 ? " (oldest)" : ""}</span></>}
         {usage && !usage.plan.unmetered && (
           <> · <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">{usage.plan.used.toLocaleString("en-US")} of {usage.plan.limit.toLocaleString("en-US")} requests this month</Link></>
         )}
@@ -76,15 +82,17 @@ async function FindingsBody() {
       {checked.length === 0 ? (
         <EmptyState
           icon={<IconAlert />}
-          title="Nothing checked yet"
+          title="No run yet"
           benefits={[
             "Every order collected twice, with the amount owed back",
             "Orders where the rails don't add up to the order total",
             "Orders with no payment on any rail, ready to export for refunds",
           ]}
-          action={<ButtonLink href="/merchants" variant="primary">Go to merchants</ButtonLink>}
+          action={runs.some((r) => eligible(r.merchant))
+            ? <RunAll merchants={runs.filter((r) => eligible(r.merchant)).map((r) => ({ id: r.merchant.tenant.id, name: r.merchant.tenant.name }))} />
+            : <ButtonLink href="/merchants" variant="primary">Go to merchants</ButtonLink>}
         >
-          A merchant is checked once Shopify, PayPal and Stripe are all connected.
+          A merchant can be run once Shopify, PayPal and Stripe are all connected. Every run is stored and shown here.
         </EmptyState>
       ) : (
         <FindingsTable

@@ -2,8 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { OUTCOME_LABEL, OUTCOME_MARK, verdictOf } from "@/lib/finding";
-import { useTabFindings, useTabResults } from "@/lib/tab-results";
+import { OUTCOME_LABEL, OUTCOME_MARK, type RunDigest, type SeenFinding, verdictOf } from "@/lib/finding";
 import type { MerchantLink } from "./sidebar";
 import { useDialog } from "./ui/dialog";
 import { IconSearch } from "./ui/icons";
@@ -11,9 +10,9 @@ import { IconSearch } from "./ui/icons";
 type Command = { id: string; group: string; label: string; hint?: string; href: string; keywords?: string };
 
 const PAGES: Command[] = [
-  { id: "p-overview", group: "Pages", label: "Overview", hint: "checks merchants", href: "/overview", keywords: "home dashboard verdict" },
-  { id: "p-findings", group: "Pages", label: "Findings", hint: "checks merchants", href: "/findings", keywords: "collected twice refunds issues" },
-  { id: "p-twice", group: "Pages", label: "Findings: collected twice", hint: "checks merchants", href: "/findings?outcome=collected_twice", keywords: "double refund owed" },
+  { id: "p-overview", group: "Pages", label: "Overview", href: "/overview", keywords: "home dashboard verdict" },
+  { id: "p-findings", group: "Pages", label: "Findings", href: "/findings", keywords: "collected twice refunds issues" },
+  { id: "p-twice", group: "Pages", label: "Findings: collected twice", href: "/findings?outcome=collected_twice", keywords: "double refund owed" },
   { id: "p-merchants", group: "Pages", label: "Merchants", href: "/merchants", keywords: "tenants stores" },
   { id: "p-keys", group: "Pages", label: "API keys", href: "/key", keywords: "token secret" },
   { id: "p-mcp", group: "Pages", label: "MCP for agents", href: "/mcp", keywords: "claude agent tools" },
@@ -35,20 +34,23 @@ export function openPalette() {
 
 /**
  * ⌘K / Ctrl-K (or "/" outside a field): jump to a page, a merchant, a
- * merchant's tab or an order. Opening Overview or Findings checks every
- * ready merchant (one metered request each, reused for 10 minutes); the
- * palette says so beside them. Nothing else here starts a run.
+ * merchant's tab or an order. Verdicts and orders come from stored runs
+ * the layout read; nothing here starts a run.
  * An ARIA combobox: the input owns a listbox, arrows move the active
  * option, Enter follows it, Escape closes.
  */
-export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
+export function CommandPalette({ merchants, verdicts, findings }: {
+  merchants: MerchantLink[];
+  verdicts: Record<string, RunDigest>;
+  findings: SeenFinding[];
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const panel = useDialog(open, () => setOpen(false));
-  const results = useTabResults();
-  const seen = useTabFindings();
+  const results = verdicts;
+  const seen = findings;
   const list = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -90,11 +92,11 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
     }),
   ], [merchants, results]);
 
-  // Orders: findings this tab has seen, matched on the order number.
+  // Orders: open findings in the stored runs, matched on the order number.
   const orders = useMemo<Command[]>(() => {
     const term = q.trim().toLowerCase().replace(/^#/, "");
     if (!/\d/.test(term)) return [];
-    return Object.values(seen).flat()
+    return seen
       .filter((f) => f.order.toLowerCase().replace(/^#/, "").includes(term))
       .slice(0, 8)
       .map((f) => ({
@@ -209,11 +211,11 @@ export function CommandPalette({ merchants }: { merchants: MerchantLink[] }) {
         <p role="status" className={shown.length ? "sr-only" : "px-4 py-6 text-center text-sm text-ink-soft"}>
           {shown.length
             ? `${shown.length} result${shown.length === 1 ? "" : "s"}`
-            : <>Nothing matches “{q}”.{/\d/.test(q) ? " Orders are searchable once Overview or Findings has loaded in this tab." : ""}</>}
+            : <>Nothing matches “{q}”.{/\d/.test(q) ? " Orders come from each merchant's newest stored run." : ""}</>}
         </p>
         <p className="border-t border-line px-4 py-2 text-[11px] text-ink-soft">
-          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · Overview and Findings check merchants
-          when opened (one request each, reused for 10 minutes)
+          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · verdicts and orders come from each
+          merchant&apos;s newest stored run; nothing here runs a check
         </p>
       </div>
     </div>
