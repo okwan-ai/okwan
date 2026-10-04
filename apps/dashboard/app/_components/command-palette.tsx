@@ -211,11 +211,11 @@ export function CommandPalette({ merchants, verdicts, findings }: {
         <p role="status" className={shown.length ? "sr-only" : "px-4 py-6 text-center text-sm text-ink-soft"}>
           {shown.length
             ? `${shown.length} result${shown.length === 1 ? "" : "s"}`
-            : <>Nothing matches “{q}”.{/\d/.test(q) ? " Orders are searchable once Overview or Findings has loaded in this tab." : ""}</>}
+            : <>Nothing matches “{q}”.{/\d/.test(q) ? " Orders come from each merchant's newest stored run." : ""}</>}
         </p>
         <p className="border-t border-line px-4 py-2 text-[11px] text-ink-soft">
-          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · Overview and Findings check merchants
-          when opened (one request each, reused for 10 minutes)
+          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · verdicts and orders come from each
+          merchant&apos;s newest stored run; nothing here runs a check
         </p>
       </div>
     </div>

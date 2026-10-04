@@ -41,15 +41,9 @@ export function missingFor(m: { ready: string[] }): string[] {
   return FOLD_READS.filter((c) => !m.ready.includes(c));
 }
 
-/** Non-clean outcomes, in the order the table leads with them. */
-export const NEEDS_LOOK = ["collected_twice", "collected_inconsistent", "uncollected", "unverifiable"];
-
 /** Outcomes that are a finding about money, not about what could be read:
  * what Overview and Findings list as needing attention. */
 export const ATTENTION = ["collected_twice", "collected_inconsistent", "uncollected"];
-
-/** Clean outcomes, after every non-clean one. */
-const CLEAN = ["split_tender", "collected"];
 
 /** Symbol + label, never colour alone. */
 export const OUTCOME_MARK: Record<string, string> = {
@@ -172,8 +166,6 @@ export type Summary = {
 export type FindingRow = {
   outcome: string;
   order: string;
-  /** Set by a page comparing this run with the one before it. */
-  isNew?: boolean;
   currency: string | null;
   total_minor: number | null;
   collected_minor: number | null;
@@ -205,17 +197,14 @@ export type ApiRow = {
   rails: { rail: string; status: string; collected_minor: number | null; currency: string | null }[];
 };
 
-/** A run's rows: `data` from the session run route, `rows` from a stored run. */
-export type AcrossPage = { summary: Summary; data?: ApiRow[]; rows?: ApiRow[]; has_more: boolean };
+/** A run's rows: `data` from the session run route, `rows` from a stored
+ *  run. Both arrive worst outcome first, largest order first within one
+ *  (okwan_recon `trimmed_rows`), and both carry `twice_currency` as the
+ *  API decides it (okwan_api/runs.py `twice_currency`). */
+export type AcrossPage = { summary: Summary; data?: ApiRow[]; rows?: ApiRow[]; has_more: boolean; twice_currency?: string | null };
 
 export function toFinding(page: AcrossPage): Finding {
-  const order = [...NEEDS_LOOK, ...CLEAN];
-  const rank = (o: string) => order.indexOf(o);
   const rows = (page.data ?? page.rows ?? [])
-    .filter((r) => rank(r.outcome) >= 0)
-    // Worst outcome first, clean ones last; within one, the largest order first.
-    .sort((a, b) => rank(a.outcome) - rank(b.outcome)
-      || (b.order_total_minor ?? 0) - (a.order_total_minor ?? 0))
     .map((r) => ({
       outcome: r.outcome,
       order: r.order.ref ?? "—",
@@ -229,15 +218,14 @@ export function toFinding(page: AcrossPage): Finding {
         .filter((v) => v.status === "matched")
         .map((v) => ({ rail: v.rail, minor: v.collected_minor, currency: v.currency })),
     }));
-  const twiceRows = rows.filter((r) => r.outcome === "collected_twice");
-  const twice = new Set(twiceRows.map((r) => r.currency));
   return {
     summary: page.summary,
     rows,
     partial: page.has_more,
-    // A currency only when every collected-twice order is on this page and
-    // they share one; otherwise the total can't be labelled with confidence.
-    twice_currency: twice.size === 1 && twiceRows.length === page.summary.collected_twice ? [...twice][0] : null,
+    // The API labels the collected-twice total with a currency only when
+    // every such order is on hand and they share one; the dashboard does
+    // not decide this twice.
+    twice_currency: page.twice_currency ?? null,
   };
 }
 
@@ -251,12 +239,6 @@ export function unconfirmedRows(f: Finding): number {
 export function truncated(f: Finding): boolean {
   return Boolean(f.summary.ledger_coverage?.truncated)
     || Object.values(f.summary.rails).some((r) => r.coverage?.truncated);
-}
-
-export function checkedAgo(at: number | null, now = Date.now()): string {
-  if (at === null) return "";
-  const min = Math.floor((now - at) / 60000);
-  return min < 1 ? "Checked just now" : `Checked ${min} min ago`;
 }
 
 /** "just now", "12 min ago", "3 h ago", "2 days ago": how old a stored
@@ -275,9 +257,6 @@ export function ago(at: number | null, now = Date.now()): string {
 export function ranAgo(at: number | null, now = Date.now()): string {
   return at === null ? "Never run" : `Last run ${ago(at, now)}`;
 }
-
-/** A stored run older than this is called stale where it is shown. */
-export const STALE_MS = 24 * 60 * 60 * 1000;
 
 /** How a stored run reads in a list: "dashboard · 2 days ago". */
 export const SURFACE_LABEL: Record<string, string> = { dashboard: "Dashboard", rest: "REST", mcp: "Agent (MCP)" };
@@ -309,6 +288,8 @@ export type RunDigest = {
   ok: boolean;
   /** When the run finished (ms epoch). */
   at: number;
+  /** dashboard · rest · mcp */
+  surface?: string;
   /** Findings: collected twice, doesn't add up, no payment. */
   open: number;
   twice: number;

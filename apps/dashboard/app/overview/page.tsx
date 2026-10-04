@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { apiUrl } from "@/lib/api";
-import { FOLD_READS, missingFor, railLabel, unconfirmedRows } from "@/lib/finding";
+import { FOLD_READS, missingFor, railLabel, SURFACE_LABEL, unconfirmedRows } from "@/lib/finding";
 import { requireTenant } from "@/lib/guard";
 import { formatMinor } from "@/lib/money";
 import {
@@ -53,8 +53,9 @@ export default async function OverviewPage() {
 async function RunAllReady() {
   const runs = await storedRuns();
   const ready = (runs ?? []).filter((r) => eligible(r.merchant)).map((r) => ({ id: r.merchant.tenant.id, name: r.merchant.tenant.name }));
-  const anyRun = (runs ?? []).some((r) => r.state === "ok" || r.state === "failed");
-  return <RunAll merchants={ready} variant={anyRun ? "secondary" : "primary"} />;
+  // Secondary always: the hero figure or the setup checklist's next step
+  // carries the view's one volt element (§2).
+  return <RunAll merchants={ready} variant="secondary" />;
 }
 
 async function OverviewBody() {
@@ -328,10 +329,7 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
 
 /** "Last run 2 days ago · agent", "Not run yet", or why it can't run. */
 function lastRunLine(r: MerchantRun): string {
-  if (r.state === "ok" || r.state === "failed") {
-    const via = { dashboard: "dashboard", rest: "REST", mcp: "agent" }[r.surface] ?? r.surface;
-    return `${ranAgo(r.at)} · ${via}`;
-  }
+  if (r.state === "ok" || r.state === "failed") return `${ranAgo(r.at)} · ${SURFACE_LABEL[r.surface] ?? r.surface}`;
   return r.state === "none" ? "Not run yet" : "Not ready";
 }
 

@@ -48,7 +48,7 @@ export default async function MerchantLayout({
   // The newest stored run for this merchant: a read, never a run.
   const last = latest?.[id] ?? null;
   const initial = last && last.status === "ok" && last.summary
-    ? { finding: toFinding({ summary: last.summary, rows: last.rows ?? [], has_more: last.has_more ?? false }), at: Date.parse(last.finished_at), runId: last.id, surface: last.surface }
+    ? { finding: toFinding({ summary: last.summary, rows: last.rows ?? [], has_more: last.has_more ?? false, twice_currency: last.twice_currency }), at: Date.parse(last.finished_at), runId: last.id, surface: last.surface }
     : null;
   const initialError = last && last.status === "failed" ? { detail: last.error ?? "the run failed", at: Date.parse(last.finished_at) } : null;
 

@@ -87,7 +87,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <Row label="Results">
               Every run is stored: its summary and, per order, the verdict, the order reference, currency, totals and what each
               rail took. A rail record is never written, so a customer&apos;s fields on it reach neither the database nor a
-              browser. The newest 50 runs per merchant and check are kept; older ones are removed as new ones arrive.
+              browser. The newest 50 runs per merchant and check are kept (okwan_vault RUNS_KEPT); older ones are removed as
+              new ones arrive.
             </Row>
             <Row label="Errors">
               A failed connection test or run shows the upstream message with the stored values that call could have sent

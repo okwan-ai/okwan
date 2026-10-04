@@ -78,7 +78,8 @@ export default async function MerchantPage({
   // Findings: the newest stored run (held by the layout's provider), or one
   // chosen from the history (?run=). Findings absent from the run before
   // the shown one are marked new.
-  const history = (await runHistory(id, 20)) ?? [];
+  // The API keeps the newest 50 (okwan_vault RUNS_KEPT) and lists at most 50.
+  const history = (await runHistory(id, 50)) ?? [];
   const shownId = runParam && history.some((r) => r.id === runParam) ? runParam : (history[0]?.id ?? null);
   const index = history.findIndex((r) => r.id === shownId);
   const previousId = index >= 0 ? history.slice(index + 1).find((r) => r.status === "ok")?.id ?? null : null;
@@ -87,18 +88,21 @@ export default async function MerchantPage({
     previousId ? storedRun(id, previousId) : Promise.resolve(null),
   ]);
   const view = chosen && chosen.status === "ok" && chosen.summary
-    ? { finding: toFinding({ summary: chosen.summary, rows: chosen.rows ?? [], has_more: chosen.has_more ?? false }), at: Date.parse(chosen.finished_at), runId: chosen.id, surface: chosen.surface }
+    ? { finding: toFinding({ summary: chosen.summary, rows: chosen.rows ?? [], has_more: chosen.has_more ?? false, twice_currency: chosen.twice_currency }), at: Date.parse(chosen.finished_at), runId: chosen.id, surface: chosen.surface }
     : null;
+  // An older run that failed shows its error, not the newest result.
+  const viewError = chosen && chosen.status === "failed" ? { detail: chosen.error ?? "the run failed", at: Date.parse(chosen.finished_at) } : null;
   const before = new Set(
     previous?.summary ? toFinding({ summary: previous.summary, rows: previous.rows ?? [], has_more: false }).rows.filter((r) => ATTENTION.includes(r.outcome)).map(rowKey) : [],
   );
-  const shownRows = view?.finding.rows ?? (history[0]?.status === "ok" && history[0].summary
-    ? toFinding({ summary: history[0].summary, rows: (await storedRun(id, history[0].id))?.rows ?? [], has_more: false }).rows
+  const newest = !chosen && history[0]?.status === "ok" && history[0].summary ? history[0] : null;
+  const shownRows = view?.finding.rows ?? (newest
+    ? toFinding({ summary: newest.summary!, rows: (await storedRun(id, newest.id))?.rows ?? [], has_more: false }).rows
     : []);
   const newKeys = previous ? shownRows.filter((r) => ATTENTION.includes(r.outcome)).map(rowKey).filter((k) => !before.has(k)) : [];
   return (
     <div className="space-y-6">
-      <FindingsPanel apiBase={apiUrl()} view={view} newKeys={newKeys} />
+      <FindingsPanel apiBase={apiUrl()} view={view} viewError={viewError} newKeys={newKeys} />
       <RunHistory runs={history} selected={shownId} href={(runId) => (runId ? `?run=${encodeURIComponent(runId)}` : "?tab=findings")} />
     </div>
   );

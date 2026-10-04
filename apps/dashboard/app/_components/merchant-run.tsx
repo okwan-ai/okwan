@@ -27,6 +27,9 @@ type RunState = {
   error: { status: number; detail: string; at: number | null } | null;
   /** Rails the fold reads that this merchant hasn't connected. */
   missing: string[];
+  /** The id of the run this page made, so its result can settle into
+   *  place once; a stored run shown on load does not animate. */
+  justRan: string | null;
   run: () => Promise<void>;
 };
 
@@ -60,6 +63,7 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState<Shown | null>(initial);
   const [error, setError] = useState<RunState["error"]>(initialError ? { status: 0, ...initialError } : null);
+  const [justRan, setJustRan] = useState<string | null>(null);
   // Spoken progress: a run takes seconds and ends somewhere else on the page.
   const [said, setSaid] = useState("");
 
@@ -82,6 +86,7 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
     }
     const f = data as Finding & { run_id: string | null; at: number };
     setShown({ finding: f, at: f.at ?? Date.now(), runId: f.run_id ?? null, surface: "dashboard" });
+    setJustRan(f.run_id ?? null);
     const twice = f.summary.collected_twice;
     setSaid(`Run finished and stored: ${f.summary.orders} orders checked, ${twice} collected twice${
       twice && f.twice_currency ? ` (${formatMinor(f.summary.collected_twice_minor, f.twice_currency)})` : ""}.`);
@@ -91,7 +96,7 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
   }, [tenantId, fold, router]);
 
   return (
-    <Ctx.Provider value={{ tenantId, tenantName, busy, shown, error, missing, run }}>
+    <Ctx.Provider value={{ tenantId, tenantName, busy, shown, error, missing, justRan, run }}>
       <p role="status" className="sr-only">{said}</p>
       {children}
     </Ctx.Provider>
@@ -103,7 +108,8 @@ export function RunButton() {
   const { busy, shown, missing, run } = useMerchantRun();
   const router = useRouter();
   const path = usePathname();
-  const tab = useSearchParams().get("tab");
+  const params = useSearchParams();
+  const tab = params.get("tab");
   // A run with a rail missing fails on the API (and would read as a broken
   // product); lead to what's missing instead.
   if (missing.length && !shown) {
@@ -122,7 +128,9 @@ export function RunButton() {
       disabled={busy}
       aria-busy={busy}
       onClick={() => {
-        if (tab && tab !== "findings") router.push(path, { scroll: false });
+        // Back to the newest result: another tab, or an older run (?run=)
+        // chosen from the history, would otherwise hide what this run finds.
+        if ((tab && tab !== "findings") || params.get("run")) router.push(path, { scroll: false });
         void run();
       }}
     >
