@@ -29,9 +29,6 @@ from .scrub import scrub, secrets_of
 
 logger = logging.getLogger(__name__)
 
-SURFACES = ("dashboard", "rest", "mcp")
-
-
 def run_clock() -> datetime:
     """When a run started, on the API's clock, tz-aware."""
     return datetime.now(UTC)
@@ -81,16 +78,21 @@ def run_total(rec: RunRecord) -> int | None:
     )
 
 
-def twice_currency(rec: RunRecord) -> str | None:
-    """The one currency of the collected-twice orders, when they share one,
-    so a listing can price the finding without carrying the rows."""
-    if rec.kind != "across" or not rec.rows:
+def twice_currency(rows: list | None, summary: dict | None) -> str | None:
+    """The one currency the collected-twice orders share, else None: when
+    any such order has no currency, when they differ, or when the rows on
+    hand do not hold every collected-twice order the summary counts (the
+    total could not then be labelled). Defined here, once; the dashboard
+    reads it rather than recomputing."""
+    if not rows or not summary:
         return None
-    currencies = {
-        (r.get("order") or {}).get("currency") for r in rec.rows if r.get("outcome") == "collected_twice"
-    }
-    currencies.discard(None)
-    return currencies.pop() if len(currencies) == 1 else None
+    twice = [r for r in rows if r.get("outcome") == "collected_twice"]
+    if not twice or len(twice) < (summary.get("collected_twice") or 0):
+        return None
+    currencies = {(r.get("order") or {}).get("currency") for r in twice}
+    if None in currencies or len(currencies) != 1:
+        return None
+    return currencies.pop()
 
 
 def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
@@ -108,7 +110,7 @@ def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
         "summary": rec.summary,
         "error": rec.error,
         "rows_total": total,
-        "twice_currency": twice_currency(rec),
+        "twice_currency": twice_currency(rec.rows, rec.summary) if rec.kind == "across" else None,
     }
     if with_rows:
         rows = rec.rows or []
