@@ -81,6 +81,18 @@ def run_total(rec: RunRecord) -> int | None:
     )
 
 
+def twice_currency(rec: RunRecord) -> str | None:
+    """The one currency of the collected-twice orders, when they share one,
+    so a listing can price the finding without carrying the rows."""
+    if rec.kind != "across" or not rec.rows:
+        return None
+    currencies = {
+        (r.get("order") or {}).get("currency") for r in rec.rows if r.get("outcome") == "collected_twice"
+    }
+    currencies.discard(None)
+    return currencies.pop() if len(currencies) == 1 else None
+
+
 def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
     """The record as the API returns it. A listing leaves the rows out."""
     total = run_total(rec)
@@ -96,6 +108,7 @@ def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
         "summary": rec.summary,
         "error": rec.error,
         "rows_total": total,
+        "twice_currency": twice_currency(rec),
     }
     if with_rows:
         rows = rec.rows or []
