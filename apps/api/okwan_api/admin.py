@@ -32,7 +32,7 @@ from okwan_core import get as get_connector
 from okwan_recon.across import OUTCOMES, run_across
 from okwan_recon.emitters.mcp import paged
 from okwan_recon.emitters.rest import mapped, rest_page, vault_resolver
-from okwan_recon.engine import STATUSES
+from okwan_recon.engine import STATUSES, ref_paths
 from okwan_recon.paging import DEFAULT_ROWS, MAX_ROWS
 from okwan_recon.registry import get as get_reconciliation
 from okwan_recon.registry import get_across
@@ -42,6 +42,9 @@ from okwan_vault.usage import month_start
 
 from .auth import admin_actor, check_quota, get_store, meter, quota_for
 from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
+from .runs import record_run, run_clock, run_dict
+from .scrub import scrub as _scrub
+from .scrub import secrets_of as _secrets_of
 
 
 class CreateTenantIn(BaseModel):
@@ -222,6 +225,50 @@ def build_router() -> APIRouter:
         enforce(request, (TEST_IP, client_ip(request)), (TEST_TENANT, tenant_id))
         return await _probe(tenant_id, connector)
 
+    # ── stored runs: reading a result is free ───────────────────────
+
+    @router.get("/{tenant_id}/runs/latest")
+    async def latest_runs(
+        tenant_id: str,
+        kind: str = Query("across", pattern="^(across|pair)$"),
+        name: str = "rails",
+        actor=Depends(admin_actor),
+    ) -> dict[str, Any]:
+        """The newest stored run per tenant, for the target and its direct
+        children, with rows: what Overview and Findings read instead of
+        running anything. Not metered."""
+        await _guard(actor, tenant_id)
+        store = get_store()
+        if await store.get_tenant(tenant_id) is None:
+            raise HTTPException(404, f"no such tenant: {tenant_id}")
+        ids = [tenant_id] + [c.id for c in await store.children_of(tenant_id)]
+        runs = await store.latest_runs(ids, kind, name)
+        return {"data": {tid: run_dict(r, with_rows=True) for tid, r in runs.items()}}
+
+    @router.get("/{tenant_id}/runs")
+    async def list_runs(
+        tenant_id: str,
+        name: str | None = None,
+        limit: int = Query(20, ge=1, le=50),
+        actor=Depends(admin_actor),
+    ) -> dict[str, Any]:
+        """Run history, newest first, without rows. Not metered."""
+        await _guard(actor, tenant_id)
+        store = get_store()
+        if await store.get_tenant(tenant_id) is None:
+            raise HTTPException(404, f"no such tenant: {tenant_id}")
+        return {"data": [run_dict(r, with_rows=False) for r in await store.list_runs(tenant_id, name, limit)]}
+
+    @router.get("/{tenant_id}/runs/{run_id}")
+    async def get_run(tenant_id: str, run_id: str, actor=Depends(admin_actor)) -> dict[str, Any]:
+        """One stored run with its rows. A run outside the subtree, like a
+        tenant outside it, does not exist. Not metered."""
+        await _guard(actor, tenant_id)
+        rec = await get_store().get_run(tenant_id, run_id)
+        if rec is None:
+            raise HTTPException(404, f"no such run: {run_id}")
+        return run_dict(rec, with_rows=True)
+
     @router.post("/{tenant_id}/reconciliations/across/{name}")
     async def reconcile_across_as(
         tenant_id: str,
@@ -242,9 +289,20 @@ def build_router() -> APIRouter:
         except KeyError:
             raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
         resolver = await vault_resolver(target)
-        result = await _mapped_scrubbed(run_across(spec, resolver), resolver)
+        started = run_clock()
+        try:
+            result = await _mapped_scrubbed(run_across(spec, resolver), resolver)
+        except HTTPException as exc:
+            await record_run(target, spec, "dashboard", started, error=exc.detail, resolver=resolver)
+            raise
+        run_id = await record_run(target, spec, "dashboard", started, result=result)
         await meter(target, "dashboard:across")
-        return rest_page(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
+        # The dashboard gets the trimmed rows: the same shape it reads back
+        # from a stored run, and nothing a page does not render.
+        page = rest_page(paged(
+            result.summary, result.trimmed_rows(spec.ledger_currency), "outcome", outcome, limit, cursor,
+        ))
+        return {"run_id": run_id, **page}
 
     @router.post("/{tenant_id}/reconciliations/{name}")
     async def reconcile_as(
@@ -263,9 +321,18 @@ def build_router() -> APIRouter:
         except KeyError:
             raise HTTPException(404, f"unknown reconciliation '{name}'") from None
         resolver = await vault_resolver(target)
-        result = await _mapped_scrubbed(run(spec, resolver), resolver)
+        started = run_clock()
+        try:
+            result = await _mapped_scrubbed(run(spec, resolver), resolver)
+        except HTTPException as exc:
+            await record_run(target, spec, "dashboard", started, error=exc.detail, resolver=resolver)
+            raise
+        run_id = await record_run(target, spec, "dashboard", started, result=result)
         await meter(target, "dashboard:reconcile")
-        return rest_page(paged(result.summary, result.rows(), "status", status, limit, cursor))
+        page = rest_page(paged(
+            result.summary, result.trimmed_rows(*ref_paths(spec)), "status", status, limit, cursor,
+        ))
+        return {"run_id": run_id, **page}
 
     return router
 
@@ -278,13 +345,6 @@ def _by_day(buckets):
         day = hour.replace(hour=0, minute=0, second=0, microsecond=0)
         out[(tid, day, surface)] = out.get((tid, day, surface), 0) + n
     return [(tid, day, surface, n) for (tid, day, surface), n in sorted(out.items())]
-
-
-def _secrets_of(resolver) -> list[str]:
-    """Every stored value a run could have sent upstream, from the resolver
-    the run used, so no second read of the vault."""
-    return [v for c in all_connectors()
-            for v in resolver(c.name, tuple(c.auth.required_fields)).values() if v]
 
 
 async def _mapped_scrubbed(awaitable, resolver):
@@ -373,16 +433,3 @@ async def meter_test(tenant_id: str, connector: str) -> None:
         await meter(tenant, f"test:{connector}")
 
 
-def _scrub(text: str, secrets: list[str]) -> str:
-    """Remove any credential an upstream error echoed back.
-
-    Some rails quote the key they rejected; a connection error can carry
-    a DSN. The value must not leave through an error message any more
-    than through a success.
-    """
-    # Longest first: a value that extends a shorter one would otherwise be
-    # left with its tail showing after the shorter one is replaced.
-    for value in sorted(secrets, key=len, reverse=True):
-        if len(value) >= 4:
-            text = text.replace(value, "[redacted]")
-    return text[:300]
