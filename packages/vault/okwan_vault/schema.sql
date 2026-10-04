@@ -92,3 +92,29 @@ CREATE TABLE IF NOT EXISTS sessions (
     expires_at  timestamptz NOT NULL,
     created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- ── reconciliation runs ─────────────────────────────────────────────
+-- Every run as a tenant, on every surface (dashboard, REST, MCP), so pages
+-- read results instead of running them and there is history. `rows` holds
+-- only what a page renders (okwan_recon trims them: outcome, order
+-- reference, currency, totals, per-rail amounts, reasons); a raw rail
+-- record is never written. `error` is scrubbed of stored values and cut
+-- to 300 characters. The newest 50 per (tenant, kind, name) are kept;
+-- the insert prunes the rest in the same transaction.
+CREATE TABLE IF NOT EXISTS reconciliation_runs (
+    id           text PRIMARY KEY,
+    tenant_id    text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    kind         text NOT NULL CHECK (kind IN ('across', 'pair')),
+    name         text NOT NULL,
+    surface      text NOT NULL,
+    status       text NOT NULL CHECK (status IN ('ok', 'failed')),
+    started_at   timestamptz NOT NULL,
+    finished_at  timestamptz NOT NULL,
+    summary      jsonb,
+    rows         jsonb,
+    error        text
+);
+
+-- The newest run per tenant and name is what every page asks for.
+CREATE INDEX IF NOT EXISTS reconciliation_runs_latest_idx
+    ON reconciliation_runs (tenant_id, name, finished_at DESC);
