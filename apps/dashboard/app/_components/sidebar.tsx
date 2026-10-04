@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { type RunDigest, verdictOf } from "@/lib/finding";
-import { useTabResults } from "@/lib/tab-results";
+import { type RunDigest, type SeenFinding, verdictOf } from "@/lib/finding";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
@@ -19,17 +18,21 @@ export type MerchantLink = { id: string; name: string };
 /** `tenant` is the workspace name. A self-serve workspace is named by its
  * verified address, so for most accounts this line is the email; the API
  * exposes no other. */
-export function Sidebar({ tenant, merchants, plan, apiBase }: {
+export function Sidebar({ tenant, merchants, plan, apiBase, verdicts, findings }: {
   tenant: string;
   merchants: MerchantLink[];
   plan: Usage["plan"] | null;
   apiBase: string;
+  /** Each merchant's newest stored run, read by the layout; never a run. */
+  verdicts: Record<string, RunDigest>;
+  /** Open findings across merchants, for the palette's order search. */
+  findings: SeenFinding[];
 }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   const menu = useDialog(open, () => setOpen(false));
-  const results = useTabResults();
+  const results = verdicts;
   const all = Object.values(results);
   const ok = all.filter((r) => r.ok);
   const openFindings = ok.reduce((n, r) => n + r.open, 0);
@@ -109,7 +112,7 @@ export function Sidebar({ tenant, merchants, plan, apiBase }: {
 
   return (
     <>
-      <CommandPalette merchants={merchants} />
+      <CommandPalette merchants={merchants} verdicts={verdicts} findings={findings} />
 
       {/* Narrow: a top bar with search and the menu button. */}
       <header className="sticky top-0 z-40 border-b border-line bg-canvas/95 backdrop-blur min-[900px]:hidden">
@@ -177,9 +180,9 @@ export function Sidebar({ tenant, merchants, plan, apiBase }: {
 }
 
 /**
- * Every merchant one click away, each with the last result this tab saw.
+ * Every merchant one click away, each with its newest stored result.
  * Findings sort first. No run is made here: the glyphs come from the
- * in-tab store fed by Overview, Findings and the merchant's own Run.
+ * stored runs the layout read.
  */
 function MerchantSwitcher({ merchants, results, path }: {
   merchants: MerchantLink[];
@@ -254,10 +257,6 @@ function Logo() {
   );
 }
 
-/** Overview and Findings run a metered check per ready merchant when they
- *  render, so a link to them is never prefetched: only a click may cost. */
-export const RUNS_CHECKS = new Set(["/overview", "/findings"]);
-
 function Item({ href, path, icon, count, exact = false, children }: {
   href: string;
   path: string;
@@ -270,7 +269,6 @@ function Item({ href, path, icon, count, exact = false, children }: {
   return (
     <Link
       href={href}
-      prefetch={RUNS_CHECKS.has(href) ? false : undefined}
       aria-current={active ? "page" : undefined}
       className={`flex min-h-11 items-center gap-3 rounded-lg px-3 ${
         active ? "bg-ink/[0.06] font-medium text-ink" : "text-ink-soft hover:bg-ink/[0.04] hover:text-ink"
