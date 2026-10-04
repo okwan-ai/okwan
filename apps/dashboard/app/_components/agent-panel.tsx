@@ -73,7 +73,7 @@ export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"]
       </div>
       {/* Focusable so a keyboard can scroll a long line; the ring is light on navy. */}
       <pre tabIndex={0} aria-label={LABEL[view]} className="overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre text-sky focus-visible:outline-canvas focus-visible:-outline-offset-2"><code>{code[view]}</code></pre>
-      <p className="border-t border-canvas/15 px-4 py-2 text-[11px] text-canvas/70">
+      <p className="border-t border-canvas/15 px-4 py-2 text-xs text-canvas/70">
         Use a key issued for this {scope} in place of <code className="font-mono">okw_…</code>. The hosted MCP and SQL are read-only; no surface can move money on a payment rail.
       </p>
     </section>

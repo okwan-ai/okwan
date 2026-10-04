@@ -45,8 +45,8 @@ export default async function CatalogPage() {
           <>
             Each connector is declared once. From that one declaration Okwan generates its REST routes, its SQL tables and its
             MCP tools, so every surface reads the same rails the same way. {list.length} connectors · {routes} operations ·{" "}
-            {tables} SQL tables · {writes} write operation{writes === 1 ? "" : "s"}, marked{" "}
-            <span aria-hidden className="font-mono">✎</span>.
+            {tables} SQL tables · {writes} write operation{writes === 1 ? "" : "s"}, each marked{" "}
+            <span aria-hidden className="font-mono">✎</span> write.
           </>
         }
         actions={<ButtonLink href={`${base}/docs`} target="_blank" rel="noopener">OpenAPI reference <span aria-hidden>↗</span><span className="sr-only">(opens in a new tab)</span></ButtonLink>}
@@ -152,7 +152,7 @@ function Surface({ title, note, children }: { title: string; note: string; child
   return (
     <section aria-label={title} className="min-w-0">
       <h3 className="text-xs font-medium tracking-wide text-ink-soft uppercase">{title}</h3>
-      <p className="mb-2 text-[11px] text-ink-soft">{note}</p>
+      <p className="mb-2 text-xs text-ink-soft">{note}</p>
       {children}
     </section>
   );

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { byChannel, byTenant, dailyTotals, today, type Usage } from "@/lib/usage-shape";
+import { byChannel, byTenant, dailyTotals, today, type Usage, weeklyTotals } from "@/lib/usage-shape";
 import { Breakdown } from "../usage/breakdown";
 import { PlanMeter } from "../usage/plan-meter";
 import { UsageChart } from "../usage/usage-chart";
@@ -57,6 +57,8 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
   scope?: "workspace" | "merchant";
 }) {
   const days = dailyTotals(usage);
+  // Past a month, a day is too thin a column to hit or read; weeks instead.
+  const cols = days.length > 31 ? weeklyTotals(days) : days;
   const windowTotal = days.reduce((n, d) => n + d.total, 0);
   const channels = byChannel(usage);
   const tenants = byTenant(usage, names, selfId);
@@ -88,7 +90,7 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
 
       <section className="rounded-xl border border-line bg-surface p-5">
         <div className="mb-1 flex justify-end"><RangePicker days={usage.window.days} href={rangeHref} /></div>
-        <UsageChart days={days} title={`Requests per day · last ${usage.window.days} days`} />
+        <UsageChart days={cols} title={`Requests per ${cols === days ? "day" : "week"} · last ${usage.window.days} days`} />
       </section>
 
       <div className={`grid gap-6 rounded-xl border border-line bg-surface p-5 ${scope === "workspace" ? "md:grid-cols-2" : ""}`}>
@@ -106,7 +108,7 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
             <div key={name} className="flex items-center justify-between gap-4 px-5 py-2.5 text-sm">
               <dt className="flex items-center gap-2 font-medium">
                 {name}
-                {name.toLowerCase() === usage.plan.name && <span className="rounded-full bg-ink px-2 py-0.5 text-[11px] font-medium text-canvas">Current</span>}
+                {name.toLowerCase() === usage.plan.name && <span className="rounded-full bg-ink px-2 py-0.5 text-xs font-medium text-canvas">Current</span>}
               </dt>
               <dd className="text-ink-soft tabular-nums">{quota}</dd>
             </div>
@@ -124,7 +126,7 @@ export function PlanUsage({ usage, names, selfId, rangeHref, scope = "workspace"
             {contact ? (
               <>To change plan, email <a href={`mailto:${contact}?subject=Okwan%20plan`} className="underline underline-offset-4 hover:text-ink">{contact}</a>.</>
             ) : (
-              <>Changing plan isn&apos;t self-serve yet. Every workspace is on Free until it is.</>
+              <>Changing plan isn&apos;t self-serve yet; new workspaces start on Free.</>
             )}
           </p>
         </div>
