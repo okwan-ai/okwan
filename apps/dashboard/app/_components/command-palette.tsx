@@ -17,6 +17,8 @@ const PAGES: Command[] = [
   { id: "p-merchants", group: "Pages", label: "Merchants", href: "/merchants", keywords: "tenants stores" },
   { id: "p-keys", group: "Pages", label: "API keys", href: "/key", keywords: "token secret" },
   { id: "p-mcp", group: "Pages", label: "MCP for agents", href: "/mcp", keywords: "claude agent tools" },
+  { id: "p-prompts", group: "Pages", label: "Prompts for agents", hint: "one per verdict", href: "/mcp#prompts", keywords: "prompt library questions ask collected twice sql" },
+  { id: "p-clients", group: "Pages", label: "Connect Claude Code, Cursor or Claude Desktop", href: "/mcp?client=claude-code", keywords: "mcp client config integrations cursor desktop code" },
   { id: "p-rails", group: "Pages", label: "Your own rails", href: "/connections", keywords: "connections credentials" },
   { id: "p-catalog", group: "Pages", label: "Connector catalog", href: "/catalog", keywords: "connectors rest sql mcp tables routes" },
   { id: "p-settings", group: "Pages", label: "Settings", href: "/settings", keywords: "workspace account" },

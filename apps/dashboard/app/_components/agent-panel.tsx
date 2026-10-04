@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { claudeDesktopConfig } from "@/lib/mcp-clients";
 import { CopyButton } from "./ui/copy-button";
 
 type View = "mcp" | "rest" | "prompt" | "config";
@@ -20,7 +21,7 @@ const LABEL: Record<View, string> = {
  *
  * The key is always a placeholder: a key is shown once at issue, and this
  * page never holds one. Read-only by construction: the prompt says so, and
- * no Okwan surface can write to a rail.
+ * no surface an agent reaches can write to a rail.
  */
 export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"], server = "okwan", scope = "merchant" }: {
   apiBase: string;
@@ -43,20 +44,8 @@ export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"]
       outcome === "collected_twice" ? "Total what was taken beyond the order totals: that is owed back to customers." : "Say which orders need a person to look, and why.",
       "Read only: do not attempt refunds or any write to a payment rail. Okwan cannot make one.",
     ].join("\n"),
-    config: JSON.stringify(
-      {
-        mcpServers: {
-          [server]: {
-            command: "npx",
-            // mcp-remote drops a --header not in exact Name:Value form (§11).
-            args: ["mcp-remote", `${apiBase}/mcp/`, "--header", "Authorization:Bearer ${OKWAN_KEY}"],
-            env: { OKWAN_KEY: "okw_…" },
-          },
-        },
-      },
-      null,
-      2,
-    ),
+    // Claude Desktop's form, shared with the client tabs (lib/mcp-clients.ts).
+    config: claudeDesktopConfig(apiBase, server),
   };
 
   return (
