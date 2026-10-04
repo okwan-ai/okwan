@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Awaitable
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from okwan_core import CredentialError, OkwanError, UpstreamError
 
@@ -53,6 +54,10 @@ async def mapped[T](awaitable: Awaitable[T]) -> T:
         raise HTTPException(exc.status, exc.body) from exc
     except OkwanError as exc:
         raise HTTPException(502, str(exc)) from exc
+    except (httpx.TransportError, OSError) as exc:
+        # A rail that could not be reached at all (timeout, reset, DNS) is
+        # a failed run like any other: a 502, recorded, never a 500.
+        raise HTTPException(502, f"{type(exc).__name__}: {exc}") from exc
 
 
 def build_router() -> APIRouter:
