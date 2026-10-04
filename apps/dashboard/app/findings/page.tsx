@@ -2,11 +2,14 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { apiUrl } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
-import { attentionRows, caveats, checkedAgo, digest, oldestAt, runAll, seenFindings } from "@/lib/runs";
+import { attentionRows, caveats, checkedAgo, digest, eligible, oldestAt, runAll, seenFindings } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
+import { myUsage } from "@/lib/usage";
 import { FindingsTable } from "../_components/findings-table";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
+import { PlanStrip } from "../_components/usage/plan-strip";
+import { IconAlert } from "../_components/ui/icons";
 import { PageHeader } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
 
@@ -28,7 +31,7 @@ export default async function FindingsPage() {
 }
 
 async function FindingsBody() {
-  const runs = await runAll();
+  const [runs, usage] = await Promise.all([runAll(), myUsage(30)]);
   if (!runs) return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
   const rows = attentionRows(runs);
   const checked = runs.filter((r) => r.state === "ok");
@@ -38,10 +41,17 @@ async function FindingsBody() {
   return (
     <>
       <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
+      <PlanStrip
+        usage={usage}
+        spend={`A load of this page checks each ready merchant at most once per 10 minutes (${runs.filter((r) => eligible(r.merchant)).length} ready now); each check is one request.`}
+      />
       <p className="mb-4 text-sm text-ink-soft">
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
         {skipped > 0 && <> · {skipped} not ready (a check needs Shopify, PayPal and Stripe)</>}
         {checked.length > 0 && <> · {checkedAgo(oldestAt(runs))}</>}
+        {usage && !usage.plan.unmetered && (
+          <> · <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">{usage.plan.used.toLocaleString("en-US")} of {usage.plan.limit.toLocaleString("en-US")} requests this month</Link></>
+        )}
       </p>
       {failed.length > 0 && (
         <div role="alert" className="mb-4 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm">
@@ -65,7 +75,13 @@ async function FindingsBody() {
       ))}
       {checked.length === 0 ? (
         <EmptyState
+          icon={<IconAlert />}
           title="Nothing checked yet"
+          benefits={[
+            "Every order collected twice, with the amount owed back",
+            "Orders where the rails don't add up to the order total",
+            "Orders with no payment on any rail, ready to export for refunds",
+          ]}
           action={<ButtonLink href="/merchants" variant="primary">Go to merchants</ButtonLink>}
         >
           A merchant is checked once Shopify, PayPal and Stripe are all connected.

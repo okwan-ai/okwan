@@ -21,6 +21,7 @@ MCP) stay key-only.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -37,8 +38,9 @@ from okwan_recon.registry import get as get_reconciliation
 from okwan_recon.registry import get_across
 from okwan_recon.runner import run
 from okwan_vault.authz import Forbidden, require_administer
+from okwan_vault.usage import month_start
 
-from .auth import admin_actor, check_quota, get_store, meter
+from .auth import admin_actor, check_quota, get_store, meter, quota_for
 from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
 
 
@@ -151,6 +153,57 @@ def build_router() -> APIRouter:
         configured = await get_store().connectors_configured(tenant_id)
         return {"tenant_id": tenant_id, "configured": configured}
 
+    @router.get("/{tenant_id}/usage")
+    async def usage(
+        tenant_id: str,
+        days: int = Query(30, ge=1, le=92),
+        granularity: str = Query("hour", pattern="^(hour|day)$"),
+        actor=Depends(admin_actor),
+    ) -> dict[str, Any]:
+        """Where a tenant's requests went: the plan it is held to, the month
+        so far, and the counters behind that total for the window.
+
+        The plan and the month's total belong to the paying account, so a
+        merchant sees the allowance it shares (the 402 it would get already
+        says as much). The buckets are the target's own subtree only: a
+        merchant never sees a sibling's traffic. Not metered: reading the
+        meter must not move it.
+
+        `days` is calendar days ending today, UTC, so a 7-day window is
+        seven dates and a chart of seven columns, not 168 hours ending
+        now. `granularity=day` sums each day's hours into one bucket per
+        tenant and surface, which is all a chart needs and bounds the
+        response for a long window over many merchants.
+        """
+        await _guard(actor, tenant_id)
+        store = get_store()
+        target = await store.get_tenant(tenant_id)
+        if target is None:
+            raise HTTPException(404, f"no such tenant: {tenant_id}")
+        quota = await quota_for(target)
+        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        since = today - timedelta(days=days - 1)
+        buckets = await store.usage_buckets(tenant_id, since)
+        if granularity == "day":
+            buckets = _by_day(buckets)
+        return {
+            "tenant_id": tenant_id,
+            "plan": {
+                "name": quota.plan,
+                "limit": quota.limit,
+                "used": quota.used,
+                "remaining": quota.remaining,
+                "unmetered": quota.unmetered,
+                "month_start": month_start().isoformat(),
+            },
+            "window": {"since": since.isoformat(), "days": days, "granularity": granularity},
+            "buckets": [
+                {"tenant_id": tid, "hour": hour.isoformat(), "surface": surface,
+                 "requests": n}
+                for tid, hour, surface, n in buckets
+            ],
+        }
+
     @router.post("/{tenant_id}/connectors/{connector_name}/test")
     async def test_connector(
         tenant_id: str, connector_name: str, request: Request,
@@ -188,7 +241,8 @@ def build_router() -> APIRouter:
             spec = get_across(name)
         except KeyError:
             raise HTTPException(404, f"unknown across-rails fold '{name}'") from None
-        result = await mapped(run_across(spec, await vault_resolver(target)))
+        resolver = await vault_resolver(target)
+        result = await _mapped_scrubbed(run_across(spec, resolver), resolver)
         await meter(target, "dashboard:across")
         return rest_page(paged(result.summary, result.rows(), "outcome", outcome, limit, cursor))
 
@@ -208,11 +262,40 @@ def build_router() -> APIRouter:
             spec = get_reconciliation(name)
         except KeyError:
             raise HTTPException(404, f"unknown reconciliation '{name}'") from None
-        result = await mapped(run(spec, await vault_resolver(target)))
+        resolver = await vault_resolver(target)
+        result = await _mapped_scrubbed(run(spec, resolver), resolver)
         await meter(target, "dashboard:reconcile")
         return rest_page(paged(result.summary, result.rows(), "status", status, limit, cursor))
 
     return router
+
+
+def _by_day(buckets):
+    """Hourly (tenant, hour, surface, n) rows summed per UTC day, the day
+    carried as its first hour, in the same (tenant, time, surface) order."""
+    out: dict[tuple[str, datetime, str], int] = {}
+    for tid, hour, surface, n in buckets:
+        day = hour.replace(hour=0, minute=0, second=0, microsecond=0)
+        out[(tid, day, surface)] = out.get((tid, day, surface), 0) + n
+    return [(tid, day, surface, n) for (tid, day, surface), n in sorted(out.items())]
+
+
+def _secrets_of(resolver) -> list[str]:
+    """Every stored value a run could have sent upstream, from the resolver
+    the run used, so no second read of the vault."""
+    return [v for c in all_connectors()
+            for v in resolver(c.name, tuple(c.auth.required_fields)).values() if v]
+
+
+async def _mapped_scrubbed(awaitable, resolver):
+    """`mapped()`, and then the same redaction the connection test applies:
+    a rail may quote the key it rejected, and the dashboard shows this
+    detail to an operator who must never see a merchant's stored value."""
+    try:
+        return await mapped(awaitable)
+    except HTTPException as exc:
+        raise HTTPException(exc.status_code,
+                            _scrub(str(exc.detail), _secrets_of(resolver))) from None
 
 
 async def _run_as(actor, tenant_id: str):
@@ -297,7 +380,9 @@ def _scrub(text: str, secrets: list[str]) -> str:
     a DSN. The value must not leave through an error message any more
     than through a success.
     """
-    for value in secrets:
+    # Longest first: a value that extends a shorter one would otherwise be
+    # left with its tail showing after the shorter one is replaced.
+    for value in sorted(secrets, key=len, reverse=True):
         if len(value) >= 4:
             text = text.replace(value, "[redacted]")
     return text[:300]

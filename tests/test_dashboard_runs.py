@@ -252,6 +252,25 @@ async def test_an_upstream_failure_maps_like_rest_and_is_not_metered(
     assert await _usage(store, tree["merchant"]) == {}
 
 
+async def test_an_upstream_error_never_carries_a_stored_value(client, store, tree, monkeypatch):
+    """Some rails quote the key they rejected. The connection test already
+    redacts it; a run shown to an ISV operator must too, since the value
+    is a merchant's and was never meant to be seen again."""
+    secret = MERCHANT_VAULT["stripe"]["secret_key"]
+
+    async def rejected(ref, resolver, cap, overrides):
+        raise UpstreamError(401, '{"error":{"message":"Invalid API Key provided: ' + secret + '"}}')
+
+    monkeypatch.setattr(across, "fetch_side", rejected)
+    path, _ = _across(tree["merchant"].id)
+    r = client.post(path, headers=tree["isv_auth"])
+    assert r.status_code == 401
+    detail = r.json()["detail"]
+    assert secret not in detail
+    assert "[redacted]" in detail
+    assert await _usage(store, tree["merchant"]) == {}
+
+
 # ── data routes stay key-only ───────────────────────────────────────
 
 @pytest.mark.parametrize("path", [
