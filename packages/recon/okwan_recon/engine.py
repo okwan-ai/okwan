@@ -151,6 +151,30 @@ class ReconResult:
             ),
         }
 
+    def trimmed_rows(
+        self, left_ref: str | None = None, right_ref: str | None = None,
+        limit: int | None = None,
+    ) -> list[Row]:
+        """The rows without their records: status, rule, confidence, the
+        discrepancy and its explanation, the reason, and each side's one
+        human reference (the first exact key, see `ref_paths`). What is
+        stored and shown; a record never leaves the process this way."""
+        out = [
+            {
+                "status": r["status"],
+                "rule": r.get("rule"),
+                "confidence": r.get("confidence"),
+                "discrepancy": r.get("discrepancy"),
+                "explained_by": r.get("explained_by"),
+                "reason": r.get("reason"),
+                "candidates": r.get("candidates"),
+                "left_ref": _ref(r.get("left"), left_ref),
+                "right_ref": _ref(r.get("right"), right_ref),
+            }
+            for r in self.rows()
+        ]
+        return out[:limit] if limit is not None else out
+
     def rows(self) -> list[Row]:
         """Flat, view-shaped output — what the DuckDB view exposes."""
         out: list[Row] = [
@@ -406,3 +430,18 @@ def _split_unread(
         else:
             unread.append(Unverifiable(r, reason or "counterpart side not read"))
     return missed, unread
+
+
+def ref_paths(spec: Reconciliation) -> tuple[str | None, str | None]:
+    """The one human reference each side carries: the first exact key."""
+    for rule in spec.keys:
+        if isinstance(rule, ExactRef):
+            return rule.left, rule.right
+    return None, None
+
+
+def _ref(record: Row | None, path: str | None) -> str | None:
+    if record is None or not path:
+        return None
+    value = dig(record, path)
+    return None if value in (None, "") else str(value)
