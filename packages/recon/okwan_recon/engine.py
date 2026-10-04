@@ -156,9 +156,14 @@ class ReconResult:
         limit: int | None = None,
     ) -> list[Row]:
         """The rows without their records: status, rule, confidence, the
-        discrepancy and its explanation, the reason, and each side's one
-        human reference (the first exact key, see `ref_paths`). What is
-        stored and shown; a record never leaves the process this way."""
+        discrepancy and its explanation, the reason, each side's one human
+        reference (the first exact key, see `ref_paths`), and for an
+        ambiguous row how many candidates there were, never the candidates
+        themselves. Findings first (PAIR_DISPLAY_ORDER), so a cut at
+        `limit` drops clean matches, not breaks. What is stored and shown;
+        a record never leaves the process this way."""
+        rank = {s: i for i, s in enumerate(PAIR_DISPLAY_ORDER)}
+        rows = sorted(self.rows(), key=lambda r: rank.get(r["status"], len(rank)))
         out = [
             {
                 "status": r["status"],
@@ -167,11 +172,13 @@ class ReconResult:
                 "discrepancy": r.get("discrepancy"),
                 "explained_by": r.get("explained_by"),
                 "reason": r.get("reason"),
-                "candidates": r.get("candidates"),
+                "candidates": (
+                    len(r["candidates"]) if isinstance(r.get("candidates"), list) else None
+                ),
                 "left_ref": _ref(r.get("left"), left_ref),
                 "right_ref": _ref(r.get("right"), right_ref),
             }
-            for r in self.rows()
+            for r in rows
         ]
         return out[:limit] if limit is not None else out
 
@@ -430,6 +437,20 @@ def _split_unread(
         else:
             unread.append(Unverifiable(r, reason or "counterpart side not read"))
     return missed, unread
+
+
+#: Worst first, how a stored two-sided run lists its rows: the breaks and
+#: misses, then what could not be read, then the clean matches.
+PAIR_DISPLAY_ORDER = (
+    "matched_discrepant",
+    "unmatched_left",
+    "unmatched_right",
+    "ambiguous",
+    "matched_explained",
+    "unverifiable_left",
+    "unverifiable_right",
+    "matched",
+)
 
 
 def ref_paths(spec: Reconciliation) -> tuple[str | None, str | None]:

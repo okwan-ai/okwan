@@ -32,8 +32,15 @@ def fingerprint(rows: list[Row]) -> str:
     """Identity of a result: each row's status and records. Excludes
     anything derived from the clock — a coverage span ending at now
     would make every re-run look different."""
+    # A trimmed row (what a session or a stored run carries) names its
+    # sides by reference; a raw row carries the records.
     ident = [
-        [r.get("status") or r.get("outcome"), r.get("left"), r.get("right"), r.get("order")]
+        [
+            r.get("status") or r.get("outcome"),
+            r.get("left") if r.get("left") is not None else r.get("left_ref"),
+            r.get("right") if r.get("right") is not None else r.get("right_ref"),
+            r.get("order"),
+        ]
         for r in rows
     ]
     blob = json.dumps(ident, sort_keys=True, default=str).encode()
