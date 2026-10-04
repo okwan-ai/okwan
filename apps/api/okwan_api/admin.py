@@ -257,7 +257,16 @@ def build_router() -> APIRouter:
         store = get_store()
         if await store.get_tenant(tenant_id) is None:
             raise HTTPException(404, f"no such tenant: {tenant_id}")
-        return {"data": [run_dict(r, with_rows=False) for r in await store.list_runs(tenant_id, name, limit)]}
+        out = []
+        for r in await store.list_runs(tenant_id, name, limit):
+            # A listing carries no rows; the one figure a list prices (what was
+            # collected twice) needs the currency, read from the full record
+            # only for runs that have such orders.
+            if r.status == "ok" and (r.summary or {}).get("collected_twice"):
+                full = await store.get_run(tenant_id, r.id)
+                r = full or r
+            out.append(run_dict(r, with_rows=False))
+        return {"data": out}
 
     @router.get("/{tenant_id}/runs/{run_id}")
     async def get_run(tenant_id: str, run_id: str, actor=Depends(admin_actor)) -> dict[str, Any]:

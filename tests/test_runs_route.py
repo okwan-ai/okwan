@@ -127,6 +127,7 @@ async def test_a_session_run_is_stored_and_read_back(client, store, tree, rails)
     assert listed[0]["kind"] == "across" and listed[0]["name"] == "rails"
     assert "rows" not in listed[0] and listed[0]["summary"]["collected_twice"] == 1
     assert listed[0]["rows_total"] == 2
+    assert listed[0]["twice_currency"] == "USD"
 
     one = client.get(f"/v1/tenants/{tree['merchant'].id}/runs/{run_id}", headers=tree["isv_auth"]).json()
     assert one["has_more"] is False
