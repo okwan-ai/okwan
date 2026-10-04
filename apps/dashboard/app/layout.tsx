@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { tenantTree } from "@/lib/api";
+import { apiUrl, tenantTree } from "@/lib/api";
 import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import "./globals.css";
@@ -40,6 +40,7 @@ export default async function RootLayout({
               tenant={tree.self.name}
               merchants={tree.children.map((c) => ({ id: c.id, name: c.name }))}
               plan={usage?.plan ?? null}
+              apiBase={apiUrl()}
             />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
               <div className="mx-auto max-w-[1120px] px-4 py-8 sm:px-8 sm:py-10">{children}</div>
