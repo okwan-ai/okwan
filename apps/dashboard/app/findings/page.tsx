@@ -2,12 +2,13 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { apiUrl } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
-import { attentionRows, caveats, checkedAgo, digest, oldestAt, runAll, seenFindings } from "@/lib/runs";
+import { attentionRows, caveats, checkedAgo, digest, eligible, oldestAt, runAll, seenFindings } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
 import { myUsage } from "@/lib/usage";
 import { FindingsTable } from "../_components/findings-table";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
+import { PlanStrip } from "../_components/usage/plan-strip";
 import { IconAlert } from "../_components/ui/icons";
 import { PageHeader } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
@@ -40,6 +41,10 @@ async function FindingsBody() {
   return (
     <>
       <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
+      <PlanStrip
+        usage={usage}
+        spend={`A load of this page checks each ready merchant once (${runs.filter((r) => eligible(r.merchant)).length} ready now); each check is one request.`}
+      />
       <p className="mb-4 text-sm text-ink-soft">
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
         {skipped > 0 && <> · {skipped} not ready (a check needs Shopify, PayPal and Stripe)</>}

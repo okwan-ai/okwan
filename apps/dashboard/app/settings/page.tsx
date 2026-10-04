@@ -81,7 +81,26 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
             <Row label="Read-only">
               A reconciliation can only be declared over read operations, the SQL guard refuses anything but a read, and the hosted
               MCP&apos;s tools are read-only. Connector REST mounts each declared operation; the catalog marks the ones that write
-              (today, WhatsApp&apos;s two send operations). No surface can move money on a payment rail.
+              (today, WhatsApp&apos;s two send operations). No surface can move money on a payment rail. A test holds the gate:
+              every route outside a named public list must take a key or a session.
+            </Row>
+            {/* Changes the day results are persisted (OKWAN_PROJECT.md §10). */}
+            <Row label="Results">
+              A check is read, shown and forgotten. A result is reused for ten minutes in the dashboard server&apos;s memory and
+              never written down. Rows are trimmed on the server, so a customer&apos;s fields on a rail record never reach a
+              browser.
+            </Row>
+            <Row label="Errors">
+              A failed connection test or run shows the upstream message with every stored value redacted first. A request the API
+              rejects as malformed is answered with where and why, never with the value sent.
+            </Row>
+            <Row label="Metering">
+              One count per tenant, hour and surface. No query text, no row content, no per-call log: the meter is the record.
+            </Row>
+            <Row label="Egress">
+              A host you name (a Postgres connection string) must resolve to a public address; loopback, private and cloud-metadata
+              addresses are refused before a socket opens, and the checked address is the one dialled. Shopify is reached only at
+              its own <code className="font-mono text-[13px]">&lt;store&gt;.myshopify.com</code>.
             </Row>
             <Row label="Isolation">
               A merchant is its own tenant: its vault, its keys, its plan gate. Anything outside your subtree answers as if it did

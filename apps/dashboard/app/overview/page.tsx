@@ -20,6 +20,7 @@ import { OutcomeSpectrum } from "../_components/ui/outcome-spectrum";
 import { PageHeader, Section } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
 import { Table, Td, Th } from "../_components/ui/table";
+import { PlanStrip } from "../_components/usage/plan-strip";
 
 export const metadata = { title: "Overview" };
 
@@ -52,6 +53,13 @@ async function OverviewBody() {
   // connected with it: the meter confirms what the API can't list.
   const agentSeen = Boolean(usage?.buckets.some((b) => b.surface.startsWith("mcp:")));
   const steps = setupSteps(runs, agentSeen);
+  const readyNow = runs.filter((r) => eligible(r.merchant)).length;
+  const strip = (
+    <PlanStrip
+      usage={usage}
+      spend={`A load of this page checks each ready merchant once (${readyNow} ready now); each check is one request.`}
+    />
+  );
 
   // Before the first check there is nothing to report: setup leads.
   if (checked.length === 0) {
@@ -59,6 +67,7 @@ async function OverviewBody() {
     return (
       <>
         <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
+        {strip}
         <SetupChecklist steps={steps} prominent />
         {failed.length > 0 && <FailedNote runs={failed} />}
         {runs.length > 0 && (
@@ -75,6 +84,7 @@ async function OverviewBody() {
   return (
     <>
       <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
+      {strip}
       <VerdictStrip runs={runs} usage={usage} />
 
       <Section

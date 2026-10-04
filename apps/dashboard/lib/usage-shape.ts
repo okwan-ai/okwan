@@ -108,3 +108,11 @@ export function planState(p: Usage["plan"]): { share: number | null; state: "ok"
       : `${p.used.toLocaleString("en-US")} of ${p.limit.toLocaleString("en-US")} this month · ${remaining} left`,
   };
 }
+
+/** When the month's allowance resets, from the API's month start: the first
+ *  of the next month, 00:00 UTC. "Nov 1, 2026, 00:00 UTC". */
+export function resetAfter(monthStart: string): string {
+  const d = new Date(monthStart);
+  const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
+  return `${next.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}, 00:00 UTC`;
+}
