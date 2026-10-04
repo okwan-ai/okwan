@@ -2,10 +2,10 @@
  * The mark of a connected system, beside its name: never instead of it.
  *
  * Monochrome, in the text colour, at a small size: a third party's colours
- * would fight the brand (§2) and most owners allow a one-colour mark where
- * the full-colour one is constrained. Each mark is its owner's trademark,
- * shown here to identify the integration it names; nothing implies
- * endorsement. Paths are from Simple Icons (CC0 1.0, simpleicons.org),
+ * would fight the brand (§2). Each mark is its owner's trademark. Whether
+ * showing it this way needs each owner's permission is an open legal item
+ * for the owner (OKWAN_PROJECT.md §10), not something this code decides.
+ * Paths are from Simple Icons (CC0 1.0 for the path data, simpleicons.org),
  * vendored so the dashboard adds no dependency. Brand pages: Shopify
  * shopify.com/brand-assets · PayPal newsroom.paypal-corp.com/media-resources ·
  * PostgreSQL postgresql.org/about/policies/trademarks · WhatsApp
@@ -58,7 +58,7 @@ export function BrandMark({ name, label, size = 16, className = "" }: {
   return (
     <span
       aria-hidden
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.62) }}
+      style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.62)) }}
       className={`inline-flex shrink-0 items-center justify-center rounded-[25%] bg-current ${className}`}
     >
       <span className="font-semibold leading-none text-surface">{letter}</span>
