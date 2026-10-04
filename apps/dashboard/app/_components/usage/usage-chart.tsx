@@ -18,6 +18,8 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
   const top = ticks[ticks.length - 1];
   const cols = CHANNELS.filter((c) => days.some((d) => d.byChannel[c.key]));
   const fmt = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const label = (d: Day) => (d.until && d.until !== d.day ? `${fmt(d.day)} – ${fmt(d.until)}` : fmt(d.day));
+  const weekly = days.some((d) => d.until && d.until !== d.day);
 
   return (
     <figure aria-labelledby={`${id}-title`} className="min-w-0">
@@ -39,7 +41,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
               <button
                 key={d.day}
                 type="button"
-                aria-label={`${fmt(d.day)}: ${d.total.toLocaleString("en-US")} request${d.total === 1 ? "" : "s"}`}
+                aria-label={`${label(d)}: ${d.total.toLocaleString("en-US")} request${d.total === 1 ? "" : "s"}`}
                 onPointerEnter={() => setActive(i)}
                 onPointerLeave={() => setActive((a) => (a === i ? null : a))}
                 onFocus={() => setActive(i)}
@@ -64,7 +66,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
                       i < days.length * 0.25 ? "left-0" : i > days.length * 0.75 ? "right-0" : "left-1/2 -translate-x-1/2"
                     }`}
                   >
-                    <span className="block text-[11px] text-ink-soft">{fmt(d.day)}</span>
+                    <span className="block text-xs text-ink-soft">{label(d)}</span>
                     <span className="block text-base font-semibold tabular-nums">{d.total.toLocaleString("en-US")}</span>
                     {CHANNELS.filter((c) => d.byChannel[c.key]).map((c) => (
                       <span key={c.key} className="flex justify-between gap-2 text-ink-soft">
@@ -81,15 +83,17 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
         <div aria-hidden className="ml-10 flex justify-between text-[10px] text-ink-soft">
           <span>{fmt(days[0].day)}</span>
           <span>{fmt(days[Math.floor(days.length / 2)].day)}</span>
-          <span>{fmt(days[days.length - 1].day)}</span>
+          <span>{fmt(days[days.length - 1].until ?? days[days.length - 1].day)}</span>
         </div>
       </div>
       <details className="mt-3 text-xs">
         <summary className="inline-flex min-h-11 cursor-pointer items-center text-ink-soft underline-offset-4 hover:underline">Table view</summary>
+        {/* Scrolls inside the card, never the page: six columns at 390px. */}
+        <div className="overflow-x-auto">
         <table className="mt-2 w-full text-left">
           <thead>
             <tr className="text-ink-soft">
-              <th scope="col" className="py-1 font-medium">Day</th>
+              <th scope="col" className="py-1 font-medium">{weekly ? "Week" : "Day"}</th>
               <th scope="col" className="py-1 text-right font-medium">Requests</th>
               {cols.map((c) => <th key={c.key} scope="col" className="py-1 pl-3 text-right font-medium">{c.label}</th>)}
             </tr>
@@ -97,7 +101,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
           <tbody>
             {days.filter((d) => d.total).map((d) => (
               <tr key={d.day} className="border-t border-line">
-                <td className="py-1">{fmt(d.day)}</td>
+                <td className="py-1 whitespace-nowrap">{label(d)}</td>
                 <td className="py-1 text-right tabular-nums">{d.total.toLocaleString("en-US")}</td>
                 {cols.map((c) => <td key={c.key} className="py-1 pl-3 text-right text-ink-soft tabular-nums">{(d.byChannel[c.key] ?? 0).toLocaleString("en-US")}</td>)}
               </tr>
@@ -105,6 +109,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
             {!days.some((d) => d.total) && <tr><td colSpan={2 + cols.length} className="py-2 text-ink-soft">No requests in this window.</td></tr>}
           </tbody>
         </table>
+        </div>
       </details>
     </figure>
   );

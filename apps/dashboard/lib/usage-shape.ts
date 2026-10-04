@@ -39,7 +39,8 @@ function dayOf(iso: string): string {
   return iso.slice(0, 10);
 }
 
-export type Day = { day: string; total: number; byChannel: Record<string, number> };
+/** One column of the chart: a UTC day, or a run of days ending `until`. */
+export type Day = { day: string; total: number; byChannel: Record<string, number>; until?: string };
 
 /** One entry per day of the window, oldest first, zeros kept, in UTC. */
 export function dailyTotals(u: Usage, now = new Date()): Day[] {
@@ -58,6 +59,23 @@ export function dailyTotals(u: Usage, now = new Date()): Day[] {
     d.byChannel[c] = (d.byChannel[c] ?? 0) + b.requests;
   }
   return days;
+}
+
+/** Days folded into weeks, the last week ending on the last day, so a
+ *  long window draws columns a finger can hit (90 days → 13 bars, not 90).
+ *  The first week may be short. */
+export function weeklyTotals(days: Day[]): Day[] {
+  const weeks: Day[] = [];
+  for (let end = days.length; end > 0; end -= 7) {
+    const chunk = days.slice(Math.max(0, end - 7), end);
+    const w: Day = { day: chunk[0].day, until: chunk[chunk.length - 1].day, total: 0, byChannel: {} };
+    for (const d of chunk) {
+      w.total += d.total;
+      for (const [k, n] of Object.entries(d.byChannel)) w.byChannel[k] = (w.byChannel[k] ?? 0) + n;
+    }
+    weeks.unshift(w);
+  }
+  return weeks;
 }
 
 export type Ranked = { key: string; label: string; requests: number; share: number };

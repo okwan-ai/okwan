@@ -31,7 +31,7 @@ export function RevokeKey() {
 
   return (
     <form onSubmit={submit} className="rounded-xl border border-line bg-surface p-5">
-      <h3 className="text-sm font-semibold">Revoke a key</h3>
+      <h2 className="text-sm font-semibold">Revoke a key</h2>
       <p className="mt-1 max-w-xl text-sm text-ink-soft">
         Paste the key id (<code className="font-mono">key_…</code>) shown when it was issued. The key stops working on its
         next request. Issuing another key never revokes this one, so rotate by issuing first, then revoking.

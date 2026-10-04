@@ -380,7 +380,9 @@ def _scrub(text: str, secrets: list[str]) -> str:
     a DSN. The value must not leave through an error message any more
     than through a success.
     """
-    for value in secrets:
+    # Longest first: a value that extends a shorter one would otherwise be
+    # left with its tail showing after the shorter one is replaced.
+    for value in sorted(secrets, key=len, reverse=True):
         if len(value) >= 4:
             text = text.replace(value, "[redacted]")
     return text[:300]

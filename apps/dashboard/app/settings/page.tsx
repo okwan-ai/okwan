@@ -91,9 +91,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               browser.
             </Row>
             <Row label="Errors">
-              A failed connection test or run shows the upstream message with every stored value of that tenant redacted first,
-              cut to 300 characters. A request the API rejects as malformed is answered with where and why, never with the
-              value sent.
+              A failed connection test or run shows the upstream message with the stored values that call could have sent
+              redacted first, cut to 300 characters. A request the API rejects as malformed is answered with where and why,
+              never with the value sent.
             </Row>
             <Row label="Metering">
               One count per tenant, hour and surface. No query text, no row content, no per-call log: the meter is the record.

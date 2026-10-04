@@ -5,7 +5,7 @@ import type { Ranked } from "@/lib/usage-shape";
 export function Breakdown({ title, rows, empty }: { title: string; rows: Ranked[]; empty: string }) {
   return (
     <section aria-label={title} className="min-w-0">
-      <h3 className="mb-2 text-sm font-semibold">{title}</h3>
+      <h2 className="mb-2 text-sm font-semibold">{title}</h2>
       {rows.length === 0 ? (
         <p className="text-xs text-ink-soft">{empty}</p>
       ) : (
