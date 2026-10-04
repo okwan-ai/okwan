@@ -8,7 +8,7 @@ import { useTabResults } from "@/lib/tab-results";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
-import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconKey, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore } from "./ui/icons";
+import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconKey, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
 import { PlanMeter } from "./usage/plan-meter";
 
 /** Shown only when the usage read fails: the plan every tenant is held to,
@@ -24,7 +24,12 @@ export type MerchantLink = { id: string; name: string };
 /** `tenant` is the workspace name. A self-serve workspace is named by its
  * verified address, so for most accounts this line is the email; the API
  * exposes no other. */
-export function Sidebar({ tenant, merchants, plan }: { tenant: string; merchants: MerchantLink[]; plan: Usage["plan"] | null }) {
+export function Sidebar({ tenant, merchants, plan, apiBase }: {
+  tenant: string;
+  merchants: MerchantLink[];
+  plan: Usage["plan"] | null;
+  apiBase: string;
+}) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -69,6 +74,17 @@ export function Sidebar({ tenant, merchants, plan }: { tenant: string; merchants
         <Item href="/key" path={path} icon={<IconKey />}>API keys</Item>
         <Item href="/mcp" path={path} icon={<IconAgent />}>MCP for agents</Item>
         <Item href="/catalog" path={path} icon={<IconPlug />}>Connector catalog</Item>
+        <a
+          href={`${apiBase}/docs`}
+          target="_blank"
+          rel="noopener"
+          className="flex min-h-11 items-center gap-3 rounded-lg px-3 text-ink-soft hover:bg-ink/[0.04] hover:text-ink"
+        >
+          <span className="text-ink-soft"><IconTerminal /></span>
+          <span className="flex-1">API reference</span>
+          <span aria-hidden className="text-xs">↗</span>
+          <span className="sr-only">(opens in a new tab)</span>
+        </a>
         <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Manage</p>
         <Item href="/settings" path={path} icon={<IconGear />}>Settings</Item>
       </nav>

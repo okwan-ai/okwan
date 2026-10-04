@@ -4,6 +4,7 @@ import { apiUrl } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { attentionRows, caveats, checkedAgo, digest, oldestAt, runAll, seenFindings } from "@/lib/runs";
 import { ReportRuns } from "@/lib/tab-results";
+import { myUsage } from "@/lib/usage";
 import { FindingsTable } from "../_components/findings-table";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
@@ -29,7 +30,7 @@ export default async function FindingsPage() {
 }
 
 async function FindingsBody() {
-  const runs = await runAll();
+  const [runs, usage] = await Promise.all([runAll(), myUsage(30)]);
   if (!runs) return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
   const rows = attentionRows(runs);
   const checked = runs.filter((r) => r.state === "ok");
@@ -43,6 +44,9 @@ async function FindingsBody() {
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
         {skipped > 0 && <> · {skipped} not ready (a check needs Shopify, PayPal and Stripe)</>}
         {checked.length > 0 && <> · {checkedAgo(oldestAt(runs))}</>}
+        {usage && !usage.plan.unmetered && (
+          <> · <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">{usage.plan.used.toLocaleString("en-US")} of {usage.plan.limit.toLocaleString("en-US")} requests this month</Link></>
+        )}
       </p>
       {failed.length > 0 && (
         <div role="alert" className="mb-4 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm">
