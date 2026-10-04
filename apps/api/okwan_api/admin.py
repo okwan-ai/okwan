@@ -42,7 +42,7 @@ from okwan_vault.usage import month_start
 
 from .auth import admin_actor, check_quota, get_store, meter, quota_for
 from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
-from .runs import record_run, run_clock, run_dict
+from .runs import record_run, run_clock, run_dict, twice_currency
 from .scrub import scrub as _scrub
 from .scrub import secrets_of as _secrets_of
 
@@ -308,10 +308,9 @@ def build_router() -> APIRouter:
         await meter(target, "dashboard:across")
         # The dashboard gets the trimmed rows: the same shape it reads back
         # from a stored run, and nothing a page does not render.
-        page = rest_page(paged(
-            result.summary, result.trimmed_rows(spec.ledger_currency), "outcome", outcome, limit, cursor,
-        ))
-        return {"run_id": run_id, **page}
+        rows = result.trimmed_rows(spec.ledger_currency)
+        page = rest_page(paged(result.summary, rows, "outcome", outcome, limit, cursor))
+        return {"run_id": run_id, "twice_currency": twice_currency(rows, result.summary), **page}
 
     @router.post("/{tenant_id}/reconciliations/{name}")
     async def reconcile_as(

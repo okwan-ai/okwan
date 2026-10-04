@@ -128,6 +128,7 @@ async def test_a_session_run_is_stored_and_read_back(client, store, tree, rails)
     assert "rows" not in listed[0] and listed[0]["summary"]["collected_twice"] == 1
     assert listed[0]["rows_total"] == 2
     assert listed[0]["twice_currency"] == "USD"
+    assert r.json()["twice_currency"] == "USD"
 
     one = client.get(f"/v1/tenants/{tree['merchant'].id}/runs/{run_id}", headers=tree["isv_auth"]).json()
     assert one["has_more"] is False
@@ -206,6 +207,64 @@ async def test_a_recording_failure_never_fails_the_run(client, store, tree, rail
     assert r.json()["run_id"] is None
     assert r.json()["summary"]["collected_twice"] == 1
     assert await _usage(store) == 1
+
+
+PAYER_A = "payer-a@example.com"
+PAYER_B = "payer-b@example.com"
+
+
+@pytest.fixture
+def ambiguous_rails(monkeypatch):
+    """One 450.00 order, two 450.00 PayPal payments with no invoice id: the
+    engine can't say which paid it and reports the row ambiguous with both
+    candidates. Those candidates are rail records."""
+    from okwan_recon import runner
+
+    def payment(payer, amount=45000, invoice_id=None, fee=-300):
+        return {"invoice_id": invoice_id, "currency": "USD", "initiated_at": AT, "payer_email": payer,
+                "amount_minor": amount, "fee_minor": fee, "net_minor": amount + fee}
+
+    # ... and one clean match (#2002, no fee), so the order of the stored rows shows.
+    rows = {
+        "shopify": [order("#2002", 12000), order("#2001", 45000)],
+        "paypal": [payment(EMAIL, 12000, "#2002", fee=0), payment(PAYER_A), payment(PAYER_B)],
+    }
+
+    async def side(ref, resolver, cap, overrides):
+        return rows[ref.connector], Coverage(source=ref.qualified, records=1, cap=cap, truncated=False)
+
+    monkeypatch.setattr(runner, "fetch_side", side)
+
+
+async def test_a_stored_pair_run_never_carries_a_candidate_record(client, store, tree, ambiguous_rails):
+    path = f"/v1/tenants/{tree['merchant'].id}/reconciliations/shopify_paypal"
+    r = client.post(path, headers=tree["isv_auth"])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["summary"]["ambiguous"] == 1
+    amb = [row for row in body["data"] if row["status"] == "ambiguous"]
+    assert amb and amb[0]["candidates"] == 2 and amb[0]["left_ref"] == "#2001"
+    for blob in (r.text, json.dumps((await store.get_run(tree["merchant"].id, body["run_id"])).rows)):
+        assert PAYER_A not in blob and PAYER_B not in blob and EMAIL not in blob
+    got = client.get(f"/v1/tenants/{tree['merchant'].id}/runs/{body['run_id']}", headers=tree["isv_auth"]).json()
+    assert PAYER_A not in json.dumps(got)
+    # Findings first, the clean match last: a cut at the row limit would
+    # drop the match, never the ambiguity.
+    statuses = [row["status"] for row in got["rows"]]
+    assert statuses[-1] == "matched" and "matched" not in statuses[:-1] and "ambiguous" in statuses
+
+
+async def test_a_rail_that_cannot_be_reached_is_a_stored_failed_run(client, store, tree, monkeypatch):
+    import httpx
+
+    async def gone(ref, resolver, cap, overrides):
+        raise httpx.ConnectTimeout("stripe.example took too long")
+
+    monkeypatch.setattr(across, "fetch_side", gone)
+    r = client.post(_run_path(tree), headers=tree["isv_auth"])
+    assert r.status_code == 502, r.text
+    listed = client.get(f"/v1/tenants/{tree['merchant'].id}/runs", headers=tree["isv_auth"]).json()["data"]
+    assert listed and listed[0]["status"] == "failed" and "ConnectTimeout" in listed[0]["error"]
 
 
 # ── every surface records ───────────────────────────────────────────
