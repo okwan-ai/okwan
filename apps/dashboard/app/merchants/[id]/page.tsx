@@ -28,19 +28,14 @@ export default async function MerchantPage({
   if (active === "connections") {
     const [catalog, stored] = await Promise.all([connectors(), configured(id)]);
     if (!catalog.ok || !stored.ok) return null;
+    // The sheet's subtitle says how credentials are kept; no intro here.
     return (
-      <>
-        <p className="mb-6 max-w-2xl text-sm text-ink-soft">
-          Credentials go straight to an encrypted vault under this merchant and are never shown again. Each test makes one real
-          read from the rail.
-        </p>
-        <ConnectionsGrid
-          fold
-          tenantId={id}
-          tenantKey={id}
-          connectors={catalog.data.map((c) => ({ ...c, stored: stored.data.configured[c.name] ?? [] }))}
-        />
-      </>
+      <ConnectionsGrid
+        fold
+        tenantId={id}
+        tenantKey={id}
+        connectors={catalog.data.map((c) => ({ ...c, stored: stored.data.configured[c.name] ?? [] }))}
+      />
     );
   }
 

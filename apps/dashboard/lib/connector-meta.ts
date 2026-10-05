@@ -52,12 +52,38 @@ export function inCheck(name: string): boolean {
   return (FOLD_READS as readonly string[]).includes(name);
 }
 
+/** "Orders", "Payments", "Database"; "Connector" for one not listed. */
+export function roleOf(name: string): string {
+  return ROLE[name] ?? "Connector";
+}
+
 /** "Payments · in the check", "Payments · not in the check yet", "Database". */
 export function roleLine(name: string): string {
-  const role = ROLE[name];
-  if (!role) return "Connector";
+  const role = roleOf(name);
   if (role === "Orders" || role === "Payments") return `${role} · ${inCheck(name) ? "in the check" : "not in the check yet"}`;
   return role;
+}
+
+/** A tenant's view of a connector: the fields it needs and the ones stored
+ *  (names only, never values). */
+type Stored = { name: string; credential_fields: string[]; stored: string[] };
+
+/** Every credential field the connector needs is stored. */
+export function isComplete(c: Omit<Stored, "name">): boolean {
+  return c.credential_fields.every((f) => c.stored.includes(f));
+}
+
+/** The systems a check reads that this tenant hasn't fully connected, in
+ *  FOLD_READS order. Names in `done` count as connected: they just arrived
+ *  and the refreshed props may not have landed yet. */
+export function missingForCheck<T extends Stored>(list: T[], done: string[] = []): T[] {
+  return FOLD_READS.flatMap((n) => list.filter((c) => c.name === n)).filter((c) => !isComplete(c) && !done.includes(c.name));
+}
+
+/** "Shopify, PayPal and Stripe". */
+export function andList(items: string[]): string {
+  if (items.length < 2) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 /** What the ✎ badge says for a connector that can change something. */
