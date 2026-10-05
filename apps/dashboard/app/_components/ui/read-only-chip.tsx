@@ -12,10 +12,10 @@ export function ReadOnlyChip({ tone = "light" }: { tone?: "light" | "navy" }) {
     <Link
       href="/settings?tab=security#read-only"
       title="Okwan only reads. It can't refund, charge or move money."
-      className={`inline-flex min-h-11 items-center${tone === "navy" ? " focus-visible:outline-canvas" : ""}`}
+      className={`inline-flex min-h-11 shrink-0 items-center${tone === "navy" ? " focus-visible:outline-canvas" : ""}`}
     >
       <span
-        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${
+        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${
           tone === "navy" ? "border-canvas/30 bg-transparent text-canvas/80 hover:text-canvas" : "border-line bg-canvas text-ink-soft hover:text-ink"
         }`}
       >

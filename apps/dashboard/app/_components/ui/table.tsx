@@ -1,7 +1,8 @@
 import type { ComponentProps, ReactNode } from "react";
 
 /** Tables scroll inside their own box, never the page. `flush` drops the
- *  box's border and surface for a table that sits inside a Card. */
+ *  box's border and surface for a table that sits inside a Card; the Card
+ *  clips its corners, so the scroll region's focus ring is drawn inside. */
 export function Table({ children, minWidth = 640, label, flush = false }: {
   children: ReactNode;
   minWidth?: number;
@@ -10,7 +11,7 @@ export function Table({ children, minWidth = 640, label, flush = false }: {
 }) {
   return (
     <div
-      className={flush ? "overflow-x-auto" : "overflow-x-auto rounded-xl border border-line bg-surface"}
+      className={flush ? "overflow-x-auto focus-visible:-outline-offset-2" : "overflow-x-auto rounded-xl border border-line bg-surface"}
       role="region"
       aria-label={label}
       tabIndex={label ? 0 : undefined}
