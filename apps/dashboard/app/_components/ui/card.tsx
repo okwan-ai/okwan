@@ -68,5 +68,7 @@ export function CardFooter({ children }: { children: ReactNode }) {
 export const GRID = {
   tiles: "grid gap-4 sm:grid-cols-2 xl:grid-cols-3",
   stats: "grid grid-cols-2 gap-4 lg:grid-cols-4",
-  mainAside: "grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_280px]",
+  // The aside sits beside the main column only where the main column stays
+  // wide enough for a table (≥1440px); below that it stacks under it.
+  mainAside: "grid items-start gap-6 min-[1440px]:grid-cols-[minmax(0,1fr)_280px]",
 } as const;
