@@ -185,9 +185,9 @@ export default async function ConnectorPage({ params }: { params: Promise<{ name
             )}
             <ConnectionRow
               name="Your workspace"
-              href="/connections"
+              href="/settings#own-connections"
               state={self}
-              action={`/connections?connect=${encodeURIComponent(c.name)}`}
+              action={`/settings?connect=${encodeURIComponent(c.name)}#own-connections`}
               label={label}
             />
           </CardBody>

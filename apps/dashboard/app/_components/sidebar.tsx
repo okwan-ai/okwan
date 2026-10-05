@@ -7,7 +7,7 @@ import { type RunDigest, type SeenFinding, verdictOf } from "@/lib/finding";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
-import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconKey, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
+import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
 import { PlanMeter } from "./usage/plan-meter";
 
 /** Shown in the sidebar before the list asks to be filtered. */
@@ -69,7 +69,6 @@ export function Sidebar({ tenant, merchants, plan, apiBase, verdicts, findings }
           Findings
         </Item>
         <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Developers</p>
-        <Item href="/key" path={path} icon={<IconKey />}>API keys</Item>
         <Item href="/agents" path={path} icon={<IconAgent />}>Agents</Item>
         <Item href="/integrations" path={path} icon={<IconPlug />}>Integrations</Item>
         <a

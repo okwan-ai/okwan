@@ -15,14 +15,15 @@ const PAGES: Command[] = [
   { id: "p-twice", group: "Pages", label: "Findings: collected twice", href: "/findings?outcome=collected_twice", keywords: "double refund owed" },
   { id: "p-merchants", group: "Pages", label: "Merchants", href: "/merchants", keywords: "tenants stores" },
   { id: "p-catalog", group: "Pages", label: "Integrations", href: "/integrations", keywords: "connectors catalog rest sql mcp tables routes" },
-  { id: "p-keys", group: "Pages", label: "API keys", href: "/key", keywords: "token secret" },
+  { id: "p-keys", group: "Pages", label: "API keys", href: "/settings?tab=keys", keywords: "token secret issue revoke" },
   { id: "p-mcp", group: "Pages", label: "Agents", href: "/agents", keywords: "mcp claude agent tools setup" },
   { id: "p-prompts", group: "Pages", label: "Prompts for agents", hint: "one per verdict", href: "/agents#prompts", keywords: "prompt library questions ask collected twice sql" },
   { id: "p-clients", group: "Pages", label: "Connect Claude Code, Cursor or Claude Desktop", href: "/agents?client=claude-code", keywords: "mcp client config integrations cursor desktop code" },
   { id: "p-endpoints", group: "Pages", label: "Endpoints and tools", href: "/agents#endpoints", keywords: "mcp url header rest base sql query openapi hosted tools" },
-  { id: "p-rails", group: "Pages", label: "Your own rails", href: "/connections", keywords: "connections credentials" },
+  { id: "p-rails", group: "Pages", label: "Your workspace's own connections", href: "/settings#own-connections", keywords: "connections credentials own rails" },
   { id: "p-settings", group: "Pages", label: "Settings", href: "/settings", keywords: "workspace account" },
   { id: "p-usage", group: "Pages", label: "Plan & usage", href: "/settings?tab=plan", keywords: "billing meter requests quota" },
+  { id: "p-security", group: "Pages", label: "How Okwan handles your data", href: "/settings?tab=security", keywords: "security read-only credentials vault encryption privacy" },
   { id: "a-add", group: "Actions", label: "Add a merchant", href: "/merchants?add=1", keywords: "new create" },
 ];
 
