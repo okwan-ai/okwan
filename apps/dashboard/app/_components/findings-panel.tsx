@@ -1,30 +1,27 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
-  ago, ATTENTION, type Coverage, type Finding, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, rowKey, sameCurrency,
-  SURFACE_LABEL, truncated, unconfirmedRows,
+  ago, ATTENTION, type AttentionRow, type Coverage, type Finding, railLabel, SURFACE_LABEL, truncated, unconfirmedRows,
 } from "@/lib/finding";
-import { downloadFindings } from "@/lib/csv";
 import { formatMinor } from "@/lib/money";
 import { AgentPanel } from "./agent-panel";
-import { MoneyTrail } from "./money-trail";
+import { FindingsTable, groupOf, type MerchantFilter } from "./findings-table";
 import { type Shown, useMerchantRun } from "./merchant-run";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
+import { VerdictCard } from "./verdict-card";
+import { Card, CardBody, CardHeader, GRID } from "./ui/card";
 import { EmptyState } from "./ui/empty-state";
-import { IconChevron, IconDownload, IconPlay, IconPlug } from "./ui/icons";
+import { IconPlay, IconPlug } from "./ui/icons";
+import { CopyButton } from "./ui/copy-button";
 import { OutcomeSpectrum } from "./ui/outcome-spectrum";
 import { Skeleton, SkeletonRows } from "./ui/skeleton";
-import { Table, Td, Th } from "./ui/table";
 
-/** One vocabulary across the product: a finding is a money outcome
- *  (ATTENTION); couldn't-verify is its own group, never folded into either. */
-type Filter = "all" | "findings" | "paid" | "unverifiable";
-
-export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys = [] }: {
+export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys = [], saved = 0 }: {
   apiBase: string;
+  /** How many saved checks the history below lists. */
+  saved?: number;
   /** A stored run chosen from the history, shown instead of the newest. */
   view?: Shown | null;
   /** The chosen run failed: its scrubbed error and when. */
@@ -32,7 +29,7 @@ export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys 
   /** Findings not present in the run before this one. */
   newKeys?: string[];
 }) {
-  const { busy, shown: current, error: currentError, missing, run } = useMerchantRun();
+  const { busy, shown: current, error: currentError, missing } = useMerchantRun();
   const shown = view ?? (viewError ? null : current);
   const error = viewError ? { status: 0, ...viewError } : view ? null : currentError;
   // A new ?order= on the same page (palette, drawer) remounts the result so
@@ -41,15 +38,18 @@ export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys 
 
   if (busy) return <Loading />;
   if (error) {
+    // No button here: the header's Run check is the retry.
     return (
       <div role="alert" className="rounded-xl border border-danger/30 bg-danger-soft px-5 py-4">
         <p className="font-medium text-danger">
           <span aria-hidden className="mr-1.5 font-mono">!</span>
-          {viewError ? "This" : error.at ? "The last" : "The"} run didn&apos;t finish{error.status ? ` (${error.status})` : ""}
+          {viewError ? "This" : "The last"} check couldn&apos;t run{error.status ? ` (${error.status})` : ""}
           {error.at ? <span className="font-normal text-ink-soft" suppressHydrationWarning> · {ago(error.at)}</span> : null}
         </p>
         <p className="mt-1 text-sm break-words text-ink">{error.detail}</p>
-        <Button variant="secondary" className="mt-4" onClick={() => void run()}>{viewError ? "Run again" : "Try again"}</Button>
+        <Link href="?tab=connections" scroll={false} className="mt-3 inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4">
+          Check connections →
+        </Link>
       </div>
     );
   }
@@ -59,62 +59,71 @@ export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys 
         icon={<IconPlug />}
         title={`Connect ${listOf(missing.map(railLabel))} to check this merchant`}
         benefits={[
-          "Reads the Shopify ledger, PayPal and Stripe once",
-          "One verdict per order: paid once, twice, short, or not at all",
-          "Credentials go to the vault and are never shown again",
+          "Reads Shopify orders, PayPal and Stripe once",
+          "One verdict per order: paid once, twice, short or not at all",
+          "Credentials are encrypted and never shown again",
         ]}
-      >
-        Use the Connect button above, or the Connections tab.
-      </EmptyState>
+        action={<Link href="?tab=connections" scroll={false} className="inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4">Go to Connections</Link>}
+      />
     ) : (
-      <EmptyState icon={<IconPlay />} title="No run yet">
-        Run reconciliation, above, reads the Shopify ledger, PayPal and Stripe once and says whether each order was paid exactly
-        once, twice, or not at all. Each run counts as one request against your plan and is stored, so this page shows it
-        from then on.
+      <EmptyState icon={<IconPlay />} title="No check yet">
+        Run check reads Shopify, PayPal and Stripe once and saves the result here.
       </EmptyState>
     );
   }
-  return <Result key={`${shown.runId ?? ""}:${order ?? ""}`} shown={shown} newKeys={newKeys} apiBase={apiBase} />;
+  return <Result key={`${shown.runId ?? ""}:${order ?? ""}`} shown={shown} older={Boolean(view)} saved={saved} newKeys={newKeys} apiBase={apiBase} />;
 }
 
-function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; apiBase: string }) {
+function Result({ shown, older, saved, newKeys, apiBase }: { shown: Shown; older: boolean; saved: number; newKeys: string[]; apiBase: string }) {
   const { tenantId, tenantName, justRan } = useMerchantRun();
   const order = useSearchParams().get("order");
   const f = shown.finding;
   const ranAt = new Date(shown.at);
-  const fresh = new Set(newKeys);
   const s = f.summary;
-  const findings = f.rows.filter((r) => ATTENTION.includes(r.outcome));
-  const paid = f.rows.filter((r) => r.outcome === "collected" || r.outcome === "split_tender");
-  const unverifiable = f.rows.filter((r) => r.outcome === "unverifiable");
+  // Rows as the table, the drawer and the CSV need them: the merchant, the
+  // check's time and whether it was cut short.
+  const rows: AttentionRow[] = f.rows.map((r) => ({ ...r, merchantId: tenantId, merchantName: tenantName, at: ranAt.getTime(), partial: f.partial || truncated(f) }));
   // A deep link to one order opens on the group that holds it.
-  const [filter, setFilter] = useState<Filter>(() => {
+  const [filter, setFilter] = useState<MerchantFilter>(() => {
     const hit = order ? f.rows.find((r) => r.order === order) : undefined;
-    if (!hit) return findings.length ? "findings" : "all";
-    return ATTENTION.includes(hit.outcome) ? "findings" : hit.outcome === "unverifiable" ? "unverifiable" : "paid";
+    if (hit) return groupOf(hit.outcome);
+    return f.rows.some((r) => ATTENTION.includes(r.outcome)) ? "findings" : "all";
   });
-  const rows = filter === "findings" ? findings : filter === "paid" ? paid : filter === "unverifiable" ? unverifiable : f.rows;
 
   if (s.orders === 0) {
     return (
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+      <div className={GRID.mainAside}>
         <EmptyState title="Shopify returned no orders">
-          The ledger read came back empty for the window shown under What was read, so there was nothing to check.
+          The orders read came back empty for the window shown under What was read, so there was nothing to check.
         </EmptyState>
         <CoveragePanel s={s} />
       </div>
     );
   }
 
+  const twice = s.collected_twice > 0;
+  const cur = f.twice_currency;
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <h2 className="sr-only">Result</h2>
-      {s.collected_twice > 0 && <TwiceBand f={f} />}
-
-      <section aria-label="Orders by outcome" className="rounded-xl border border-line bg-surface px-5 py-4">
-        <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+      <VerdictCard
+        ariaLabel="Verdict for this check"
+        twice={twice}
+        figure={twice
+          ? (cur ? formatMinor(s.collected_twice_minor, cur) : `${s.collected_twice} orders`)
+          : <><span aria-hidden className="mr-2 font-mono text-2xl text-ok">✓</span>None</>}
+        sub={twice
+          ? <>
+            {s.collected_twice} order{s.collected_twice === 1 ? "" : "s"}
+            {cur ? (s.overcollected_minor === s.collected_twice_minor
+              ? " · all owed back to customers"
+              : <> · <strong className="font-semibold">{formatMinor(s.overcollected_minor, cur)} owed back</strong></>) : null}
+          </>
+          : `No order taken twice in ${s.orders.toLocaleString("en-US")} checked.`}
+        leftFooter={<span className="[&_button]:text-ink"><RunStamp shown={shown} older={older} saved={saved} /></span>}
+        counts={<>
           <p>
-            <span className="text-xl font-semibold tabular-nums">{s.orders.toLocaleString("en-US")}</span>
+            <span className="text-2xl font-semibold tabular-nums">{s.orders.toLocaleString("en-US")}</span>
             <span className="ml-1.5 text-sm text-ink-soft">orders checked</span>
           </p>
           <p className="text-sm text-ink-soft">
@@ -122,264 +131,60 @@ function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; 
               ? "Match rate withheld: some orders couldn't be verified"
               : <><span className="font-semibold text-ink tabular-nums">{(s.match_rate * 100).toFixed(1)}%</span> paid exactly once</>}
           </p>
-        </div>
-        <OutcomeSpectrum summary={s} unconfirmed={unconfirmedRows(f)} animate={justRan !== null && shown.runId === justRan} />
-      </section>
+        </>}
+        spectrum={<OutcomeSpectrum summary={s} unconfirmed={unconfirmedRows(f)} animate={justRan !== null && shown.runId === justRan} />}
+        footer={<a href="#agents" className="inline-flex min-h-11 items-center underline-offset-4 hover:text-ink hover:underline">Same result for your agents ↓</a>}
+      />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="min-w-0 space-y-3">
-          <div role="group" aria-label="Filter orders" className="flex flex-wrap gap-2">
-            <Pill on={filter === "findings"} onClick={() => setFilter("findings")} count={findings.length}>Findings</Pill>
-            <Pill on={filter === "paid"} onClick={() => setFilter("paid")} count={paid.length}>Paid once</Pill>
-            {unverifiable.length > 0 && (
-              <Pill on={filter === "unverifiable"} onClick={() => setFilter("unverifiable")} count={unverifiable.length}>Couldn&apos;t verify</Pill>
-            )}
-            <Pill on={filter === "all"} onClick={() => setFilter("all")} count={f.rows.length}>All</Pill>
-            <Button
-              variant="ghost"
-              className="ml-auto"
-              disabled={!rows.length}
-              onClick={() => downloadFindings(
-                rows.map((r) => ({ ...r, merchantId: tenantId, merchantName: tenantName, at: ranAt.getTime(), partial: f.partial || truncated(f) })),
-                slug(tenantName),
-              )}
-            >
-              <IconDownload className="h-4 w-4" /> Export CSV
-            </Button>
-          </div>
-          {fresh.size > 0 && (
-            <p className="text-xs text-ink-soft">
-              <span aria-hidden className="mr-1 rounded-full bg-ink px-1.5 py-0.5 text-[11px] font-medium text-canvas">new</span>
-              {fresh.size} finding{fresh.size === 1 ? "" : "s"} not in the run before this one.
-            </p>
-          )}
-          {rows.length ? (
-            <OrderTable rows={rows} focus={order} fresh={fresh} />
-          ) : (
-            <EmptyState title={filter === "findings" ? "No findings" : "No orders here"}>
-              {filter === "findings" ? "No order was found collected twice, not adding up across rails, or unpaid in what was read." : null}
-            </EmptyState>
-          )}
-          {f.partial && (
-            <p className="text-xs text-ink-soft">The first 1,000 orders are shown. The full result pages over the API and MCP.</p>
-          )}
-        </div>
+      <div className={GRID.mainAside}>
+        <FindingsTable
+          scope="merchant"
+          rows={rows}
+          apiBase={apiBase}
+          filter={filter}
+          onFilter={setFilter}
+          newKeys={newKeys}
+          exportName={slug(tenantName)}
+          partial={f.partial}
+        />
         <CoveragePanel s={s} />
       </div>
 
-      <p className="border-t border-line pt-4 text-xs text-ink-soft">
-        Run{" "}
-        {/* Server and browser may sit in different time zones. */}
-        <time dateTime={ranAt.toISOString()} suppressHydrationWarning>{ago(shown.at)}</time>
-        {" "}from {SURFACE_LABEL[shown.surface] ?? shown.surface}
-        {shown.runId && <> · stored as <code className="font-mono">{shown.runId}</code></>}. Run again for current data.
-      </p>
-      <AgentPanel apiBase={apiBase} outcome={filter === "findings" && s.collected_twice ? "collected_twice" : filter === "unverifiable" ? "unverifiable" : undefined} />
+      <AgentPanel
+        id="agents"
+        apiBase={apiBase}
+        outcome={filter === "findings" && s.collected_twice ? "collected_twice" : filter === "unverifiable" ? "unverifiable" : undefined}
+        keyFor={tenantName}
+        setupHref={`/agents?merchant=${encodeURIComponent(tenantId)}`}
+      />
     </div>
   );
 }
 
-function TwiceBand({ f }: { f: Finding }) {
-  const s = f.summary;
-  const cur = f.twice_currency;
+/** When the shown check ran, from where, its id, and the way to the saved
+ *  checks (or back to the latest, for an older one). Sits inside the
+ *  VerdictCard, so on volt the copy control is forced to ink. */
+function RunStamp({ shown, older, saved }: { shown: Shown; older: boolean; saved: number }) {
+  const runId = shown.runId;
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl bg-volt px-5 py-4 text-ink">
-      <span aria-hidden className="font-mono text-sm font-medium">×2</span>
-      <p className="text-2xl font-semibold tracking-tight tabular-nums">
-        {cur ? formatMinor(s.collected_twice_minor, cur) : `${s.collected_twice} orders`}
-      </p>
-      <p className="text-sm font-medium">
-        collected twice · {s.collected_twice} order{s.collected_twice === 1 ? "" : "s"}
-        {cur ? <> · {formatMinor(s.overcollected_minor, cur)} owed back</> : " · owed back"}
-      </p>
-    </div>
-  );
-}
-
-function Pill({ on, onClick, count, children }: { on: boolean; onClick: () => void; count: number; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
-      className={`inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm ${
-        on ? "border-ink bg-ink text-canvas" : "border-line bg-surface text-ink-soft hover:border-ink hover:text-ink"
-      }`}
-    >
-      {children}
-      <span className="tabular-nums opacity-80">{count}</span>
-    </button>
-  );
-}
-
-/** Expanded rows are keyed by order, so a filter change never shows a
- *  different order as open. `focus` (from ?order=) opens and scrolls to one. */
-function OrderTable({ rows, focus, fresh }: { rows: FindingRow[]; focus: string | null; fresh: Set<string> }) {
-  const [open, setOpen] = useState<Set<string>>(() => new Set(focus ? [focus] : []));
-  const target = useRef<HTMLTableRowElement>(null);
-  const card = useRef<HTMLLIElement>(null);
-  useEffect(() => {
-    // The card list shows below 640px, the table above; act on the one with a box.
-    const el = [card.current, target.current].find((x) => x && x.offsetParent !== null);
-    el?.scrollIntoView({ block: "center" });
-    el?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
-  }, []);
-  const toggle = (k: string) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
-  const gapOf = (r: FindingRow) =>
-    r.collected_minor !== null && r.total_minor !== null && sameCurrency(r) ? r.collected_minor - r.total_minor : null;
-  return (
-    <>
-      {/* Narrow screens: one card per order, money first, trail full width. */}
-      <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface sm:hidden">
-        {rows.map((r, i) => {
-          const k = `${r.order}-${i}`;
-          const expanded = open.has(r.order) || open.has(k);
-          const id = `m-detail-${r.order.replace(/[^a-zA-Z0-9_-]/g, "")}-${i}`;
-          const gap = gapOf(r);
-          return (
-            <li key={k} ref={focus === r.order ? card : undefined} className={expanded ? "bg-canvas/60" : ""}>
-              <button
-                type="button"
-                aria-expanded={expanded}
-                aria-controls={id}
-                onClick={() => toggle(open.has(r.order) ? r.order : k)}
-                className="flex w-full items-start gap-3 px-4 py-3 text-left"
-              >
-                <IconChevron className={`mt-1 shrink-0 text-ink-soft transition-transform ${expanded ? "rotate-90" : ""}`} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-[13px]">{r.order}</span>
-                    <span className="text-sm font-medium tabular-nums">{taken(r)}</span>
-                  </span>
-                  <span className="mt-1 flex flex-wrap items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
-                      {fresh.has(rowKey(r)) && <NewMark />}
-                    </span>
-                    <span className="text-xs text-ink-soft tabular-nums">
-                      of {formatMinor(r.total_minor, r.currency)}
-                      {gap !== null && gap !== 0 && <> · {gap > 0 ? "+" : "−"}{formatMinor(Math.abs(gap), r.currency)} {gap > 0 ? "over" : "short"}</>}
-                    </span>
-                  </span>
-                </span>
-              </button>
-              <div id={id} hidden={!expanded} className="px-4 pb-4">{expanded && <Detail r={r} />}</div>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="hidden sm:block">
-        <Table label="Orders" minWidth={640}>
-          <thead>
-            <tr>
-              <Th className="w-12"><span className="sr-only">Details</span></Th>
-              <Th>Order</Th>
-              <Th>Outcome</Th>
-              <Th className="text-right">Order total</Th>
-              <Th className="text-right">Taken</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => {
-              const k = `${r.order}-${i}`;
-              const expanded = open.has(r.order) || open.has(k);
-              const id = `detail-${r.order.replace(/[^a-zA-Z0-9_-]/g, "")}-${i}`;
-              const gap = gapOf(r);
-              return (
-                <Fragment key={k}>
-                  <tr
-                    ref={focus === r.order ? target : undefined}
-                    className={`border-t border-line ${expanded ? "bg-canvas/60" : "hover:bg-canvas/40"} ${focus === r.order ? "outline-2 -outline-offset-2 outline-ink/30" : ""}`}
-                  >
-                    <Td className="py-1 pr-0 pl-2">
-                      <button
-                        type="button"
-                        aria-expanded={expanded}
-                        aria-controls={id}
-                        aria-label={`${expanded ? "Hide" : "Show"} details for order ${r.order}`}
-                        onClick={() => toggle(open.has(r.order) ? r.order : k)}
-                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-soft hover:bg-ink/5 hover:text-ink"
-                      >
-                        <IconChevron className={`transition-transform ${expanded ? "rotate-90" : ""}`} />
-                      </button>
-                    </Td>
-                    <Td className="font-mono text-[13px]">{r.order}</Td>
-                    <Td>
-                      <span className="inline-flex items-center gap-1.5">
-                        <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>
-                          {OUTCOME_LABEL[r.outcome] ?? r.outcome}
-                        </Badge>
-                        {fresh.has(rowKey(r)) && <NewMark />}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-ink-soft">{r.collected_on.map(railLabel).join(" + ") || "No rail"}</span>
-                    </Td>
-                    <Td className="text-right tabular-nums">{formatMinor(r.total_minor, r.currency)}</Td>
-                    <Td className="text-right tabular-nums">
-                      <span className="font-medium">{taken(r)}</span>
-                      {gap !== null && gap !== 0 && (
-                        <span className={`block text-xs ${gap > 0 ? "text-danger" : "text-ink-soft"}`}>
-                          {gap > 0 ? "+" : "−"}{formatMinor(Math.abs(gap), r.currency)} {gap > 0 ? "over" : "short"}
-                        </span>
-                      )}
-                    </Td>
-                  </tr>
-                  <tr id={id} hidden={!expanded} className="bg-canvas/60">
-                    <td />
-                    <td colSpan={4} className="px-4 pb-4 text-sm">
-                      {expanded && <Detail r={r} />}
-                    </td>
-                  </tr>
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </Table>
-      </div>
-    </>
-  );
-}
-
-/** A finding absent from the run before this one. */
-function NewMark() {
-  return <span className="rounded-full bg-ink px-1.5 py-0.5 text-[11px] font-medium text-canvas">new</span>;
-}
-
-/** The order's money trail, then what couldn't be ruled out, the API's
- *  reason as given, and the outcome code. */
-function Detail({ r }: { r: FindingRow }) {
-  return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-      <MoneyTrail r={r} />
-      <dl className="grid content-start gap-x-4 gap-y-1.5 text-sm sm:grid-cols-[110px_1fr]">
-        {r.unverified.length > 0 && (
-          <>
-            <dt className="text-xs text-ink-soft">Couldn&apos;t rule out</dt>
-            <dd>{r.unverified.map(railLabel).join(", ")}</dd>
-          </>
-        )}
-        {/* The trail already states amounts the reason gives in raw minor
-            units; show the API's reason where the trail can't explain. */}
-        {r.reason && (r.outcome === "unverifiable" || r.paid.length === 0 || r.total_minor === null || r.collected_minor === null) && (
-          <>
-            <dt className="text-xs text-ink-soft">Reason</dt>
-            <dd className="break-words text-ink-soft">{r.reason}</dd>
-          </>
-        )}
-        <dt className="text-xs text-ink-soft">Outcome code</dt>
-        <dd><code className="font-mono text-xs">{r.outcome}</code></dd>
-      </dl>
-    </div>
+    <p className="text-xs">
+      {older ? "Older check from " : "Checked "}
+      {/* Server and browser may sit in different time zones. */}
+      <time dateTime={new Date(shown.at).toISOString()} suppressHydrationWarning>{ago(shown.at)}</time>
+      {" · "}{SURFACE_LABEL[shown.surface] ?? shown.surface}
+      {runId && <>
+        {" · "}<span className="font-mono">{runId.slice(0, 8)}…</span>{" "}
+        <CopyButton value={runId} label="Copy run id" />
+      </>}
+      {older
+        ? <>{" · "}<Link href="?tab=findings" scroll={false} className="whitespace-nowrap underline underline-offset-4">Show latest</Link></>
+        : saved > 0 && <>{" · "}<a href="#history" className="whitespace-nowrap underline underline-offset-4">{saved} saved check{saved === 1 ? "" : "s"} ↓</a></>}
+    </p>
   );
 }
 
 function CoveragePanel({ s }: { s: Finding["summary"] }) {
-  const ledger = s.ledger_coverage?.source.split(".")[0] ?? "ledger";
+  const ledger = s.ledger_coverage?.source.split(".")[0] ?? "shopify";
   const sides: { name: string; cov: Coverage | null; orphans?: number }[] = [
     { name: ledger, cov: s.ledger_coverage },
     ...Object.entries(s.rails).map(([name, r]) => ({
@@ -401,14 +206,14 @@ function CoveragePanel({ s }: { s: Finding["summary"] }) {
     return { left: ((a - lo) / (hi - lo)) * 100, width: Math.max(((b - a) / (hi - lo)) * 100, 2), open: !c.span_start };
   };
   return (
-    <section aria-labelledby="coverage-title" className="h-fit rounded-xl border border-line bg-surface">
-      <h2 id="coverage-title" className="border-b border-line px-5 py-3 text-sm font-semibold">What was read</h2>
-      <ul className="divide-y divide-line">
+    <Card aria-labelledby="coverage-title" className="h-fit">
+      <CardHeader id="coverage-title" title="What was read" />
+      <CardBody list>
         {sides.map((side, i) => (
           <li key={`${side.name}-${i}`} className="px-5 py-3 text-sm">
             <p className="font-medium">
               {railLabel(side.name)}
-              {i === 0 && <span className="ml-1.5 text-xs font-normal text-ink-soft">ledger</span>}
+              {i === 0 && <span className="ml-1.5 text-xs font-normal text-ink-soft">orders</span>}
             </p>
             {side.cov ? (
               <>
@@ -439,8 +244,8 @@ function CoveragePanel({ s }: { s: Finding["summary"] }) {
             ) : null}
           </li>
         ))}
-      </ul>
-    </section>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -460,11 +265,11 @@ function span(c: Coverage): string {
 
 function Loading() {
   return (
-    <div role="status" aria-label="Reading the ledger, then each rail" className="space-y-5">
+    <div role="status" aria-label="Reading Shopify orders, then PayPal and Stripe" className="space-y-5">
       <div className="flex flex-wrap gap-x-8 gap-y-3 rounded-xl border border-line bg-surface px-5 py-4">
         {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-4 w-24" />)}
       </div>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+      <div className={GRID.mainAside}>
         <SkeletonRows rows={6} cols={4} label="Loading orders" />
         <div className="h-40 rounded-xl border border-line bg-surface p-4">
           <Skeleton className="h-3 w-28" />
@@ -478,13 +283,6 @@ function Loading() {
 
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "merchant";
-}
-
-/** What was taken: one total, or each rail's own amount when they took a
- *  currency other than the order's (a sum would add unlike units). */
-function taken(r: FindingRow): string {
-  if (!sameCurrency(r)) return r.paid.map((p) => formatMinor(p.minor, p.currency ?? r.currency)).join(" + ");
-  return r.collected_minor === null ? "—" : formatMinor(r.collected_minor, r.currency);
 }
 
 function listOf(items: string[]): string {

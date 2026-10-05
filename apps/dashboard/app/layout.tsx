@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { apiUrl, tenantTree } from "@/lib/api";
-import type { RunDigest } from "@/lib/finding";
+import { railLabel, type RunDigest } from "@/lib/finding";
 import { digest, seenFindings, storedRuns } from "@/lib/runs";
+import { connectors } from "@/lib/merchants";
 import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import "./globals.css";
@@ -9,7 +10,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   // Each page names itself, so client navigation is announced (WCAG 2.4.2).
   title: { template: "%s · Okwan", default: "Okwan" },
-  description: "Connect your payment rails and issue an API key.",
+  description: "Read-only reconciliation across Shopify, PayPal and Stripe.",
   robots: { index: false, follow: false },
 };
 
@@ -17,9 +18,10 @@ export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const tree = await tenantTree();
-  // The meter and the verdicts in the sidebar: two unmetered reads per
-  // render (the pages share them through React's cache), never a run.
-  const [usage, runs] = tree ? await Promise.all([myUsage(30), storedRuns()]) : [null, null];
+  // The meter, the verdicts and the connector names in the sidebar:
+  // unmetered reads per render (the pages share them through React's
+  // cache), never a run.
+  const [usage, runs, catalog] = tree ? await Promise.all([myUsage(30), storedRuns(), connectors()]) : [null, null, null];
   const verdicts: Record<string, RunDigest> = {};
   for (const r of runs ?? []) {
     const d = digest(r);
@@ -47,6 +49,7 @@ export default async function RootLayout({
             <Sidebar
               tenant={tree.self.name}
               merchants={tree.children.map((c) => ({ id: c.id, name: c.name }))}
+              connectors={catalog?.ok ? catalog.data.map((c) => ({ name: c.name, label: railLabel(c.name) })) : []}
               plan={usage?.plan ?? null}
               apiBase={apiUrl()}
               verdicts={verdicts}

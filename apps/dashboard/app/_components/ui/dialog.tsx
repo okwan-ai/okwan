@@ -21,10 +21,13 @@ export function useDialog(open: boolean, onClose: () => void) {
     stack.push(me);
     const before = document.activeElement as HTMLElement | null;
     const el = panel.current;
+    // What Tab can actually reach: a disclosure's summary counts, and
+    // anything folded inside a closed <details> or not rendered does not,
+    // or Tab would skip a summary or slip out past the last one.
     const focusables = () =>
       Array.from(el?.querySelectorAll<HTMLElement>(
-        'a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])',
-      ) ?? []);
+        'a[href],button:not([disabled]),input:not([disabled]),select,textarea,summary,[tabindex]:not([tabindex="-1"])',
+      ) ?? []).filter((f) => !f.closest("details:not([open]) > :not(summary)") && f.getClientRects().length > 0);
     (el?.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0])?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (stack[stack.length - 1] !== me) return;
@@ -57,11 +60,14 @@ export function useDialog(open: boolean, onClose: () => void) {
   return panel;
 }
 
-export function SlideOver({ open, onClose, title, description, children }: {
+/** A panel from the right. `icon` (decorative, e.g. a connector's logo
+ *  tile) sits beside the title; the title text names the panel. */
+export function SlideOver({ open, onClose, title, description, icon, children }: {
   open: boolean;
   onClose: () => void;
   title: string;
   description?: ReactNode;
+  icon?: ReactNode;
   children: ReactNode;
 }) {
   const panel = useDialog(open, onClose);
@@ -78,9 +84,12 @@ export function SlideOver({ open, onClose, title, description, children }: {
         className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-line bg-surface shadow-xl"
       >
         <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
-          <div className="min-w-0">
-            <h2 id="slideover-title" className="text-lg font-semibold">{title}</h2>
-            {description && <div className="mt-0.5 text-sm text-ink-soft">{description}</div>}
+          <div className="flex min-w-0 items-center gap-3">
+            {icon && <span aria-hidden className="shrink-0">{icon}</span>}
+            <div className="min-w-0">
+              <h2 id="slideover-title" className="text-lg font-semibold">{title}</h2>
+              {description && <div className="mt-0.5 text-sm text-ink-soft">{description}</div>}
+            </div>
           </div>
           <CloseButton onClose={onClose} />
         </div>

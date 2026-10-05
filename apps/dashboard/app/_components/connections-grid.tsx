@@ -1,131 +1,198 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { FOLD_READS, railLabel } from "@/lib/finding";
-import { useTabTests } from "@/lib/tab-results";
-import { ConnectorForm, type ConnectorView, TEST_LABEL } from "./connector-form";
-import { Badge } from "./ui/badge";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { andList, groups, isComplete, missingForCheck } from "@/lib/connector-meta";
+import { railLabel } from "@/lib/finding";
+import { setSheetOpen, useTabTests } from "@/lib/tab-results";
+import { ConnectorForm, type ConnectorView, isSuccess, type SheetResult } from "./connector-form";
+import { ConnectorTile } from "./connector-tile";
+import { BrandMark } from "./ui/brand-mark";
 import { buttonClass } from "./ui/button";
+import { Card, GRID } from "./ui/card";
 import { SlideOver } from "./ui/dialog";
+import { Section } from "./ui/page-header";
 
-const GROUPS: { title: string; note?: string; names: string[] }[] = [
-  { title: "Ledger", names: ["shopify"] },
-  { title: "Payment rails in the check", names: ["paypal", "stripe"] },
-  { title: "Not in the check yet", note: "Connected rails here are readable over REST, SQL and MCP, but the reconciliation doesn't fold them in yet.", names: ["paystack"] },
-];
+/** How long the sheet's pop flag may outlive its animation (the 420ms pop
+ *  plus the disc's 180ms delay); under reduced motion it never ends. */
+const SHEET_POP_MS = 700;
 
-/** Rail tiles, grouped; Manage opens the credential form in a slide-over.
- *  `tenantKey` names whose tests the tiles show (the merchant, or "self"). */
+/**
+ * A tenant's connections: the systems a check reads, then the rest, as logo
+ * tiles; Connect or Manage opens the connect sheet. `tenantKey` names whose
+ * tests and arrivals the tiles show (the merchant's id, or "self").
+ *
+ * With `fold` (a merchant's page), CheckReadiness leads while a system the
+ * check reads is missing, and after a success the sheet offers the next
+ * one. The connect moment itself (OKWAN_PROJECT.md §9 2026-10-05): the
+ * sheet's logo tile turns from grey to colour and pops once when the live
+ * read succeeds; the grid tile and the merchant header pop once each when
+ * the sheet closes, because nothing behind an open sheet pops.
+ */
 export function ConnectionsGrid({ connectors, tenantId, tenantKey, fold = false }: {
   connectors: ConnectorView[];
   tenantId?: string;
   tenantKey: string;
-  /** Show what the reconciliation still needs (a merchant's page). */
+  /** Show what a check still needs (a merchant's page). */
   fold?: boolean;
 }) {
-  // ?connect=paypal (from "Connect PayPal" anywhere) opens that form directly.
+  // ?connect=paypal (from "Connect PayPal" anywhere) opens that sheet directly.
   const asked = useSearchParams().get("connect");
   const [managing, setManaging] = useState<string | null>(
     asked && connectors.some((c) => c.name === asked) ? asked : null,
   );
+  // The open sheet's last save, its logo's pop, and whether it moved on
+  // from a previous connector (its first field then takes focus).
+  const [sheet, setSheet] = useState<SheetResult | null>(null);
+  const [sheetPop, setSheetPop] = useState(false);
+  const [chained, setChained] = useState(false);
+  // Systems that arrived while this grid is up, counted as connected before
+  // the refreshed props land.
+  const [landed, setLanded] = useState<string[]>([]);
+
+  const open = useCallback((name: string, chain = false) => {
+    setManaging(name);
+    setSheet(null);
+    setSheetPop(false);
+    setChained(chain);
+  }, []);
+  const root = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => {
+    const was = managing;
+    setManaging(null);
+    setSheet(null);
+    setSheetPop(false);
+    // The sheet hands focus back to whatever opened it. When that is gone
+    // (CheckReadiness leaves at 3 of 3), land on the tile it was about.
+    requestAnimationFrame(() => {
+      if (was && (document.activeElement === document.body || !document.activeElement)) {
+        root.current?.querySelector<HTMLElement>(`[data-connector="${CSS.escape(was)}"]`)?.focus();
+      }
+    });
+  }, [managing]);
+
   // Also when the link is followed from this tab (the grid stays mounted).
   // Used once: the param is dropped from the URL, so a later save (which
-  // refreshes the page) never reopens a form the user has moved on from.
+  // refreshes the page) never reopens a sheet the user has moved on from.
   useEffect(() => {
     if (!asked) return;
-    if (connectors.some((c) => c.name === asked)) setManaging(asked);
-    const u = new URL(window.location.href);
-    u.searchParams.delete("connect");
-    window.history.replaceState(null, "", u);
+    if (connectors.some((c) => c.name === asked)) open(asked);
+    // A task later, so on a fresh load this runs after the app router has
+    // patched history (its effect runs after this child's): only then does
+    // useSearchParams drop `connect`, and a later "Connect PayPal" link
+    // (the header strip's) counts as a change and opens the sheet again.
+    const t = setTimeout(() => {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("connect");
+      window.history.replaceState(null, "", u);
+    }, 0);
+    return () => clearTimeout(t);
   }, [asked]);
-  const tests = useTabTests();
-  const grouped = new Set(GROUPS.flatMap((g) => g.names));
-  const groups = [
-    ...GROUPS.map((g) => ({ ...g, items: g.names.flatMap((n) => connectors.filter((c) => c.name === n)) })),
-    { title: "Other connectors", note: undefined, items: connectors.filter((c) => !grouped.has(c.name)) },
-  ].filter((g) => g.items.length);
-  const current = connectors.find((c) => c.name === managing) ?? null;
 
-  const complete = (c: ConnectorView) => c.credential_fields.every((f) => c.stored.includes(f));
-  const needed = FOLD_READS.map((name) => connectors.find((c) => c.name === name)).filter((c) => c !== undefined);
-  const missing = needed.filter((c) => !complete(c));
+  // Nothing behind an open sheet pops; it plays when the sheet closes.
+  const isOpen = managing !== null;
+  useEffect(() => {
+    setSheetOpen(tenantKey, isOpen);
+  }, [tenantKey, isOpen]);
+  useEffect(() => () => setSheetOpen(tenantKey, false), [tenantKey]);
+
+  // Animationend never fires under reduced motion: clear the flag anyway.
+  useEffect(() => {
+    if (!sheetPop) return;
+    const t = setTimeout(() => setSheetPop(false), SHEET_POP_MS);
+    return () => clearTimeout(t);
+  }, [sheetPop]);
+
+  const tests = useTabTests();
+  const { check, more } = groups(connectors);
+  const current = connectors.find((c) => c.name === managing) ?? null;
+  const missing = fold ? missingForCheck(connectors) : [];
+
+  const onResult = (r: SheetResult) => {
+    setSheet(r);
+    if (r.arrived && current) {
+      setLanded((l) => [...l, current.name]);
+      setSheetPop(true);
+    }
+  };
+
+  // The sheet's logo, in the sheet's state: colour once every field is
+  // stored, the disc from this tab's last test, the pop on arrival.
+  const sheetComplete = current ? isComplete(current) || Boolean(sheet?.complete) : false;
+  const test = current ? tests[`${tenantKey}:${current.name}`] : undefined;
+  const corner = test?.status === "failed" ? "alert" : test?.status === "rows" || test?.status === "empty" ? "ok" : undefined;
+
+  // After a success the sheet's one volt moves on: the next system the check
+  // still needs (fold grids only), else Done.
+  const upNext = current && fold ? missingForCheck(connectors, [...landed, current.name])[0] : undefined;
+  const next = sheet && isSuccess(sheet) ? (
+    upNext ? (
+      <button type="button" onClick={() => open(upNext.name, true)} className={buttonClass("primary", "w-full")}>
+        Connect {railLabel(upNext.name)}
+      </button>
+    ) : (
+      <button type="button" onClick={close} className={buttonClass("primary", "w-full")}>Done</button>
+    )
+  ) : null;
+
+  const tile = (c: ConnectorView) => <ConnectorTile key={c.name} mode="tenant" c={c} tenantKey={tenantKey} onOpen={() => open(c.name)} />;
 
   return (
-    <div className="space-y-8">
-      {fold && needed.length > 0 && (
-        <section aria-label="What a check needs" className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-line bg-surface px-5 py-3">
-          <p className="text-sm font-medium">A check needs</p>
-          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            {needed.map((c) => (
-              <li key={c.name} className="inline-flex items-center gap-1.5">
-                <span aria-hidden className={complete(c) ? "text-ok" : "text-ink-soft"}>{complete(c) ? "●" : "○"}</span>
-                {railLabel(c.name)}
-                <span className="sr-only">{complete(c) ? " connected" : " not connected"}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs text-ink-soft tabular-nums">{needed.length - missing.length} of {needed.length}</p>
-          {missing.length > 0 ? (
-            <button type="button" onClick={() => setManaging(missing[0].name)} className={buttonClass("primary", "ml-auto")}>
-              Connect {railLabel(missing[0].name)}
-            </button>
-          ) : (
-            <p className="ml-auto text-sm text-ok"><span aria-hidden className="mr-1 font-mono">✓</span>Ready to check: use Run reconciliation above</p>
-          )}
-        </section>
+    <div ref={root} className="space-y-8">
+      {missing.length > 0 && (
+        // No logos here: the tiles below and the header strip carry them.
+        <Card aria-label="What a check needs" className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3">
+          <p className="text-sm font-medium">A check reads {andList(check.map((c) => railLabel(c.name)))}</p>
+          <p className="text-xs text-ink-soft tabular-nums">
+            {check.length - missing.length} of {check.length} connected
+            <span className="sr-only">. Missing: {andList(missing.map((c) => railLabel(c.name)))}.</span>
+          </p>
+          <button type="button" onClick={() => open(missing[0].name)} className={buttonClass("primary", "ml-auto max-sm:w-full")}>
+            Connect {railLabel(missing[0].name)}
+          </button>
+        </Card>
       )}
-      {groups.map((g) => (
-        <section key={g.title} aria-labelledby={`group-${g.title.replace(/\W+/g, "-")}`}>
-          <h2 id={`group-${g.title.replace(/\W+/g, "-")}`} className="mb-1 text-xs font-medium tracking-wide text-ink-soft uppercase">{g.title}</h2>
-          {g.note ? <p className="mb-3 max-w-2xl text-xs text-ink-soft">{g.note}</p> : <div className="mb-3" />}
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {g.items.map((c) => {
-              const test = tests[`${tenantKey}:${c.name}`];
-              return (
-                <li key={c.name} className="flex flex-col rounded-xl border border-line bg-surface p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="font-semibold">{railLabel(c.name)}</p>
-                    <Status c={c} />
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-xs text-ink-soft">{c.description}</p>
-                  <p className="mt-3 text-xs text-ink-soft">
-                    {test ? (
-                      <>Last test: <Badge tone={TEST_LABEL[test.status].tone} symbol={TEST_LABEL[test.status].symbol}>{TEST_LABEL[test.status].label}</Badge></>
-                    ) : (
-                      "Not tested in this session"
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setManaging(c.name)}
-                    aria-label={`Manage ${railLabel(c.name)}`}
-                    className={buttonClass("secondary", "mt-3 self-start")}
-                  >
-                    Manage
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
+      {check.length > 0 && (
+        <Section title="In the check" description="A check reads all three.">
+          <ul className={GRID.tiles}>{check.map(tile)}</ul>
+        </Section>
+      )}
+      {more.length > 0 && (
+        <Section title="More connectors" description="Readable over REST, SQL and MCP. Not in the check yet.">
+          <ul className={GRID.tiles}>{more.map(tile)}</ul>
+        </Section>
+      )}
 
       <SlideOver
         open={current !== null}
-        onClose={() => setManaging(null)}
+        onClose={close}
         title={current ? railLabel(current.name) : ""}
-        description={current?.description}
+        icon={current && (
+          <BrandMark
+            name={current.name}
+            label={railLabel(current.name)}
+            tile
+            size={40}
+            muted={!sheetComplete}
+            corner={corner}
+            pop={sheetPop}
+            onAnimationEnd={() => setSheetPop(false)}
+          />
+        )}
+        description="We save it encrypted, then test it with one read."
       >
-        {current && <ConnectorForm key={current.name} c={current} tenantId={tenantId} tenantKey={tenantKey} />}
+        {current && (
+          <ConnectorForm
+            key={current.name}
+            c={current}
+            tenantId={tenantId}
+            tenantKey={tenantKey}
+            onResult={onResult}
+            next={next}
+            autoFocus={chained}
+          />
+        )}
       </SlideOver>
     </div>
   );
-}
-
-function Status({ c }: { c: ConnectorView }) {
-  const complete = c.credential_fields.every((f) => c.stored.includes(f));
-  if (complete) return <Badge tone="ok" symbol="●">Connected</Badge>;
-  if (c.stored.length) return <Badge tone="warn" symbol="◐">Partial</Badge>;
-  return <Badge tone="neutral" symbol="○">Not connected</Badge>;
 }

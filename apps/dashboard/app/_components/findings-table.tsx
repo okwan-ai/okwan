@@ -3,50 +3,100 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ATTENTION, atStake, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, what } from "@/lib/finding";
+import {
+  ATTENTION, atStake, type AttentionRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, rowKey, sameCurrency, what,
+} from "@/lib/finding";
 import { downloadFindings } from "@/lib/csv";
 import { formatMinor } from "@/lib/money";
-import type { AttentionRow } from "@/lib/finding";
 import { MiniTrail } from "./money-trail";
 import { OrderDrawer } from "./order-drawer";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Card, CardHeader } from "./ui/card";
 import { EmptyState } from "./ui/empty-state";
-import { IconDownload, IconSearch } from "./ui/icons";
+import { IconChevron, IconDownload } from "./ui/icons";
+import { RowCard, RowCardList } from "./ui/row-card";
+import { Segmented } from "./ui/segmented";
 import { Table, Td, Th } from "./ui/table";
+import { Toolbar, ToolbarSearch, ToolbarSelect } from "./ui/toolbar";
+
+/** The merchant page's filter groups. A finding is a money outcome
+ *  (ATTENTION); couldn't-verify is its own group, never folded into either. */
+export type MerchantFilter = "findings" | "paid" | "unverifiable" | "all";
+
+const PAID = ["collected", "split_tender"];
+
+/** The rows a merchant filter shows. */
+export function inGroup(rows: AttentionRow[], f: MerchantFilter): AttentionRow[] {
+  if (f === "findings") return rows.filter((r) => ATTENTION.includes(r.outcome));
+  if (f === "paid") return rows.filter((r) => PAID.includes(r.outcome));
+  if (f === "unverifiable") return rows.filter((r) => r.outcome === "unverifiable");
+  return rows;
+}
+
+/** The group that holds an outcome, for a deep link to one order. */
+export function groupOf(outcome: string): MerchantFilter {
+  return ATTENTION.includes(outcome) ? "findings" : outcome === "unverifiable" ? "unverifiable" : "paid";
+}
 
 /**
- * The cross-merchant worksheet. Every filter runs in the browser over rows
- * the page already has: a server-side filter would re-run, and re-meter,
- * every merchant's fold. Filters live in the URL (replaceState, no server
- * round trip), so `/findings?outcome=collected_twice` can be linked.
+ * One findings table for every list of orders (§9 2026-10-05): the
+ * cross-merchant worksheet (scope "workspace"), one merchant's check
+ * (scope "merchant") and Overview's short list (toolbar off). Every filter
+ * runs in the browser over rows the page already has, so filtering never
+ * re-runs or re-meters a check. Each order opens the one OrderDrawer, the
+ * only place its proof is drawn; closing it returns focus to the row.
+ *
+ * Workspace filters live in the URL (replaceState, no server round trip),
+ * so `/findings?outcome=collected_twice` can be linked. The merchant
+ * filter is controlled by the panel, so the AgentPanel's outcome follows it.
  */
-export function FindingsTable({ rows, merchants, apiBase }: {
+export function FindingsTable({
+  scope,
+  rows,
+  apiBase,
+  merchants = [],
+  limit,
+  toolbar = true,
+  filter: filterProp,
+  onFilter,
+  newKeys = [],
+  exportName,
+  partial = false,
+}: {
+  scope: "workspace" | "merchant";
   rows: AttentionRow[];
-  merchants: { id: string; name: string }[];
   apiBase: string;
+  merchants?: { id: string; name: string }[];
+  limit?: number;
+  toolbar?: boolean;
+  filter?: MerchantFilter;
+  onFilter?: (f: MerchantFilter) => void;
+  newKeys?: string[];
+  exportName?: string;
+  partial?: boolean;
 }) {
   const params = useSearchParams();
-  const [outcome, setOutcome] = useState(() => valid(params.get("outcome")));
+  const ws = scope === "workspace";
+
+  // Workspace: ?outcome, ?merchant and ?q, synced both ways.
+  const [outcome, setOutcome] = useState(() => (ws ? valid(params.get("outcome")) : ""));
   const known = (id: string | null) => (id && merchants.some((m) => m.id === id) ? id : "");
-  const [merchant, setMerchant] = useState(() => known(params.get("merchant")));
-  const [q, setQ] = useState(() => params.get("q") ?? "");
-  const [proof, setProof] = useState<number | null>(null);
-  // A link to /findings?outcome=… from this page (palette, sidebar) keeps the
-  // table mounted; follow the URL, but not our own replaceState writes.
+  const [merchant, setMerchant] = useState(() => (ws ? known(params.get("merchant")) : ""));
+  const [q, setQ] = useState(() => (ws ? params.get("q") ?? "" : ""));
+  // The last query string this table wrote, so the URL-follow effect can
+  // tell its own writes from a navigation.
+  const own = useRef<string | null>(null);
   useEffect(() => {
+    if (!ws || !toolbar) return;
     if (params.toString() === own.current) return;
-    // Following a navigation: forget our last write, or a later link to that
-    // same URL would be mistaken for our own and ignored.
+    // Following a navigation (palette, sidebar): forget our last write, or a
+    // later link to that same URL would be mistaken for our own and ignored.
     own.current = null;
     setOutcome(valid(params.get("outcome")));
     setMerchant(known(params.get("merchant")));
     setQ(params.get("q") ?? "");
   }, [params]);
-
-  // The last query string this table wrote, so the URL-follow effect below
-  // can tell its own writes from a navigation.
-  const own = useRef<string | null>(null);
   function sync(next: { outcome?: string; merchant?: string; q?: string }) {
     const u = new URL(window.location.href);
     for (const [k, v] of Object.entries(next)) {
@@ -57,106 +107,151 @@ export function FindingsTable({ rows, merchants, apiBase }: {
     window.history.replaceState(null, "", u);
   }
 
-  const inMerchant = merchant ? rows.filter((r) => r.merchantId === merchant) : rows;
-  const counts = Object.fromEntries(ATTENTION.map((o) => [o, inMerchant.filter((r) => r.outcome === o).length]));
+  // Merchant: controlled when the panel passes it, otherwise local.
+  const [localFilter, setLocalFilter] = useState<MerchantFilter>(filterProp ?? "all");
+  const filter = filterProp ?? localFilter;
+  const setFilter = (f: MerchantFilter) => (onFilter ? onFilter(f) : setLocalFilter(f));
+
+  const inMerchant = ws && merchant ? rows.filter((r) => r.merchantId === merchant) : rows;
   const shown = useMemo(() => {
+    if (!toolbar) return rows.slice(0, limit ?? rows.length);
+    if (!ws) return inGroup(rows, filter);
     const term = q.trim().toLowerCase().replace(/^#/, "");
     return inMerchant.filter((r) => (!outcome || r.outcome === outcome) && (!term || r.order.toLowerCase().replace(/^#/, "").includes(term)));
-  }, [inMerchant, outcome, q]);
+  }, [rows, toolbar, limit, ws, filter, inMerchant, outcome, q]);
+  const total = rows.length;
+  const fresh = useMemo(() => new Set(newKeys), [newKeys]);
+
+  // One drawer over the filtered list. A merchant-page ?order= opens it on
+  // that order when the table mounts (the panel picks the group holding it).
+  const order = params.get("order");
+  const [proof, setProof] = useState<number | null>(() => {
+    if (ws || !order) return null;
+    const i = shown.findIndex((r) => r.order === order);
+    return i >= 0 ? i : null;
+  });
+  const deskButtons = useRef<(HTMLButtonElement | null)[]>([]);
+  const phoneButtons = useRef<(HTMLButtonElement | null)[]>([]);
+  function close() {
+    const i = proof;
+    setProof(null);
+    if (i === null) return;
+    // Back to the row's order button, including after prev/next and a deep
+    // link; the visible one (the table above sm, the card list below).
+    requestAnimationFrame(() => {
+      const el = [phoneButtons.current[i], deskButtons.current[i]].find((x) => x && x.offsetParent !== null);
+      el?.focus();
+    });
+  }
+
+  const counts = Object.fromEntries(ATTENTION.map((o) => [o, inMerchant.filter((r) => r.outcome === o).length]));
+  const unverifiable = ws ? 0 : inGroup(rows, "unverifiable").length;
+  const filters = ws ? (
+    <Segmented
+      label="Filter by outcome"
+      value={outcome || "all"}
+      onChange={(k) => { const o = k === "all" ? "" : k; setOutcome(o); sync({ outcome: o }); }}
+      items={[
+        { key: "all", label: "All findings", count: inMerchant.length },
+        ...ATTENTION.map((o) => ({ key: o, label: OUTCOME_LABEL[o], glyph: OUTCOME_MARK[o], count: counts[o] })),
+      ]}
+    />
+  ) : (
+    <Segmented
+      label="Filter orders"
+      value={filter}
+      onChange={(k) => setFilter(k as MerchantFilter)}
+      items={[
+        { key: "findings", label: "Findings", count: inGroup(rows, "findings").length },
+        { key: "paid", label: "Paid once", count: inGroup(rows, "paid").length },
+        ...(unverifiable > 0 ? [{ key: "unverifiable", label: "Couldn't verify", count: unverifiable }] : []),
+        { key: "all", label: "All", count: rows.length },
+      ]}
+    />
+  );
+
+  const exportCsv = () => downloadFindings(shown, exportName ?? "findings");
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Filter by outcome" className="flex flex-wrap gap-2">
-          <Chip on={!outcome} onClick={() => { setOutcome(""); sync({ outcome: "" }); }} count={inMerchant.length}>All findings</Chip>
-          {ATTENTION.map((o) => (
-            <Chip key={o} on={outcome === o} onClick={() => { setOutcome(o); sync({ outcome: o }); }} count={counts[o]} mark={OUTCOME_MARK[o]}>
-              {OUTCOME_LABEL[o]}
-            </Chip>
-          ))}
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <label className="relative">
-            <span className="sr-only">Find an order</span>
-            <IconSearch className="pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-ink-soft" />
-            <input
-              value={q}
-              onChange={(e) => { setQ(e.target.value); sync({ q: e.target.value }); }}
-              placeholder="Order #"
-              className="field w-36 py-2 pl-8"
-            />
-          </label>
-          <label>
-            <span className="sr-only">Merchant</span>
-            <select
-              value={merchant}
-              onChange={(e) => { setMerchant(e.target.value); sync({ merchant: e.target.value }); }}
-              className="field w-auto min-w-48 py-2"
-            >
-              <option value="">All merchants ({rows.length})</option>
-              {merchants.map((m) => (
-                <option key={m.id} value={m.id}>{m.name} ({rows.filter((r) => r.merchantId === m.id).length})</option>
-              ))}
-            </select>
-          </label>
-          <Button variant="secondary" onClick={() => downloadFindings(shown)} disabled={!shown.length}>
-            <IconDownload className="h-4 w-4" /> Export CSV
-          </Button>
-        </div>
-      </div>
-      <p className="text-xs text-ink-soft" aria-live="polite">
-        {shown.length} of {rows.length} finding{rows.length === 1 ? "" : "s"} shown
-        {shown.length > 0 && <>{" · "}{stakeTotals(shown)}</>}
-      </p>
+    <div className="min-w-0">
+      {toolbar && (
+        <Toolbar filters={filters}>
+          {ws && (
+            <>
+              <ToolbarSearch
+                label="Find an order"
+                placeholder="Order #"
+                value={q}
+                onChange={(e) => { setQ(e.target.value); sync({ q: e.target.value }); }}
+              />
+              <ToolbarSelect
+                aria-label="Merchant"
+                value={merchant}
+                onChange={(e) => { setMerchant(e.target.value); sync({ merchant: e.target.value }); }}
+              >
+                <option value="">All merchants ({rows.length})</option>
+                {merchants.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name} ({rows.filter((r) => r.merchantId === m.id).length})</option>
+                ))}
+              </ToolbarSelect>
+            </>
+          )}
+        </Toolbar>
+      )}
+      {toolbar && !ws && fresh.size > 0 && (
+        <p className="mb-3 flex flex-wrap items-center gap-2 text-xs text-ink-soft">
+          <Badge title="Not in the check before this one">New</Badge>
+          {fresh.size} finding{fresh.size === 1 ? "" : "s"} not in the check before this one.
+        </p>
+      )}
 
       {shown.length === 0 ? (
-        <EmptyState title={rows.length ? "No finding matches these filters" : "Nothing needs attention"}>
-          {rows.length ? "Clear a filter to see the rest." : "No order was found collected twice, not adding up across rails, or unpaid in what was read."}
-        </EmptyState>
+        ws ? (
+          <EmptyState title={rows.length ? "No finding matches these filters" : "Nothing needs attention"}>
+            {rows.length ? "Clear a filter to see the rest." : "No order was collected twice, short or unpaid in what was read."}
+          </EmptyState>
+        ) : (
+          <EmptyState title={filter === "findings" ? "No findings" : "No orders here"}>
+            {filter === "findings" ? "No order was collected twice, short or unpaid in what was read." : null}
+          </EmptyState>
+        )
       ) : (
         <>
-          {/* Narrow screens: one stacked card per finding, money first. */}
-          <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface sm:hidden">
-            {shown.map((r, i) => {
-              const s = atStake(r);
-              return (
-                <li key={`${r.merchantId}-${r.order}-${i}`}>
-                  <button type="button" onClick={() => setProof(i)} className="block w-full px-4 py-3 text-left">
-                    <span className="flex items-center justify-between gap-3">
-                      <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome]}</Badge>
-                      <span className="text-right text-sm font-semibold tabular-nums">
-                        {s ? formatMinor(s.minor, r.currency) : "—"}
-                        {s && <span className="block text-[11px] font-normal text-ink-soft">{s.label}</span>}
-                      </span>
-                    </span>
-                    <span className="mt-1 block text-sm"><span className="font-mono">{r.order}</span> · {what(r, formatMinor)}</span>
-                    <span className="mt-0.5 block text-xs text-ink-soft">{r.merchantName}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="hidden sm:block">
-            <Table label="Findings" minWidth={820}>
+          <Card flush className="hidden sm:block">
+            {toolbar && (
+              <CardHeader
+                title={<span aria-live="polite">{shown.length} of {total} {ws ? "shown" : "orders"}</span>}
+                description={<span aria-live="polite">{stakeTotals(shown)}</span>}
+                actions={<ExportButton onClick={exportCsv} />}
+              />
+            )}
+            <Table label={ws ? "Findings" : "Orders"} minWidth={ws ? 820 : 720} flush>
               <thead>
                 <tr>
                   <Th>Outcome</Th>
                   <Th>Order</Th>
                   <Th>What happened</Th>
                   <Th className="hidden w-28 lg:table-cell"><span className="sr-only">Order against what was taken</span></Th>
-                  <Th>Merchant</Th>
+                  {ws && <Th>Merchant</Th>}
                   <Th className="text-right">At stake</Th>
+                  <Th className="w-12"><span className="sr-only">Open</span></Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {shown.map((r, i) => {
-                  const s = atStake(r);
+                  const m = money(r);
                   return (
                     <tr key={`${r.merchantId}-${r.order}-${i}`} className="hover:bg-canvas/60">
-                      <Td><Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome]}</Badge></Td>
+                      <Td>
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
+                          {fresh.has(rowKey(r)) && <Badge title="Not in the check before this one">New</Badge>}
+                        </span>
+                      </Td>
                       <Td>
                         <button
                           type="button"
+                          ref={(el) => { deskButtons.current[i] = el; }}
                           onClick={() => setProof(i)}
                           aria-label={`Show the proof for order ${r.order}`}
                           className="inline-flex min-h-11 items-center font-mono text-[13px] underline underline-offset-4 decoration-line-strong hover:decoration-ink"
@@ -166,26 +261,99 @@ export function FindingsTable({ rows, merchants, apiBase }: {
                       </Td>
                       <Td className="text-ink-soft">{what(r, formatMinor)}</Td>
                       <Td className="hidden lg:table-cell"><MiniTrail r={r} /></Td>
-                      <Td>
-                        <Link href={`/merchants/${encodeURIComponent(r.merchantId)}`} className="inline-flex min-h-11 items-center whitespace-nowrap underline-offset-4 hover:underline">
-                          {r.merchantName}
-                        </Link>
-                      </Td>
+                      {ws && (
+                        <Td>
+                          <Link
+                            href={`/merchants/${encodeURIComponent(r.merchantId)}?tab=findings`}
+                            className="inline-flex min-h-11 items-center whitespace-nowrap underline-offset-4 hover:underline"
+                          >
+                            {r.merchantName}
+                          </Link>
+                        </Td>
+                      )}
                       <Td className="text-right">
-                        <span className="block font-semibold tabular-nums">{s ? formatMinor(s.minor, r.currency) : "—"}</span>
-                        {s && <span className="block text-[11px] text-ink-soft">{s.label}</span>}
+                        {m ? (
+                          <>
+                            <span className={`block font-semibold tabular-nums${m.soft ? " text-ink-soft" : ""}`}>{m.value}</span>
+                            <span className="block text-xs text-ink-soft">{m.label}</span>
+                          </>
+                        ) : (
+                          <span className="text-ink-soft">—</span>
+                        )}
+                      </Td>
+                      <Td className="py-1 pr-2">
+                        <button
+                          type="button"
+                          onClick={() => setProof(i)}
+                          aria-label={`Open order ${r.order}`}
+                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-ink-soft hover:bg-ink/5"
+                        >
+                          <IconChevron />
+                        </button>
                       </Td>
                     </tr>
                   );
                 })}
               </tbody>
             </Table>
-          </div>
+          </Card>
+
+          {/* Phones: the count and money line, then one card per order. */}
+          {toolbar && (
+            <div className="mb-3 flex items-center justify-between gap-3 sm:hidden">
+              <div className="min-w-0" aria-live="polite">
+                <p className="text-sm font-semibold">{shown.length} of {total} {ws ? "shown" : "orders"}</p>
+                <p className="text-xs text-ink-soft">{stakeTotals(shown)}</p>
+              </div>
+              <ExportButton onClick={exportCsv} />
+            </div>
+          )}
+          <RowCardList label={ws ? "Findings" : "Orders"}>
+            {shown.map((r, i) => {
+              const m = money(r);
+              return (
+                <RowCard
+                  key={`${r.merchantId}-${r.order}-${i}`}
+                  onClick={() => setProof(i)}
+                  buttonRef={(el) => { phoneButtons.current[i] = el; }}
+                  title={<Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>}
+                  money={m ?? undefined}
+                  sentence={<><span className="font-mono text-[13px]">{r.order}</span> · {what(r, formatMinor)}</>}
+                  meta={ws ? r.merchantName : fresh.has(rowKey(r)) ? <Badge title="Not in the check before this one">New</Badge> : undefined}
+                />
+              );
+            })}
+          </RowCardList>
         </>
       )}
-      <OrderDrawer rows={shown} index={proof} onIndex={setProof} onClose={() => setProof(null)} apiBase={apiBase} />
+      {partial && (
+        <p className="mt-3 text-xs text-ink-soft">The first 1,000 orders are shown. The full result pages over the API and MCP.</p>
+      )}
+      <OrderDrawer rows={shown} index={proof} onIndex={setProof} onClose={close} apiBase={apiBase} onMerchantPage={!ws} />
     </div>
   );
+}
+
+function ExportButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button variant="secondary" onClick={onClick} className="max-sm:w-11 max-sm:px-0">
+      <IconDownload className="h-4 w-4" /> <span className="max-sm:sr-only">Export CSV</span>
+    </Button>
+  );
+}
+
+/** At stake for a finding; what was paid (soft) for a paid-once row;
+ *  nothing for couldn't-verify. Never a finding tone on a paid row. */
+function money(r: AttentionRow): { value: string; label: string; soft?: boolean } | null {
+  const s = atStake(r);
+  if (s) return { value: formatMinor(s.minor, r.currency), label: s.label };
+  if (PAID.includes(r.outcome)) {
+    const value = sameCurrency(r)
+      ? r.collected_minor === null ? null : formatMinor(r.collected_minor, r.currency)
+      : r.paid.map((p) => `${railLabel(p.rail)} ${formatMinor(p.minor, p.currency ?? r.currency)}`).join(" + ");
+    return value ? { value, label: "paid", soft: true } : null;
+  }
+  return null;
 }
 
 function valid(o: string | null): string {
@@ -203,27 +371,4 @@ function stakeTotals(rows: AttentionRow[]): string {
     sums.set(key, { minor: (cur?.minor ?? 0) + s.minor, currency: r.currency, label: s.label });
   }
   return [...sums.values()].map((v) => `${formatMinor(v.minor, v.currency)} ${v.label}`).join(" · ");
-}
-
-function Chip({ on, onClick, count, mark, children }: {
-  on: boolean;
-  onClick: () => void;
-  count: number;
-  mark?: string;
-  children: string;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
-      className={`inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm ${
-        on ? "border-ink bg-ink text-canvas" : "border-line bg-surface text-ink-soft hover:border-ink hover:text-ink"
-      }`}
-    >
-      {mark && <span aria-hidden className="font-mono text-xs">{mark}</span>}
-      {children}
-      <span className="tabular-nums opacity-80">{count}</span>
-    </button>
-  );
 }

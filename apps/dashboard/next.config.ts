@@ -6,8 +6,20 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   // /results became /findings in v1.12; old links and bookmarks follow.
+  // The one-home-per-object pages (§9 2026-10-05) redirect with 307 until
+  // the owner signs off on the new URLs, then become permanent. The browser
+  // keeps a #fragment across a redirect: /catalog#cat-paypal lands on the
+  // PayPal tile, whose id is cat-paypal, and /mcp#prompts on the prompts.
   async redirects() {
-    return [{ source: "/results", destination: "/findings", permanent: true }];
+    return [
+      { source: "/results", destination: "/findings", permanent: true },
+      { source: "/catalog", destination: "/integrations", permanent: false },
+      // The query passes through: /mcp?client=cursor lands on /agents?client=cursor.
+      { source: "/mcp", destination: "/agents", permanent: false },
+      { source: "/key", destination: "/settings?tab=keys", permanent: false },
+      // Workspace is Settings' default tab; ?connect=paypal passes through and opens that sheet.
+      { source: "/connections", destination: "/settings", permanent: false },
+    ];
   },
   async headers() {
     return [
