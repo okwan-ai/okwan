@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { nowReadableAs } from "@/lib/connector-meta";
 import { railLabel } from "@/lib/finding";
 import { markArrived, reportTest, type TestResult } from "@/lib/tab-results";
@@ -134,8 +134,27 @@ export function ConnectorForm({ c, tenantId, tenantKey, onResult, next, autoFocu
     router.refresh();
   }
 
+  // A connector that declares writes is not "only read": WhatsApp's two
+  // sends are mounted on the hosted REST (OKWAN_PROJECT.md §9 2026-10-04),
+  // so its sheet names them instead of claiming read-only.
+  const writes = c.writes ?? [];
   const readOnly = (
-    <p className="text-xs text-ink-soft">Okwan only reads this account. It can&apos;t refund, charge or move money.</p>
+    <p className="text-xs text-ink-soft">
+      {writes.length === 0 ? (
+        <>Okwan only reads this account. It can&apos;t refund, charge or move money.</>
+      ) : (
+        <>
+          Okwan reads this account and can call its write operations:{" "}
+          {writes.map((w, i) => (
+            <Fragment key={w}>
+              {i > 0 && ", "}
+              <code className="font-mono">{w}</code>
+            </Fragment>
+          ))}
+          . It can&apos;t refund, charge or move money.
+        </>
+      )}
+    </p>
   );
   const fieldsForm = (
     <form onSubmit={submit} className="space-y-4" autoComplete="off">

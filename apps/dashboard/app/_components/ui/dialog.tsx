@@ -21,10 +21,13 @@ export function useDialog(open: boolean, onClose: () => void) {
     stack.push(me);
     const before = document.activeElement as HTMLElement | null;
     const el = panel.current;
+    // What Tab can actually reach: a disclosure's summary counts, and
+    // anything folded inside a closed <details> or not rendered does not,
+    // or Tab would skip a summary or slip out past the last one.
     const focusables = () =>
       Array.from(el?.querySelectorAll<HTMLElement>(
-        'a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])',
-      ) ?? []);
+        'a[href],button:not([disabled]),input:not([disabled]),select,textarea,summary,[tabindex]:not([tabindex="-1"])',
+      ) ?? []).filter((f) => !f.closest("details:not([open]) > :not(summary)") && f.getClientRects().length > 0);
     (el?.querySelector<HTMLElement>("[data-autofocus]") ?? focusables()[0])?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (stack[stack.length - 1] !== me) return;
