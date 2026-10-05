@@ -25,7 +25,7 @@ export function PromptLibrary({ apiBase }: { apiBase: string }) {
               )}
             </div>
             <p className="px-4 pt-2 text-sm text-ink-soft">{p.summary}</p>
-            <p className="mt-3 border-t border-line bg-canvas/60 px-4 py-2 font-mono text-[12px] leading-relaxed break-all text-ink">{p.call}</p>
+            <p className="mt-3 border-t border-line bg-canvas/60 px-4 py-2 font-mono text-xs leading-relaxed break-all text-ink">{p.call}</p>
             <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-line px-2 py-1.5 text-xs">
               <CopyButton value={promptText(p)} label={`Copy prompt: ${p.question}`} text="Copy prompt" />
               <CopyButton value={p.rest(apiBase)} label={`Copy REST: ${p.question}`} text="REST" />

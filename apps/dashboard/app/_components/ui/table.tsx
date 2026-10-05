@@ -1,9 +1,20 @@
 import type { ComponentProps, ReactNode } from "react";
 
-/** Tables scroll inside their own box, never the page. */
-export function Table({ children, minWidth = 640, label }: { children: ReactNode; minWidth?: number; label?: string }) {
+/** Tables scroll inside their own box, never the page. `flush` drops the
+ *  box's border and surface for a table that sits inside a Card. */
+export function Table({ children, minWidth = 640, label, flush = false }: {
+  children: ReactNode;
+  minWidth?: number;
+  label?: string;
+  flush?: boolean;
+}) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-line bg-surface" role="region" aria-label={label} tabIndex={label ? 0 : undefined}>
+    <div
+      className={flush ? "overflow-x-auto" : "overflow-x-auto rounded-xl border border-line bg-surface"}
+      role="region"
+      aria-label={label}
+      tabIndex={label ? 0 : undefined}
+    >
       <table className="w-full text-left text-sm" style={{ minWidth }}>
         {children}
       </table>

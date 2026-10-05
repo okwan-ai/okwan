@@ -14,7 +14,7 @@ export function MerchantTabs({ rails }: { rails: number }) {
         href: t.id === "findings" ? path : `${path}?tab=${t.id}`,
         label: t.label,
         active: t.id === active,
-        count: t.id === "connections" ? rails : undefined,
+        badge: t.id === "connections" ? { text: String(rails), tone: "neutral", label: "connected" } : undefined,
       }))}
     />
   );

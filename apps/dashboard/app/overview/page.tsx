@@ -73,13 +73,7 @@ async function OverviewBody() {
   const keySeen = surfaces.some((s) => s.startsWith("mcp:") || s.startsWith("rest:"));
   const agentSeen = surfaces.some((s) => s.startsWith("mcp:"));
   const steps = setupSteps(runs, keySeen, agentSeen);
-  const readyNow = runs.filter((r) => eligible(r.merchant)).length;
-  const strip = (
-    <PlanStrip
-      usage={usage}
-      spend={`Opening this page runs nothing. Run all checks each ready merchant once (${readyNow} ready now); each check is one request.`}
-    />
-  );
+  const strip = <PlanStrip usage={usage} />;
 
   // Before the first check there is nothing to report: setup leads.
   if (checked.length === 0) {
@@ -120,7 +114,7 @@ async function OverviewBody() {
 
       <Section
         title="Merchants"
-        aside={<>{coverageLine(runs)} · <Link href="/merchants" className="underline underline-offset-4 hover:text-ink">All merchants</Link></>}
+        aside={<span>{coverageLine(runs)} · <Link href="/merchants" className="underline underline-offset-4 hover:text-ink">All merchants</Link></span>}
       >
         <MerchantTable runs={runs} />
       </Section>

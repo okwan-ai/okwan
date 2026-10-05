@@ -31,6 +31,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         items={SETTINGS_TABS.map((t) => ({
           href: t.id === "workspace" ? "/settings" : `/settings?tab=${t.id}`,
           label: t.label,
+          short: t.short,
           active: t.id === active,
         }))}
       />

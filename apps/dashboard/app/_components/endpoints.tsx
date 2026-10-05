@@ -86,7 +86,7 @@ function Field({ label, value, copy = true }: { label: string; value: string; co
     <div className="min-w-0">
       <p className="text-xs text-ink-soft">{label}</p>
       <div className="flex items-center gap-1">
-        <code className="min-w-0 flex-1 rounded-md border border-line bg-canvas px-2 py-1.5 font-mono text-[12px] break-all">{value}</code>
+        <code className="min-w-0 flex-1 rounded-md border border-line bg-canvas px-2 py-1.5 font-mono text-xs break-all">{value}</code>
         {copy && <CopyButton value={value} label={`Copy ${label}`} />}
       </div>
     </div>

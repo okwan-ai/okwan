@@ -47,10 +47,7 @@ async function FindingsBody() {
 
   return (
     <>
-      <PlanStrip
-        usage={usage}
-        spend={`Opening this page runs nothing. Run all checks each ready merchant once (${runs.filter((r) => eligible(r.merchant)).length} ready now); each check is one request.`}
-      />
+      <PlanStrip usage={usage} />
       <p className="mb-4 text-sm text-ink-soft">
         {checked.length} of {runs.length} merchant{runs.length === 1 ? "" : "s"} checked
         {skipped > 0 && <> · {skipped} not ready (a check needs Shopify, PayPal and Stripe)</>}
