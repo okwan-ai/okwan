@@ -30,11 +30,9 @@ export default async function McpPage({ searchParams }: { searchParams: Promise<
           An agent reads one merchant at a time, with a key issued for that merchant.
         </EmptyState>
       )}
-      <div id="prompts">
-        <Section title="Prompts your agent can run" aside="One question per verdict that needs a look, and one in SQL, each bound to its exact call">
-          <PromptLibrary apiBase={apiBase} />
-        </Section>
-      </div>
+      <Section id="prompts" title="Prompts your agent can run" aside="One question per verdict that needs a look, and one in SQL, each bound to its exact call">
+        <PromptLibrary apiBase={apiBase} />
+      </Section>
       <Section title="Tools on the hosted server">
         <dl className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
           {HOSTED_TOOLS.map(({ name, what }) => (

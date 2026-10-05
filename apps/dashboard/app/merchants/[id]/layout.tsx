@@ -84,7 +84,7 @@ export default async function MerchantLayout({
         }
         actions={<Suspense><RunButton /></Suspense>}
       />
-      <PlanStrip usage={usage} spend={`Run checks ${name} once: one request.`} />
+      <PlanStrip usage={usage} />
       <Suspense><MerchantTabs rails={rails.ready.length} /></Suspense>
       <div className="pt-6">{children}</div>
     </MerchantRunProvider>

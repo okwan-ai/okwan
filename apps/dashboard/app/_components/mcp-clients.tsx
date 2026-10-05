@@ -107,7 +107,7 @@ function Rich({ text }: { text: string }): ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
   return parts.map((p, i) => {
     if (p.startsWith("**")) return <strong key={i} className="font-semibold text-ink">{p.slice(2, -2)}</strong>;
-    if (p.startsWith("`")) return <code key={i} className="rounded bg-canvas px-1 font-mono text-[12px] text-ink">{p.slice(1, -1)}</code>;
+    if (p.startsWith("`")) return <code key={i} className="rounded bg-canvas px-1 font-mono text-xs text-ink">{p.slice(1, -1)}</code>;
     return p;
   });
 }

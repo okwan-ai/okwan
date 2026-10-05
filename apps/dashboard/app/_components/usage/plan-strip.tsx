@@ -4,13 +4,13 @@ import { planState, resetAfter, type Usage } from "@/lib/usage-shape";
 /**
  * The page-level warning on the pages whose next click spends a request.
  * Nothing below 80% of the plan: a healthy account never sees it. At 80%
- * it states the price in the product's own unit (`spend`); at the limit it
- * states the consequence (a 402 on REST and checks, an error result for an
- * agent) and the reset instant from the API's month start, never the
- * browser clock. The sidebar meter stays the always-on gauge. Never volt;
- * warn is ink, danger is danger.
+ * it states the numbers only (what a click costs sits under the button
+ * that spends it); at the limit it states the consequence (a 402 on REST
+ * and checks, an error result for an agent) and the reset instant from the
+ * API's month start, never the browser clock. The sidebar meter stays the
+ * always-on gauge. Never volt; warn is ink, danger is danger.
  */
-export function PlanStrip({ usage, spend }: { usage: Usage | null; spend: string }) {
+export function PlanStrip({ usage }: { usage: Usage | null }) {
   if (!usage || usage.plan.unmetered) return null;
   const s = planState(usage.plan);
   if (s.state === "ok") return null;
@@ -33,7 +33,7 @@ export function PlanStrip({ usage, spend }: { usage: Usage | null; spend: string
           </>
         ) : (
           <>
-            {n(p.used)} of {n(p.limit)} requests used this month · {n(p.remaining ?? 0)} left. {spend}
+            {n(p.used)} of {n(p.limit)} requests used this month · {n(p.remaining ?? 0)} left.
           </>
         )}
       </p>

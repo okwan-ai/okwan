@@ -90,7 +90,7 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
               const write = writes.has(`${res}.${op}`);
               return (
                 <li key={path} className="flex items-center gap-1">
-                  <code className="min-w-0 truncate font-mono text-[12px]">{path}</code>
+                  <code className="min-w-0 truncate font-mono text-xs">{path}</code>
                   {write && (
                     <span className="shrink-0 rounded-full border border-ink-soft/50 px-1.5 font-mono text-[11px] text-ink" title="Not read-only: this operation changes something on the rail.">
                       ✎ <span className="font-sans">write</span>
@@ -109,7 +109,7 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
             <ul className="space-y-1">
               {c.sql_tables.map((t) => (
                 <li key={t} className="flex items-center gap-1">
-                  <code className="font-mono text-[12px]">{t}</code>
+                  <code className="font-mono text-xs">{t}</code>
                   <CopyButton value={`SELECT * FROM ${t} LIMIT 20`} label={`Copy a query over ${t}`} />
                 </li>
               ))}
@@ -124,7 +124,7 @@ function ConnectorCard({ c, base }: { c: Connector; base: string }) {
         </Surface>
 
         <Surface title="MCP" note="Hosted: four tools over the tables. SDK: one tool per operation.">
-          <ul className="space-y-1 text-[12px]">
+          <ul className="space-y-1 text-xs">
             {c.sql_tables?.length ? (
               <li><code className="font-mono">okwan_query</code> <span className="text-ink-soft">over {c.sql_tables.length} table{c.sql_tables.length === 1 ? "" : "s"}</span></li>
             ) : null}

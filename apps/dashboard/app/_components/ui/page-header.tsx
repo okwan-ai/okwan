@@ -1,35 +1,96 @@
-import type { ReactNode } from "react";
+import Link from "next/link";
+import { Fragment, type ReactNode } from "react";
 
-/** The page's title row: Fraunces title on the left, actions on the right. */
+export type Crumb = { href: string; label: string };
+
+/**
+ * The page's title row: an optional trail back, the Fraunces title (with
+ * an optional icon), one line of description, a meta row, and at most one
+ * primary and one secondary action on the right, top-aligned with the title.
+ * Buttons that spend requests carry their own cost note.
+ *
+ * `eyebrow` and a ReactNode `description` are kept for the callers that
+ * still use them; commit 12 of the reorganisation narrows `description` to
+ * one string and removes `eyebrow`. The two-line clamp the one-sentence
+ * description gets arrives with that narrowing, so no caller's longer text
+ * is cut off before it is rewritten.
+ */
 export function PageHeader({
   title,
-  eyebrow,
+  icon,
+  breadcrumb,
   description,
+  meta,
   actions,
+  eyebrow,
 }: {
   title: ReactNode;
-  eyebrow?: ReactNode;
+  icon?: ReactNode;
+  breadcrumb?: Crumb[];
   description?: ReactNode;
+  meta?: ReactNode;
   actions?: ReactNode;
+  /** @deprecated Use `breadcrumb` or `meta`. */
+  eyebrow?: ReactNode;
 }) {
+  const back = breadcrumb?.[breadcrumb.length - 1];
   return (
-    <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
-      <div className="min-w-0">
+    <header className="mb-8 flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+      <div className="min-w-0 max-w-2xl">
+        {breadcrumb && back && (
+          <>
+            <nav aria-label="Breadcrumb" className="mb-2 hidden text-sm text-ink-soft sm:block">
+              <ol className="flex items-center gap-1.5">
+                {breadcrumb.map((c) => (
+                  <Fragment key={c.href}>
+                    <li><Link href={c.href} className="hover:text-ink hover:underline">{c.label}</Link></li>
+                    <li aria-hidden>/</li>
+                  </Fragment>
+                ))}
+                <li aria-current="page" className="truncate text-ink">{title}</li>
+              </ol>
+            </nav>
+            <Link href={back.href} className="mb-2 inline-flex min-h-11 items-center gap-1 text-sm text-ink-soft hover:text-ink sm:hidden">
+              <span aria-hidden>‹</span> {back.label}
+            </Link>
+          </>
+        )}
         {eyebrow && <div className="mb-2 text-sm text-ink-soft">{eyebrow}</div>}
-        <h1 className="font-display text-3xl font-normal tracking-tight sm:text-4xl">{title}</h1>
-        {description && <div className="mt-2 max-w-2xl text-sm text-ink-soft">{description}</div>}
+        <div className="flex items-center gap-3">
+          {icon}
+          <h1 className="font-display text-3xl font-normal tracking-tight sm:text-4xl">{title}</h1>
+        </div>
+        {description && <div className="mt-2 text-sm text-ink-soft">{description}</div>}
+        {meta && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-soft">{meta}</div>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 flex-wrap items-start gap-2 pt-1 max-sm:w-full">{actions}</div>}
     </header>
   );
 }
 
-export function Section({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
+/** A titled part of a page. `id` makes it a link target; the first Section
+ *  on a page sits flush with what precedes it. */
+export function Section({
+  title,
+  description,
+  aside,
+  id,
+  children,
+}: {
+  title: string;
+  description?: string;
+  aside?: ReactNode;
+  id?: string;
+  children: ReactNode;
+}) {
   return (
-    <section className="mt-10">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-semibold">{title}</h2>
-        {aside && <div className="text-sm text-ink-soft">{aside}</div>}
+    <section id={id} className="mt-10 scroll-mt-6 first:mt-0">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold">{title}</h2>
+          {description && <p className="mt-0.5 text-sm text-ink-soft">{description}</p>}
+        </div>
+        {aside && <div className="flex items-center gap-2 text-sm text-ink-soft">{aside}</div>}
       </div>
       {children}
     </section>
