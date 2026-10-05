@@ -130,8 +130,13 @@ async def test_runs_as_the_merchant_and_finds_the_double_collection(client, tree
     assert body["summary"]["orders"] == 2
     assert body["summary"]["collected_twice"] == 1
     assert body["summary"]["collected_twice_minor"] == 99900
-    by_order = {row["order"]["name"]: row["outcome"] for row in body["data"]}
+    # The dashboard gets trimmed rows: a reference and a currency, never the
+    # ledger or rail record itself.
+    by_order = {row["order"]["ref"]: row["outcome"] for row in body["data"]}
     assert by_order == {"#1002": "collected_twice", "#1003": "collected"}
+    assert set(body["data"][0]["order"]) == {"ref", "currency"}
+    assert all("record" not in rail for row in body["data"] for rail in row["rails"])
+    assert body["run_id"].startswith("run_")
     # The merchant's vault, not the ISV's own Stripe key.
     assert rails["stripe"]["secret_key"] == "sk_merchant"
     assert rails["paypal"]["client_id"] == "pp_merchant"
@@ -140,7 +145,7 @@ async def test_runs_as_the_merchant_and_finds_the_double_collection(client, tree
 async def test_outcome_filter_matches_the_key_route(client, tree, rails):
     path, _ = _across(tree["merchant"].id)
     r = client.post(path, params={"outcome": "collected_twice"}, headers=tree["isv_auth"])
-    assert [row["order"]["name"] for row in r.json()["data"]] == ["#1002"]
+    assert [row["order"]["ref"] for row in r.json()["data"]] == ["#1002"]
     bad = client.post(path, params={"outcome": "paid"}, headers=tree["isv_auth"])
     assert bad.status_code == 422
 

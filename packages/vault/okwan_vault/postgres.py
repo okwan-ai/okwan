@@ -11,6 +11,7 @@ authenticating a request stays O(1) as tenants accumulate.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +22,7 @@ from . import apikey
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
-from .models import ApiKey, SealedCredential, Tenant
+from .models import ApiKey, RUNS_KEPT, RunRecord, SealedCredential, Tenant
 from .usage import DEFAULT_PLAN, PLANS, hour_bucket
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
@@ -258,6 +259,68 @@ class PostgresStore:
         )
         return [(r["tenant_id"], r["hour"], r["surface"], r["requests"]) for r in rows]
 
+    # ── reconciliation runs ─────────────────────────────────────────
+
+    async def add_run(
+        self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
+        started_at: datetime, finished_at: datetime, summary: dict | None,
+        rows: list | None, error: str | None,
+    ) -> RunRecord:
+        """Insert, then prune to the newest RUNS_KEPT for the same tenant,
+        kind and name, in one transaction: history is bounded by
+        construction, never by a job that might not run."""
+        run_id = f"run_{uuid.uuid4().hex[:16]}"
+        try:
+            async with self.pool.acquire() as con, con.transaction():
+                row = await con.fetchrow(
+                    "INSERT INTO reconciliation_runs (id, tenant_id, kind, name, surface, "
+                    "status, started_at, finished_at, summary, rows, error) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11) "
+                    f"RETURNING {_RUN_COLS}",
+                    run_id, tenant_id, kind, name, surface, status, started_at, finished_at,
+                    _dumps(summary), _dumps(rows), error,
+                )
+                await con.execute(
+                    "DELETE FROM reconciliation_runs WHERE tenant_id = $1 AND kind = $2 "
+                    "AND name = $3 AND id NOT IN ("
+                    " SELECT id FROM reconciliation_runs"
+                    " WHERE tenant_id = $1 AND kind = $2 AND name = $3"
+                    " ORDER BY finished_at DESC, id DESC LIMIT $4)",
+                    tenant_id, kind, name, RUNS_KEPT,
+                )
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+        return _run(row)
+
+    async def list_runs(
+        self, tenant_id: str, name: str | None = None, limit: int = 20
+    ) -> list[RunRecord]:
+        rows = await self.pool.fetch(
+            f"SELECT {_RUN_COLS_NO_ROWS} FROM reconciliation_runs "
+            "WHERE tenant_id = $1 AND ($2::text IS NULL OR name = $2) "
+            "ORDER BY finished_at DESC, id DESC LIMIT $3",
+            tenant_id, name, limit,
+        )
+        return [_run(r) for r in rows]
+
+    async def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None:
+        row = await self.pool.fetchrow(
+            f"SELECT {_RUN_COLS} FROM reconciliation_runs WHERE tenant_id = $1 AND id = $2",
+            tenant_id, run_id,
+        )
+        return None if row is None else _run(row)
+
+    async def latest_runs(
+        self, tenant_ids: list[str], kind: str, name: str
+    ) -> dict[str, RunRecord]:
+        rows = await self.pool.fetch(
+            f"SELECT DISTINCT ON (tenant_id) {_RUN_COLS} FROM reconciliation_runs "
+            "WHERE tenant_id = ANY($1::text[]) AND kind = $2 AND name = $3 "
+            "ORDER BY tenant_id, finished_at DESC, id DESC",
+            list(tenant_ids), kind, name,
+        )
+        return {r["tenant_id"]: _run(r) for r in rows}
+
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         row = await self.pool.fetchrow(
             "SELECT name, monthly_requests FROM plans WHERE tenant_id = $1",
@@ -430,3 +493,31 @@ class PostgresStore:
         await self.pool.execute(
             "DELETE FROM sessions WHERE token_hash = $1", token_hash
         )
+
+
+# ── reconciliation runs: row shapes ─────────────────────────────────
+
+_RUN_COLS = ("id, tenant_id, kind, name, surface, status, started_at, finished_at, "
+             "summary, rows, error")
+_RUN_COLS_NO_ROWS = ("id, tenant_id, kind, name, surface, status, started_at, "
+                     "finished_at, summary, NULL::jsonb AS rows, error")
+
+
+def _dumps(value) -> str | None:
+    return None if value is None else json.dumps(value, default=str)
+
+
+def _loads(value):
+    """asyncpg hands jsonb back as text unless a codec is registered."""
+    if value is None or not isinstance(value, str):
+        return value
+    return json.loads(value)
+
+
+def _run(row) -> RunRecord:
+    return RunRecord(
+        id=row["id"], tenant_id=row["tenant_id"], kind=row["kind"], name=row["name"],
+        surface=row["surface"], status=row["status"], started_at=row["started_at"],
+        finished_at=row["finished_at"], summary=_loads(row["summary"]),
+        rows=_loads(row["rows"]), error=row["error"],
+    )

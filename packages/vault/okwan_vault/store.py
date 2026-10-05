@@ -11,6 +11,7 @@ credentials exist only inside a single function's stack frame.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -18,7 +19,7 @@ from . import apikey
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
-from .models import ApiKey, SealedCredential, Tenant
+from .models import RUNS_KEPT, ApiKey, RunRecord, SealedCredential, Tenant
 from .usage import DEFAULT_PLAN, PLANS, hour_bucket
 
 
@@ -58,6 +59,18 @@ class Store(Protocol):
     ) -> None: ...
     async def tenant_for_session(self, token_hash: str) -> Tenant | None: ...
     async def delete_session(self, token_hash: str) -> None: ...
+    async def add_run(
+        self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
+        started_at: datetime, finished_at: datetime, summary: dict | None,
+        rows: list | None, error: str | None,
+    ) -> RunRecord: ...
+    async def list_runs(
+        self, tenant_id: str, name: str | None = None, limit: int = 20
+    ) -> list[RunRecord]: ...
+    async def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None: ...
+    async def latest_runs(
+        self, tenant_ids: list[str], kind: str, name: str
+    ) -> dict[str, RunRecord]: ...
 
 
 class MemoryStore:
@@ -76,6 +89,7 @@ class MemoryStore:
         self._accounts: dict[str, tuple[str, str]] = {}
         # token_hash → (tenant_id, expires_at)
         self._sessions: dict[str, tuple[str, datetime]] = {}
+        self._runs: dict[str, RunRecord] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -203,6 +217,59 @@ class MemoryStore:
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         name = self._plans.get(tenant_id, DEFAULT_PLAN)
         return name, PLANS[name]
+
+    # ── reconciliation runs ─────────────────────────────────────────
+
+    async def add_run(
+        self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
+        started_at: datetime, finished_at: datetime, summary: dict | None,
+        rows: list | None, error: str | None,
+    ) -> RunRecord:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        rec = RunRecord(
+            id=f"run_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id, kind=kind, name=name,
+            surface=surface, status=status, started_at=started_at, finished_at=finished_at,
+            summary=summary, rows=rows, error=error,
+        )
+        self._runs[rec.id] = rec
+        # Prune with the insert: the newest RUNS_KEPT per (tenant, kind, name).
+        same = sorted(
+            (r for r in self._runs.values()
+             if r.tenant_id == tenant_id and r.kind == kind and r.name == name),
+            key=lambda r: (r.finished_at, r.id), reverse=True,
+        )
+        for old in same[RUNS_KEPT:]:
+            del self._runs[old.id]
+        return rec
+
+    async def list_runs(
+        self, tenant_id: str, name: str | None = None, limit: int = 20
+    ) -> list[RunRecord]:
+        found = [
+            r for r in self._runs.values()
+            if r.tenant_id == tenant_id and (name is None or r.name == name)
+        ]
+        found.sort(key=lambda r: (r.finished_at, r.id), reverse=True)
+        # A listing never carries rows; get_run does.
+        return [replace(r, rows=None) for r in found[:limit]]
+
+    async def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None:
+        r = self._runs.get(run_id)
+        return r if r is not None and r.tenant_id == tenant_id else None
+
+    async def latest_runs(
+        self, tenant_ids: list[str], kind: str, name: str
+    ) -> dict[str, RunRecord]:
+        wanted = set(tenant_ids)
+        out: dict[str, RunRecord] = {}
+        for r in self._runs.values():
+            if r.tenant_id not in wanted or r.kind != kind or r.name != name:
+                continue
+            cur = out.get(r.tenant_id)
+            if cur is None or (r.finished_at, r.id) > (cur.finished_at, cur.id):
+                out[r.tenant_id] = r
+        return out
 
     async def set_plan(self, tenant_id: str, name: str) -> None:
         if name not in PLANS:
