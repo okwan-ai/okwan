@@ -61,7 +61,7 @@ export function ConnectionsGrid({ connectors, tenantId, tenantKey, fold = false 
             {needed.map((c) => (
               <li key={c.name} className="inline-flex items-center gap-1.5">
                 <span aria-hidden className={complete(c) ? "text-ok" : "text-ink-soft"}>{complete(c) ? "●" : "○"}</span>
-                <BrandMark name={c.name} label={railLabel(c.name)} size={14} className={complete(c) ? "" : "text-ink-soft"} />
+                <BrandMark name={c.name} label={railLabel(c.name)} size={16} muted={!complete(c)} />
                 {railLabel(c.name)}
                 <span className="sr-only">{complete(c) ? " connected" : " not connected"}</span>
               </li>
@@ -87,7 +87,7 @@ export function ConnectionsGrid({ connectors, tenantId, tenantKey, fold = false 
               return (
                 <li key={c.name} className="flex flex-col rounded-xl border border-line bg-surface p-4">
                   <div className="flex items-start justify-between gap-3">
-                    <p className="flex items-center gap-2 font-semibold"><BrandMark name={c.name} label={railLabel(c.name)} size={18} />{railLabel(c.name)}</p>
+                    <p className="flex items-center gap-2 font-semibold"><BrandMark name={c.name} label={railLabel(c.name)} size={18} muted={!complete(c)} />{railLabel(c.name)}</p>
                     <Status c={c} />
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs text-ink-soft">{c.description}</p>

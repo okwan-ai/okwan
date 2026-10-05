@@ -57,7 +57,7 @@ export function McpClients({ apiBase, server, initial }: { apiBase: string; serv
               className={`min-h-9 rounded-md border-b-2 px-3 text-left text-sm font-medium ${active ? "border-ink bg-surface text-ink shadow-sm" : "border-transparent text-ink-soft hover:text-ink"}`}
             >
               <span className="flex items-center gap-1.5">
-                {CLIENT_MARK[c.id] ? <BrandMark name={CLIENT_MARK[c.id]} size={14} /> : <span aria-hidden className="inline-flex size-3.5 items-center justify-center [&_svg]:size-3.5"><IconPlug /></span>}
+                {CLIENT_MARK[c.id] ? <BrandMark name={CLIENT_MARK[c.id]} size={16} /> : <span aria-hidden className="inline-flex size-4 items-center justify-center [&_svg]:size-4"><IconPlug /></span>}
                 {c.label}
               </span>
               <span className="block text-xs font-normal text-ink-soft">{c.via}</span>
