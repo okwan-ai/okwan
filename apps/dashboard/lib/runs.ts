@@ -4,6 +4,7 @@ import {
   ago, type AttentionRow, ATTENTION, atStake, digestOf, failedDigest, type Finding, missingFor, type RunDigest, toFinding,
   truncated,
 } from "./finding";
+import type { MerchantRow } from "../app/_components/merchants-table";
 import { formatMinor } from "./money";
 import { merchantsWithRails, type MerchantRails } from "./merchants";
 import { myLatestRuns, type StoredRun } from "./stored-runs";
@@ -144,6 +145,23 @@ export function digest(r: MerchantRun): RunDigest | null {
   if (r.state === "skipped" || r.state === "none") return null;
   const d = r.state === "failed" ? failedDigest(id, r.detail, r.at) : digestOf(id, r.finding, r.at);
   return { ...d, name: r.merchant.tenant.name, surface: r.surface };
+}
+
+/** A merchant as MerchantList draws it: plain data for the browser. */
+export function toMerchantRow(r: MerchantRun): MerchantRow {
+  const m = r.merchant;
+  return {
+    id: m.tenant.id,
+    name: m.tenant.name,
+    createdAt: m.tenant.created_at,
+    ready: m.ready,
+    partial: m.partial,
+    known: m.known,
+    state: r.state,
+    digest: digest(r),
+    ...(r.state === "failed" ? { detail: `${r.status ? `${r.status} · ` : ""}${r.detail}` } : {}),
+    ...(r.state === "ok" || r.state === "failed" ? { at: r.at, surface: r.surface } : {}),
+  };
 }
 
 /** Findings per merchant in the shape the palette's order search needs. */

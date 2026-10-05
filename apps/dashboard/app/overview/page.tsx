@@ -1,27 +1,22 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { apiUrl } from "@/lib/api";
-import { FOLD_READS, missingFor, railLabel, SURFACE_LABEL, unconfirmedRows } from "@/lib/finding";
+import { missingFor, railLabel, unconfirmedRows } from "@/lib/finding";
 import { requireTenant } from "@/lib/guard";
 import { formatMinor } from "@/lib/money";
 import {
-  attentionRows, caveats, digest, eligible, type MerchantRun, ranAgo, resultsFrom, storedRuns, twiceTotals,
+  attentionRows, caveats, eligible, type MerchantRun, resultsFrom, storedRuns, toMerchantRow, twiceTotals,
 } from "@/lib/runs";
 import { myUsage } from "@/lib/usage";
 import { FindingsTable } from "../_components/findings-table";
-import { owedAmount, RunStatus } from "../_components/merchant-status";
-import { RailStrip } from "../_components/rail-strip";
+import { MerchantList } from "../_components/merchants-table";
 import { RunAll } from "../_components/run-all";
 import { SetupChecklist, type Step } from "../_components/setup-checklist";
 import { VerdictCard } from "../_components/verdict-card";
-import { ButtonLink } from "../_components/ui/button";
 import { Card, CardBody } from "../_components/ui/card";
-import { EmptyState } from "../_components/ui/empty-state";
 import { OutcomeSpectrum } from "../_components/ui/outcome-spectrum";
 import { PageHeader, Section } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
-import { BrandMark } from "../_components/ui/brand-mark";
-import { Table, Td, Th } from "../_components/ui/table";
 import { PlanStrip } from "../_components/usage/plan-strip";
 
 export const metadata = { title: "Overview" };
@@ -35,13 +30,8 @@ export default async function OverviewPage() {
     <>
       <PageHeader
         title="Overview"
-        description="Each merchant's newest stored run, however it was made: from here, from REST, or by an agent. Opening this page runs nothing. Run all checks each ready merchant once; each check is one request against your plan and is stored."
-        actions={
-          <>
-            <ButtonLink href="/merchants?add=1" variant="secondary">Add merchant</ButtonLink>
-            <Suspense><RunAllReady /></Suspense>
-          </>
-        }
+        description="Your merchants' latest results, however each check was run."
+        actions={<Suspense><RunAllReady /></Suspense>}
       />
       <Suspense fallback={<OverviewSkeleton />}>
         <OverviewBody />
@@ -67,26 +57,24 @@ async function OverviewBody() {
   }
   const checked = runs.filter((r) => r.state === "ok");
   // The meter confirms what the API can't list: any request on a key-only
-  // surface (REST, SQL, MCP) proves a key was issued; one over MCP proves an
-  // agent connected with it. A confirmation sticks (Step.sticky) so a quiet
+  // channel (REST, SQL, MCP) proves a key was issued and read with. A confirmation sticks (Step.sticky) so a quiet
   // month doesn't undo it.
   const surfaces = usage?.buckets.map((b) => b.surface) ?? [];
   const keySeen = surfaces.some((s) => s.startsWith("mcp:") || s.startsWith("rest:"));
-  const agentSeen = surfaces.some((s) => s.startsWith("mcp:"));
-  const steps = setupSteps(runs, keySeen, agentSeen);
+  const steps = setupSteps(runs, keySeen);
   const strip = <PlanStrip usage={usage} />;
+  const merchants = runs.map(toMerchantRow);
+  const needYou = merchants.filter((m) => m.state !== "ok");
 
   // Before the first check there is nothing to report: setup leads.
   if (checked.length === 0) {
-    const failed = runs.filter((r) => r.state === "failed");
     return (
       <>
         {strip}
         <SetupChecklist steps={steps} prominent />
-        {failed.length > 0 && <FailedNote runs={failed} />}
-        {runs.length > 0 && (
-          <Section title="Merchants">
-            <MerchantTable runs={runs} />
+        {needYou.length > 0 && (
+          <Section title="Needs you">
+            <MerchantList mode="needs-you" rows={merchants} />
           </Section>
         )}
       </>
@@ -99,6 +87,7 @@ async function OverviewBody() {
     <>
       {strip}
       <WorkspaceVerdict runs={runs} />
+      <div className="mt-6"><SetupChecklist steps={steps} /></div>
 
       <Section
         title="Needs attention"
@@ -112,13 +101,13 @@ async function OverviewBody() {
       </Section>
 
       <Section
-        title="Merchants"
-        aside={<span>{coverageLine(runs)} · <Link href="/merchants" className="underline underline-offset-4 hover:text-ink">All merchants</Link></span>}
+        title="Needs you"
+        aside={<Link href="/merchants" className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-ink">All {runs.length} merchant{runs.length === 1 ? "" : "s"} →</Link>}
       >
-        <MerchantTable runs={runs} />
+        {needYou.length === 0
+          ? <p className="text-sm text-ink-soft">Every merchant is connected and checked.</p>
+          : <MerchantList mode="needs-you" rows={merchants} />}
       </Section>
-
-      <SetupChecklist steps={steps} />
     </>
   );
 }
@@ -230,142 +219,10 @@ function HowItAddsUp({ runs }: { runs: MerchantRun[] }) {
   );
 }
 
-/** Findings first (most owed back), then failures, then readiness. */
-function rank(r: MerchantRun): number {
-  if (r.state === "ok") return r.finding.summary.collected_twice ? 0 : r.finding.summary.collected_inconsistent + r.finding.summary.uncollected ? 1 : 3;
-  if (r.state === "failed") return 2;
-  if (r.state === "none") return 4;
-  return 5;
-}
-
-function MerchantTable({ runs }: { runs: MerchantRun[] }) {
-  // Amounts compare only within one currency; a merchant without a single
-  // owed-back currency sorts after the priced ones in its rank.
-  const cur = (r: MerchantRun) => (r.state === "ok" ? r.finding.twice_currency ?? "~" : "~");
-  const owed = (r: MerchantRun) => (r.state === "ok" ? r.finding.summary.overcollected_minor : 0);
-  const sorted = [...runs].sort((a, b) => rank(a) - rank(b)
-    || cur(a).localeCompare(cur(b))
-    || owed(b) - owed(a)
-    || a.merchant.tenant.name.localeCompare(b.merchant.tenant.name));
-  return (
-    <>
-      <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface sm:hidden">
-        {sorted.map((r) => {
-          const m = r.merchant;
-          const d = digest(r);
-          return (
-            <li key={m.tenant.id}>
-              <Link href={`/merchants/${encodeURIComponent(m.tenant.id)}`} className="block px-4 py-3">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="font-medium">{m.tenant.name}</span>
-                  <span className="text-sm font-semibold tabular-nums">{owedAmount(d)}</span>
-                </span>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <RunStatus m={m} d={d} />
-                  <RailStrip ready={m.ready} partial={m.partial} known={m.known} size="sm" labels />
-                </div>
-                <span className="mt-1 block text-xs text-ink-soft" suppressHydrationWarning>{lastRunLine(r)}</span>
-                {r.state === "failed" && <span className="mt-1 block text-xs break-words text-danger">{r.detail}</span>}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="hidden sm:block">
-        <Table label="Merchants" minWidth={760}>
-          <thead>
-            <tr>
-              <Th>Merchant</Th>
-              {FOLD_READS.map((c) => (
-                <Th key={c}>
-                  <span className="inline-flex items-center gap-1.5"><BrandMark name={c} label={railLabel(c)} size={16} />{railLabel(c)}{c === "shopify" ? <span className="font-normal"> · ledger</span> : null}</span>
-                </Th>
-              ))}
-              <Th>Status</Th>
-              <Th className="text-right">Owed back</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line">
-            {sorted.map((r) => {
-              const m = r.merchant;
-              const d = digest(r);
-              return (
-                <tr key={m.tenant.id} className="hover:bg-canvas/60">
-                  <Td>
-                    <Link href={`/merchants/${encodeURIComponent(m.tenant.id)}`} className="font-medium underline-offset-4 hover:underline">
-                      {m.tenant.name}
-                    </Link>
-                    <code className="block font-mono text-xs text-ink-soft">{m.tenant.id}</code>
-                  </Td>
-                  {FOLD_READS.map((c) => <Td key={c}><RailCell m={m} rail={c} /></Td>)}
-                  <Td>
-                    <RunStatus m={m} d={d} />
-                    <p className="mt-1 text-xs text-ink-soft" suppressHydrationWarning>{lastRunLine(r)}</p>
-                    {r.state === "failed" && (
-                      <p className="mt-1 max-w-[260px] text-xs break-words text-danger">
-                        {r.status ? `${r.status} · ` : ""}{r.detail}
-                      </p>
-                    )}
-                  </Td>
-                  <Td className="text-right font-medium tabular-nums">{owedAmount(d)}</Td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </Table>
-      </div>
-    </>
-  );
-}
-
-/** "Last run 2 days ago · agent", "Not run yet", or why it can't run. */
-function lastRunLine(r: MerchantRun): string {
-  if (r.state === "ok" || r.state === "failed") return `${ranAgo(r.at)} · ${SURFACE_LABEL[r.surface] ?? r.surface}`;
-  return r.state === "none" ? "Not run yet" : "Not ready";
-}
-
-/** One rail of the check, for one merchant: a glyph and a word, never
- *  colour alone. */
-function RailCell({ m, rail }: { m: MerchantRun["merchant"]; rail: string }) {
-  if (!m.known) return <span className="text-xs text-ink-soft">Unknown</span>;
-  if (m.ready.includes(rail)) {
-    return <span className="inline-flex items-center gap-1.5 text-sm"><span aria-hidden className="text-ok">●</span>Connected</span>;
-  }
-  if (m.partial.includes(rail)) {
-    return <span className="inline-flex items-center gap-1.5 text-sm"><span aria-hidden>◐</span>Partial</span>;
-  }
-  return <span className="inline-flex items-center gap-1.5 text-sm text-ink-soft"><span aria-hidden>○</span>Missing</span>;
-}
-
-/** "3 of 5 merchants fully connected · 2 need PayPal" */
-function coverageLine(runs: MerchantRun[]): string {
-  const full = runs.filter((r) => eligible(r.merchant)).length;
-  const need = new Map<string, number>();
-  for (const r of runs) for (const c of r.merchant.known ? missingFor(r.merchant) : []) need.set(c, (need.get(c) ?? 0) + 1);
-  const top = [...need].sort((a, b) => b[1] - a[1])[0];
-  return `${full} of ${runs.length} merchant${runs.length === 1 ? "" : "s"} fully connected${top ? ` · ${top[1]} need${top[1] === 1 ? "s" : ""} ${railLabel(top[0])}` : ""}`;
-}
-
-function FailedNote({ runs }: { runs: MerchantRun[] }) {
-  return (
-    <ul role="alert" className="mt-6 space-y-1 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm">
-      {runs.map((r) => r.state === "failed" && (
-        <li key={r.merchant.tenant.id}>
-          <span aria-hidden className="mr-1.5 font-mono text-danger">!</span>
-          <Link href={`/merchants/${encodeURIComponent(r.merchant.tenant.id)}`} className="font-medium underline underline-offset-4">
-            {r.merchant.tenant.name}
-          </Link>{" "}
-          couldn&apos;t run: {r.status ? `${r.status} · ` : ""}{r.detail}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function setupSteps(runs: MerchantRun[], keySeen: boolean, agentSeen: boolean): Step[] {
-  const first = runs[0]?.merchant;
+function setupSteps(runs: MerchantRun[], keySeen: boolean): Step[] {
   const closest = [...runs].map((r) => r.merchant).sort((a, b) => missingFor(a).length - missingFor(b).length)[0];
   const ready = runs.find((r) => eligible(r.merchant))?.merchant;
+  const agentFor = ready ?? runs[0]?.merchant;
   const at = (id: string, tab?: string) => `/merchants/${encodeURIComponent(id)}${tab ? `?tab=${tab}` : ""}`;
   return [
     { id: "merchant", label: "Add a merchant", hint: "One for each business you serve.", href: "/merchants?add=1", done: runs.length > 0 },
@@ -374,15 +231,22 @@ function setupSteps(runs: MerchantRun[], keySeen: boolean, agentSeen: boolean): 
       label: "Connect Shopify, PayPal and Stripe",
       hint: closest && missingFor(closest).length
         ? `${closest.tenant.name} still needs ${missingFor(closest).map(railLabel).join(" and ")}.`
-        : "A check reads the order ledger and both payment rails.",
+        : "A check reads Shopify orders, PayPal and Stripe.",
       href: closest
         ? `${at(closest.tenant.id, "connections")}${missingFor(closest).length ? `&connect=${missingFor(closest)[0]}` : ""}`
         : "/merchants",
       done: Boolean(ready),
     },
     { id: "run", label: "Run the first check", href: ready ? at(ready.tenant.id, "findings") : "/merchants", done: runs.some((r) => r.state === "ok") },
-    { id: "key", label: "Issue an API key for a merchant", hint: "Confirmed by the first request made with one.", href: first ? `/agents?merchant=${encodeURIComponent(first.tenant.id)}` : "/settings?tab=keys", done: keySeen ? true : null, sticky: true },
-    { id: "mcp", label: "Connect an agent over MCP", hint: "Confirmed by the first request an agent makes.", href: first ? `/agents?merchant=${encodeURIComponent(first.tenant.id)}` : "/agents", done: agentSeen ? true : null, sticky: true },
+    // Keeps id "mcp" so existing okwan.setup.ticked entries survive.
+    {
+      id: "mcp",
+      label: "Connect an agent",
+      hint: "Ticks itself once a key reads over MCP or REST.",
+      href: agentFor ? `/agents?merchant=${encodeURIComponent(agentFor.tenant.id)}` : "/agents",
+      done: keySeen ? true : null,
+      sticky: true,
+    },
   ];
 }
 
@@ -405,7 +269,7 @@ function OverviewSkeleton() {
           <Skeleton className="mt-3 h-3 w-3/4" />
         </div>
       </div>
-      <p className="mt-4 text-xs text-ink-soft">Reading each merchant&apos;s ledger and rails…</p>
+      <p className="mt-4 text-xs text-ink-soft">Reading each merchant&apos;s latest check…</p>
       <div className="mt-8"><SkeletonRows rows={4} cols={4} label="Loading findings" /></div>
       <div className="mt-8"><SkeletonRows rows={3} cols={4} label="Loading merchants" /></div>
     </div>
