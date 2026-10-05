@@ -27,7 +27,7 @@ export function RunStatus({ m, d }: { m: Rails; d: RunDigest | null | undefined 
   if (d.unverifiable > 0) return <Badge symbol="?">{d.unverifiable} couldn&apos;t verify</Badge>;
   if (d.unconfirmed > 0) {
     return (
-      <Badge tone="ok" symbol="✓?" title="Paid once on one rail; another rail couldn't rule out a second payment.">
+      <Badge tone="ok" symbol="✓?" title="Paid once; another payment provider couldn't rule out a second payment.">
         Paid once · {d.unconfirmed} not ruled out
       </Badge>
     );

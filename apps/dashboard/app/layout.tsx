@@ -10,7 +10,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   // Each page names itself, so client navigation is announced (WCAG 2.4.2).
   title: { template: "%s · Okwan", default: "Okwan" },
-  description: "Connect your payment rails and issue an API key.",
+  description: "Read-only reconciliation across Shopify, PayPal and Stripe.",
   robots: { index: false, follow: false },
 };
 

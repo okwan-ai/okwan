@@ -96,8 +96,8 @@ async function FindingsBody() {
           title="No check yet"
           benefits={[
             "Every order collected twice, with the amount owed back",
-            "Orders where the rails don't add up to the order total",
-            "Orders with no payment on any rail, ready to export for refunds",
+            "Orders where the payments don't add up to the order total",
+            "Orders with no payment found, ready to export for refunds",
           ]}
           action={ready.length
             ? <RunAll merchants={ready} />

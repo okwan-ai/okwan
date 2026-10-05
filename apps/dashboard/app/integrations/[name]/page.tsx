@@ -266,7 +266,7 @@ function Slashed({ path }: { path: string }) {
 
 function WriteMark() {
   return (
-    <span className="shrink-0" title="Not read-only: this operation changes something on the rail.">
+    <span className="shrink-0" title="Not read-only: this operation changes something in the connected system.">
       <Badge tone="warn" symbol="✎">write</Badge>
     </span>
   );

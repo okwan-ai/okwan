@@ -9,11 +9,8 @@ export type Crumb = { href: string; label: string };
  * primary and one secondary action on the right, top-aligned with the title.
  * Buttons that spend requests carry their own cost note.
  *
- * `eyebrow` and a ReactNode `description` are kept for the callers that
- * still use them; commit 12 of the reorganisation narrows `description` to
- * one string and removes `eyebrow`. The two-line clamp the one-sentence
- * description gets arrives with that narrowing, so no caller's longer text
- * is cut off before it is rewritten.
+ * `description` is one plain sentence (at most 140 characters), clamped to
+ * two lines; anything richer belongs in `meta`.
  */
 export function PageHeader({
   title,
@@ -22,16 +19,13 @@ export function PageHeader({
   description,
   meta,
   actions,
-  eyebrow,
 }: {
   title: ReactNode;
   icon?: ReactNode;
   breadcrumb?: Crumb[];
-  description?: ReactNode;
+  description?: string;
   meta?: ReactNode;
   actions?: ReactNode;
-  /** @deprecated Use `breadcrumb` or `meta`. */
-  eyebrow?: ReactNode;
 }) {
   const back = breadcrumb?.[breadcrumb.length - 1];
   return (
@@ -55,12 +49,11 @@ export function PageHeader({
             </Link>
           </>
         )}
-        {eyebrow && <div className="mb-2 text-sm text-ink-soft">{eyebrow}</div>}
         <div className="flex items-center gap-3">
           {icon}
           <h1 className="font-display text-3xl font-normal tracking-tight sm:text-4xl">{title}</h1>
         </div>
-        {description && <div className="mt-2 text-sm text-ink-soft">{description}</div>}
+        {description && <p className="mt-2 line-clamp-2 text-sm text-ink-soft">{description}</p>}
         {meta && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-soft">{meta}</div>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-start gap-2 pt-1 max-sm:w-full">{actions}</div>}
