@@ -36,12 +36,13 @@ export function RunHistory({ runs, selected, href, id = "history" }: {
           aria-current={current ? "true" : undefined}
           className="grid min-h-11 flex-1 grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 px-5 py-2 text-sm hover:bg-canvas/40 sm:grid-cols-[170px_120px_1fr_auto]"
         >
-          <span className={current ? "font-semibold" : "font-medium"}>
+          <span className={`col-span-2 sm:col-span-1 ${current ? "font-semibold" : "font-medium"}`}>
             <time dateTime={r.finished_at} suppressHydrationWarning>{ago(at)}</time>
             {i === 0 && <span className="ml-1.5 text-xs font-normal text-ink-soft">latest</span>}
             {current && <span className="ml-1.5 text-xs font-normal text-ink-soft">· shown</span>}
+            <span className="font-normal text-ink-soft sm:hidden"> · {SURFACE_LABEL[r.surface] ?? r.surface}</span>
           </span>
-          <span className="text-right text-ink-soft sm:text-left">{SURFACE_LABEL[r.surface] ?? r.surface}</span>
+          <span className="hidden text-ink-soft sm:block">{SURFACE_LABEL[r.surface] ?? r.surface}</span>
           <span className="min-w-0">
             {r.status === "ok"
               ? <Badge tone={twice ? "danger" : "ok"} symbol={twice ? "×2" : "✓"}>{twice ? `${twice} collected twice` : "No double collection"}</Badge>
@@ -50,10 +51,10 @@ export function RunHistory({ runs, selected, href, id = "history" }: {
             {r.status === "ok" && r.summary && (
               <span className="ml-2 text-xs text-ink-soft tabular-nums">{r.summary.orders.toLocaleString("en-US")} orders</span>
             )}
-            <span className="ml-2 font-mono text-xs text-ink-soft">{r.id.slice(0, 8)}…</span>
+            <span className="ml-2 hidden font-mono text-xs text-ink-soft sm:inline">{r.id.slice(0, 8)}…</span>
           </span>
           <span className="text-right font-medium tabular-nums">
-            {twice > 0 ? (cur ? formatMinor(r.summary!.overcollected_minor, cur) + " owed back" : `${twice} orders`) : ""}
+            {twice > 0 ? (cur ? <>{formatMinor(r.summary!.overcollected_minor, cur)}<span className="hidden sm:inline"> owed back</span></> : `${twice} orders`) : ""}
           </span>
         </Link>
         <span className="pr-2"><CopyButton value={r.id} label={`Copy run id ${r.id}`} /></span>
