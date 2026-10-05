@@ -80,7 +80,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
         <Link
           href={`/merchants/${encodeURIComponent(current.id)}`}
           aria-current="page"
-          className="ml-7 flex min-h-10 items-center gap-2.5 rounded-lg bg-ink/[0.06] px-3 text-sm font-medium text-ink"
+          className="ml-7 flex min-h-11 items-center gap-2.5 rounded-lg bg-ink/[0.06] px-3 text-sm font-medium text-ink"
         >
           <Glyph d={results[current.id]} />
           <span className="min-w-0 flex-1 truncate">{current.name}</span>
