@@ -49,7 +49,7 @@ export function CardHeader({
         <H id={id} className="text-sm font-semibold">{title}</H>
         {description && <div className="mt-0.5 text-xs text-ink-soft">{description}</div>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex items-center gap-2 max-sm:flex-1 max-sm:justify-end">{actions}</div>}
     </div>
   );
 }
