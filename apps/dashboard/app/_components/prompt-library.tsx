@@ -2,6 +2,7 @@ import Link from "next/link";
 import { OUTCOME_MARK, OUTCOME_TONE } from "@/lib/finding";
 import { AGENT_PROMPTS, promptLabel, promptText } from "@/lib/prompts";
 import { Badge } from "./ui/badge";
+import { Card } from "./ui/card";
 import { CopyButton } from "./ui/copy-button";
 
 /**
@@ -13,9 +14,9 @@ import { CopyButton } from "./ui/copy-button";
 export function PromptLibrary({ apiBase }: { apiBase: string }) {
   return (
     <div className="space-y-3">
-      <ul className="grid gap-3 sm:grid-cols-2">
+      <ul className="grid gap-4 sm:grid-cols-2">
         {AGENT_PROMPTS.map((p) => (
-          <li key={p.id} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface">
+          <Card as="li" key={p.id} className="flex min-w-0 flex-col">
             <div className="flex flex-wrap items-start justify-between gap-2 px-4 pt-4">
               <h3 className="text-sm font-semibold">{p.question}</h3>
               {p.outcome ? (
@@ -25,7 +26,7 @@ export function PromptLibrary({ apiBase }: { apiBase: string }) {
               )}
             </div>
             <p className="px-4 pt-2 text-sm text-ink-soft">{p.summary}</p>
-            <p className="mt-3 border-t border-line bg-canvas/60 px-4 py-2 font-mono text-xs leading-relaxed break-all text-ink">{p.call}</p>
+            <p className="mt-3 border-t border-line bg-canvas/60 px-4 py-2 font-mono text-xs leading-relaxed break-words text-ink">{p.call}</p>
             <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-line px-2 py-1.5 text-xs">
               <CopyButton value={promptText(p)} label={`Copy prompt: ${p.question}`} text="Copy prompt" />
               <CopyButton value={p.rest(apiBase)} label={`Copy REST: ${p.question}`} text="REST" />
@@ -39,13 +40,10 @@ export function PromptLibrary({ apiBase }: { apiBase: string }) {
                 </Link>
               )}
             </div>
-          </li>
+          </Card>
         ))}
       </ul>
-      <p className="text-xs text-ink-soft">
-        Each run an agent makes from a card is one request against the plan and is stored in that merchant&apos;s run history
-        as verdicts, never rail records. An agent sees only what the key&apos;s merchant has connected.
-      </p>
+      <p className="text-xs text-ink-soft">Each run an agent makes is one request and is saved in that merchant&apos;s history.</p>
     </div>
   );
 }

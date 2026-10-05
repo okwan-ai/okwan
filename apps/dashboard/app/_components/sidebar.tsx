@@ -70,7 +70,7 @@ export function Sidebar({ tenant, merchants, plan, apiBase, verdicts, findings }
         </Item>
         <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Developers</p>
         <Item href="/key" path={path} icon={<IconKey />}>API keys</Item>
-        <Item href="/mcp" path={path} icon={<IconAgent />}>MCP for agents</Item>
+        <Item href="/agents" path={path} icon={<IconAgent />}>Agents</Item>
         <Item href="/integrations" path={path} icon={<IconPlug />}>Integrations</Item>
         <a
           href={`${apiBase}/docs`}
