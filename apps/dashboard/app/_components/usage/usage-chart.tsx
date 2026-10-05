@@ -9,7 +9,8 @@ import { CHANNELS, type Day } from "@/lib/usage-shape";
  * the breakdown on hover and focus; the largest day is labelled; a table
  * view below carries every number without hovering.
  */
-export function UsageChart({ days, title }: { days: Day[]; title: string }) {
+/** `captionHidden` keeps the title for screen readers when a Card header already shows it. */
+export function UsageChart({ days, title, captionHidden = false }: { days: Day[]; title: string; captionHidden?: boolean }) {
   const id = useId();
   const [active, setActive] = useState<number | null>(null);
   const max = Math.max(...days.map((d) => d.total), 1);
@@ -23,7 +24,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
 
   return (
     <figure aria-labelledby={`${id}-title`} className="min-w-0">
-      <figcaption id={`${id}-title`} className="mb-3 text-sm font-semibold">{title}</figcaption>
+      <figcaption id={`${id}-title`} className={captionHidden ? "sr-only" : "mb-3 text-sm font-semibold"}>{title}</figcaption>
       <div className="relative">
         {/* Recessive gridlines with their tick values. */}
         <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 bottom-6">

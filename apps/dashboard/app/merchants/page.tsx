@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import { requireTenant } from "@/lib/guard";
 import { digest, storedRuns } from "@/lib/runs";
@@ -20,12 +19,7 @@ export default async function MerchantsPage() {
     <>
       <PageHeader
         title="Merchants"
-        description={
-          <>
-            Each merchant holds its own rails and API keys; nothing crosses between merchants. Rails on your own
-            workspace are under <Link href="/connections" className="underline underline-offset-4 hover:text-ink">your own rails</Link>.
-          </>
-        }
+        description="Each merchant holds its own connections and API keys; nothing crosses between merchants."
         actions={<Suspense><AddMerchant variant={merchants && merchants.length === 0 ? "secondary" : "primary"} /></Suspense>}
       />
 

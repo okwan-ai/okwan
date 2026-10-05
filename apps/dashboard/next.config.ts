@@ -16,6 +16,9 @@ const nextConfig: NextConfig = {
       { source: "/catalog", destination: "/integrations", permanent: false },
       // The query passes through: /mcp?client=cursor lands on /agents?client=cursor.
       { source: "/mcp", destination: "/agents", permanent: false },
+      { source: "/key", destination: "/settings?tab=keys", permanent: false },
+      // Workspace is Settings' default tab; ?connect=paypal passes through and opens that sheet.
+      { source: "/connections", destination: "/settings", permanent: false },
     ];
   },
   async headers() {
