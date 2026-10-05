@@ -1,14 +1,14 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors, railState } from "@/lib/merchants";
-import { toFinding } from "@/lib/finding";
+import { ago, SURFACE_LABEL, toFinding } from "@/lib/finding";
+import { defaultTab } from "@/lib/merchant-tabs";
 import { latestRuns } from "@/lib/stored-runs";
 import { myUsage } from "@/lib/usage";
 import { PlanStrip } from "../../_components/usage/plan-strip";
-import { missingFor } from "@/lib/finding";
+import { FOLD_READS, missingFor } from "@/lib/finding";
 import { MerchantRunProvider, RunButton } from "../../_components/merchant-run";
 import { MerchantTabs } from "../../_components/merchant-tabs";
 import { RailStrip } from "../../_components/rail-strip";
@@ -52,40 +52,41 @@ export default async function MerchantLayout({
     : null;
   const initialError = last && last.status === "failed" ? { detail: last.error ?? "the run failed", at: Date.parse(last.finished_at) } : null;
 
+  const missing = missingFor(rails);
+  const tab = defaultTab(missing.length === 0, Boolean(last));
+  const open = last && last.status === "ok" && last.summary
+    ? last.summary.collected_twice + last.summary.collected_inconsistent + last.summary.uncollected
+    : 0;
+  const findingsBadge = last?.status === "failed"
+    ? { text: "!", tone: "strong" as const, label: "last check couldn't run" }
+    : open > 0 ? { text: String(open), tone: "strong" as const, label: "open findings" } : undefined;
+  const at = last ? Date.parse(last.finished_at) : null;
+
   return (
-    <MerchantRunProvider tenantId={id} tenantName={name} initial={initial} initialError={initialError} missing={missingFor(rails)}>
+    <MerchantRunProvider tenantId={id} tenantName={name} initial={initial} initialError={initialError} missing={missing} defaultTab={tab}>
       <PageHeader
-        eyebrow={
-          <nav aria-label="Breadcrumb">
-            <ol className="flex items-center gap-1.5">
-              <li><Link href="/merchants" className="hover:text-ink hover:underline">Merchants</Link></li>
-              <li aria-hidden>/</li>
-              <li aria-current="page" className="truncate text-ink">{name}</li>
-            </ol>
-          </nav>
-        }
+        breadcrumb={[{ href: "/merchants", label: "Merchants" }]}
         title={name}
-        description={
-          <div className="space-y-2">
-            <div className="flex items-center gap-1">
+        meta={
+          <>
+            <span className="inline-flex items-center gap-1">
               <code className="font-mono text-xs">{id}</code>
               <CopyButton value={id} label="Copy merchant id" />
-            </div>
+            </span>
             <RailStrip ready={rails.ready} partial={rails.partial} size="md" labels connectBase={`/merchants/${encodeURIComponent(id)}`} tenantKey={id} />
-            {usage && !usage.plan.unmetered && (
-              <p className="text-xs text-ink-soft">
-                A run is one request:{" "}
-                <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">
-                  {usage.plan.used.toLocaleString("en-US")} of {usage.plan.limit.toLocaleString("en-US")} used this month
-                </Link>
-              </p>
+            {!last ? (
+              <span>Not checked yet</span>
+            ) : last.status === "failed" ? (
+              <span className="text-danger" suppressHydrationWarning>Last check couldn&apos;t run · {ago(at)}</span>
+            ) : (
+              <span suppressHydrationWarning>Last check {ago(at)} · {SURFACE_LABEL[last.surface] ?? last.surface}</span>
             )}
-          </div>
+          </>
         }
         actions={<Suspense><RunButton /></Suspense>}
       />
       <PlanStrip usage={usage} />
-      <Suspense><MerchantTabs rails={rails.ready.length} /></Suspense>
+      <Suspense><MerchantTabs connected={rails.ready.filter((r) => (FOLD_READS as readonly string[]).includes(r)).length} findingsBadge={findingsBadge} /></Suspense>
       <div className="pt-6">{children}</div>
     </MerchantRunProvider>
   );

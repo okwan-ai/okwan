@@ -114,7 +114,7 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
 
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
             <Link
-              href={`/merchants/${encodeURIComponent(r.merchantId)}?order=${encodeURIComponent(r.order)}`}
+              href={`/merchants/${encodeURIComponent(r.merchantId)}?tab=findings&order=${encodeURIComponent(r.order)}`}
               className={buttonClass("secondary")}
             >
               Open on {r.merchantName}

@@ -1,17 +1,12 @@
+import { redirect } from "next/navigation";
 import { apiUrl } from "@/lib/api";
-import { ATTENTION, rowKey, toFinding } from "@/lib/finding";
-import { runHistory, storedRun } from "@/lib/stored-runs";
-import { usageFor } from "@/lib/usage";
-import { configured, connectors } from "@/lib/merchants";
-import { tabOf } from "@/lib/merchant-tabs";
+import { ATTENTION, missingFor, rowKey, toFinding } from "@/lib/finding";
+import { configured, connectors, railState } from "@/lib/merchants";
+import { defaultTab, tabOf } from "@/lib/merchant-tabs";
+import { latestRuns, runHistory, storedRun } from "@/lib/stored-runs";
 import { ConnectionsGrid } from "../../_components/connections-grid";
-import { DevSnippets } from "../../_components/dev-snippets";
 import { FindingsPanel } from "../../_components/findings-panel";
-import { IssueKey } from "../../_components/issue-key";
 import { RunHistory } from "../../_components/run-history";
-import { PlanUsage } from "../../_components/settings/plan-usage";
-import { EmptyState } from "../../_components/ui/empty-state";
-import { Section } from "../../_components/ui/page-header";
 
 /** The active tab's content. The layout has already checked access and
  * fetched what this reads; React's per-render cache answers here. */
@@ -20,13 +15,23 @@ export default async function MerchantPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; days?: string; run?: string }>;
+  searchParams: Promise<{ tab?: string; days?: string; run?: string; order?: string }>;
 }) {
-  const [{ id }, { tab, days: daysParam, run: runParam }] = await Promise.all([params, searchParams]);
-  const active = tabOf(tab);
+  const [{ id }, { tab, days, run: runParam, order }] = await Promise.all([params, searchParams]);
+  // The old tabs' homes (§9 2026-10-05), before any other work. A redirect
+  // here, not middleware, so tab=keys never merges into the destination.
+  if (tab === "keys") redirect(`/agents?merchant=${encodeURIComponent(id)}`);
+  if (tab === "usage") {
+    const d = ["7", "30", "90"].includes(days ?? "") ? `&days=${days}` : "";
+    redirect(`/settings?tab=plan&merchant=${encodeURIComponent(id)}${d}`);
+  }
+
+  // The same cached reads as the layout, so both agree on the default.
+  const [catalog, stored, latest] = await Promise.all([connectors(), configured(id), latestRuns(id)]);
+  const ready = catalog.ok && stored.ok ? missingFor(railState(catalog.data, stored.data.configured)).length === 0 : true;
+  const active = tabOf(tab, defaultTab(ready, Boolean(latest?.[id])), Boolean(order || runParam));
 
   if (active === "connections") {
-    const [catalog, stored] = await Promise.all([connectors(), configured(id)]);
     if (!catalog.ok || !stored.ok) return null;
     // The sheet's subtitle says how credentials are kept; no intro here.
     return (
@@ -39,41 +44,10 @@ export default async function MerchantPage({
     );
   }
 
-  if (active === "keys") {
-    return (
-      <>
-        <p className="mb-4 max-w-2xl text-sm text-ink-soft">
-          A key for this merchant reads only this merchant&apos;s rails. Issued once, shown once.
-        </p>
-        <IssueKey tenantId={id} />
-        <Section title="Use the key">
-          <DevSnippets />
-        </Section>
-      </>
-    );
-  }
-
-  if (active === "usage") {
-    const days = [7, 30, 90].includes(Number(daysParam)) ? Number(daysParam) : 30;
-    const r = await usageFor(id, days);
-    if (!r.ok) {
-      return <EmptyState title="Usage isn't available right now">The Okwan API didn&apos;t answer. Try again in a moment.</EmptyState>;
-    }
-    return (
-      <>
-        <p className="mb-6 max-w-2xl text-sm text-ink-soft">
-          Every request that read this merchant&apos;s rails, whichever surface made it: its agents over MCP, REST and SQL with
-          its key, checks from this dashboard, and connection tests. Reading this page is not metered.
-        </p>
-        <PlanUsage usage={r.data} names={{}} selfId={id} scope="merchant" rangeHref={(d) => `?tab=usage&days=${d}`} />
-      </>
-    );
-  }
-
   // Findings: the newest stored run (held by the layout's provider), or one
   // chosen from the history (?run=). Findings absent from the run before
   // the shown one are marked new.
-  // The API keeps the newest 50 (okwan_vault RUNS_KEPT) and lists at most 50.
+  // The API keeps the newest 50 and lists at most 50.
   const history = (await runHistory(id, 50)) ?? [];
   const shownId = runParam && history.some((r) => r.id === runParam) ? runParam : (history[0]?.id ?? null);
   const index = history.findIndex((r) => r.id === shownId);

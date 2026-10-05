@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
@@ -32,7 +33,7 @@ export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys 
   /** Findings not present in the run before this one. */
   newKeys?: string[];
 }) {
-  const { busy, shown: current, error: currentError, missing, run } = useMerchantRun();
+  const { busy, shown: current, error: currentError, missing } = useMerchantRun();
   const shown = view ?? (viewError ? null : current);
   const error = viewError ? { status: 0, ...viewError } : view ? null : currentError;
   // A new ?order= on the same page (palette, drawer) remounts the result so
@@ -41,15 +42,18 @@ export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys 
 
   if (busy) return <Loading />;
   if (error) {
+    // No button here: the header's Run check is the retry.
     return (
       <div role="alert" className="rounded-xl border border-danger/30 bg-danger-soft px-5 py-4">
         <p className="font-medium text-danger">
           <span aria-hidden className="mr-1.5 font-mono">!</span>
-          {viewError ? "This" : error.at ? "The last" : "The"} run didn&apos;t finish{error.status ? ` (${error.status})` : ""}
+          {viewError ? "This" : "The last"} check couldn&apos;t run{error.status ? ` (${error.status})` : ""}
           {error.at ? <span className="font-normal text-ink-soft" suppressHydrationWarning> · {ago(error.at)}</span> : null}
         </p>
         <p className="mt-1 text-sm break-words text-ink">{error.detail}</p>
-        <Button variant="secondary" className="mt-4" onClick={() => void run()}>{viewError ? "Run again" : "Try again"}</Button>
+        <Link href="?tab=connections" scroll={false} className="mt-3 inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4">
+          Check connections →
+        </Link>
       </div>
     );
   }
@@ -59,18 +63,15 @@ export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys 
         icon={<IconPlug />}
         title={`Connect ${listOf(missing.map(railLabel))} to check this merchant`}
         benefits={[
-          "Reads the Shopify ledger, PayPal and Stripe once",
-          "One verdict per order: paid once, twice, short, or not at all",
-          "Credentials go to the vault and are never shown again",
+          "Reads Shopify orders, PayPal and Stripe once",
+          "One verdict per order: paid once, twice, short or not at all",
+          "Credentials are encrypted and never shown again",
         ]}
-      >
-        Use the Connect button above, or the Connections tab.
-      </EmptyState>
+        action={<Link href="?tab=connections" scroll={false} className="inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4">Go to Connections</Link>}
+      />
     ) : (
-      <EmptyState icon={<IconPlay />} title="No run yet">
-        Run reconciliation, above, reads the Shopify ledger, PayPal and Stripe once and says whether each order was paid exactly
-        once, twice, or not at all. Each run counts as one request against your plan and is stored, so this page shows it
-        from then on.
+      <EmptyState icon={<IconPlay />} title="No check yet">
+        Run check reads Shopify, PayPal and Stripe once and saves the result here.
       </EmptyState>
     );
   }

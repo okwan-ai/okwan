@@ -388,8 +388,8 @@ function setupSteps(runs: MerchantRun[], keySeen: boolean, agentSeen: boolean): 
         : "/merchants",
       done: Boolean(ready),
     },
-    { id: "run", label: "Run the first check", href: ready ? at(ready.tenant.id) : "/merchants", done: runs.some((r) => r.state === "ok") },
-    { id: "key", label: "Issue an API key for a merchant", hint: "Confirmed by the first request made with one.", href: first ? at(first.tenant.id, "keys") : "/settings?tab=keys", done: keySeen ? true : null, sticky: true },
+    { id: "run", label: "Run the first check", href: ready ? at(ready.tenant.id, "findings") : "/merchants", done: runs.some((r) => r.state === "ok") },
+    { id: "key", label: "Issue an API key for a merchant", hint: "Confirmed by the first request made with one.", href: first ? `/agents?merchant=${encodeURIComponent(first.tenant.id)}` : "/settings?tab=keys", done: keySeen ? true : null, sticky: true },
     { id: "mcp", label: "Connect an agent over MCP", hint: "Confirmed by the first request an agent makes.", href: first ? `/agents?merchant=${encodeURIComponent(first.tenant.id)}` : "/agents", done: agentSeen ? true : null, sticky: true },
   ];
 }
