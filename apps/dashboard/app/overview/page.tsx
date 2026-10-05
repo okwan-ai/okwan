@@ -9,12 +9,13 @@ import {
 } from "@/lib/runs";
 import { myUsage } from "@/lib/usage";
 import { today, type Usage } from "@/lib/usage-shape";
-import { AttentionList } from "../_components/attention-list";
+import { FindingsTable } from "../_components/findings-table";
 import { owedAmount, RunStatus } from "../_components/merchant-status";
 import { RailStrip } from "../_components/rail-strip";
 import { RunAll } from "../_components/run-all";
 import { SetupChecklist, type Step } from "../_components/setup-checklist";
 import { ButtonLink } from "../_components/ui/button";
+import { Card, CardBody } from "../_components/ui/card";
 import { EmptyState } from "../_components/ui/empty-state";
 import { OutcomeSpectrum } from "../_components/ui/outcome-spectrum";
 import { PageHeader, Section } from "../_components/ui/page-header";
@@ -101,14 +102,12 @@ async function OverviewBody() {
 
       <Section
         title="Needs attention"
-        aside={rows.length > ATTENTION_LIMIT ? <Link href="/findings" prefetch={false} className="underline underline-offset-4 hover:text-ink">View all {rows.length}</Link> : null}
+        aside={rows.length > 0 ? <Link href="/findings" prefetch={false} className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-ink">View all {rows.length} →</Link> : null}
       >
         {rows.length === 0 ? (
-          <EmptyState title="Nothing needs attention">
-            No order was found collected twice, not adding up across rails, or unpaid in what was read.
-          </EmptyState>
+          <Card><CardBody><p className="text-sm"><span aria-hidden className="mr-1.5 font-mono text-ok">✓</span>Nothing needs attention in the latest checks.</p></CardBody></Card>
         ) : (
-          <AttentionList rows={rows.slice(0, ATTENTION_LIMIT)} apiBase={apiUrl()} />
+          <FindingsTable scope="workspace" rows={rows} limit={ATTENTION_LIMIT} toolbar={false} apiBase={apiUrl()} />
         )}
       </Section>
 
