@@ -5,8 +5,9 @@ connector route, its summary and its section text come from that
 connector's one declaration. This module only adds what a reader needs
 around them: an introduction, sections in groups with readable names, the
 key as a real security scheme (instead of two raw header fields on every
-operation), the write operations marked, and a branded Scalar page in
-place of FastAPI's default Swagger UI.
+operation), the write operations marked, and a branded Scalar page (with
+Scalar's own Ask AI, MCP and toolbar features) in place of FastAPI's
+default Swagger UI.
 
 Nothing here changes what a route does. The page loads one pinned Scalar
 build from jsDelivr with a Subresource Integrity hash, the same kind of CDN
@@ -262,9 +263,9 @@ def build_openapi(app: FastAPI) -> dict[str, Any]:
     return spec
 
 
-#: Okwan's tokens (OKWAN_PROJECT.md §2) as Scalar theme variables. Volt is
-#: the one accent: the active section in the sidebar. Links and buttons
-#: stay ink so they keep their contrast on cream.
+#: Okwan's tokens (OKWAN_PROJECT.md §2) as Scalar theme variables: neutral
+#: white and grey, the same as the dashboard. Volt is the one accent, the
+#: active section in the sidebar; links and buttons stay ink for contrast.
 THEME_CSS = """
 :root {
   --scalar-font: 'Poppins', system-ui, sans-serif;
@@ -273,27 +274,27 @@ THEME_CSS = """
   --scalar-custom-header-height: 56px;
 }
 .light-mode {
-  --scalar-color-1: #111111; --scalar-color-2: #4a4a45; --scalar-color-3: #6b6a63;
+  --scalar-color-1: #111111; --scalar-color-2: #4b4b4b; --scalar-color-3: #6b6b6b;
   --scalar-color-accent: #111111;
-  --scalar-background-1: #fdfcfa; --scalar-background-2: #f4f1eb; --scalar-background-3: #ebe6dc;
+  --scalar-background-1: #ffffff; --scalar-background-2: #f5f5f5; --scalar-background-3: #ebebeb;
   --scalar-background-accent: #fff6c2;
-  --scalar-border-color: #e2ded4;
-  --scalar-sidebar-background-1: #f4f1eb; --scalar-sidebar-color-1: #111111; --scalar-sidebar-color-2: #4a4a45;
-  --scalar-sidebar-border-color: #e2ded4;
+  --scalar-border-color: #e5e5e5;
+  --scalar-sidebar-background-1: #fafafa; --scalar-sidebar-color-1: #111111; --scalar-sidebar-color-2: #4b4b4b;
+  --scalar-sidebar-border-color: #e5e5e5;
   --scalar-sidebar-item-hover-background: rgba(17, 17, 17, 0.05);
   --scalar-sidebar-item-active-background: #ffd400; --scalar-sidebar-color-active: #111111;
-  --scalar-sidebar-search-background: #fdfcfa; --scalar-sidebar-search-border-color: #8a867c;
-  --scalar-sidebar-search-color: #4a4a45;
+  --scalar-sidebar-search-background: #ffffff; --scalar-sidebar-search-border-color: #858585;
+  --scalar-sidebar-search-color: #4b4b4b;
 }
 .dark-mode {
-  --scalar-color-1: #f4f1eb; --scalar-color-2: #c8ccd4; --scalar-color-3: #98a1b0;
+  --scalar-color-1: #f5f5f5; --scalar-color-2: #c8ccd4; --scalar-color-3: #98a1b0;
   --scalar-color-accent: #ffd400;
   --scalar-background-1: #0d1b2e; --scalar-background-2: #112339; --scalar-background-3: #183050;
   --scalar-background-accent: rgba(255, 212, 0, 0.12);
   --scalar-border-color: #22385a;
-  --scalar-sidebar-background-1: #0a1626; --scalar-sidebar-color-1: #f4f1eb; --scalar-sidebar-color-2: #c8ccd4;
+  --scalar-sidebar-background-1: #0a1626; --scalar-sidebar-color-1: #f5f5f5; --scalar-sidebar-color-2: #c8ccd4;
   --scalar-sidebar-border-color: #22385a;
-  --scalar-sidebar-item-hover-background: rgba(244, 241, 235, 0.06);
+  --scalar-sidebar-item-hover-background: rgba(245, 245, 245, 0.06);
   --scalar-sidebar-item-active-background: #ffd400; --scalar-sidebar-color-active: #111111;
   --scalar-sidebar-search-background: #112339; --scalar-sidebar-search-border-color: #3a5378;
   --scalar-sidebar-search-color: #c8ccd4;
@@ -305,15 +306,15 @@ THEME_CSS = """
 
 BRAND_BAR_CSS = """
 .okwan-bar { position: sticky; top: 0; z-index: 1000; height: 56px; display: flex; align-items: center;
-  gap: 12px; padding: 0 20px; background: #fdfcfa; border-bottom: 1px solid #e2ded4;
+  gap: 12px; padding: 0 20px; background: #ffffff; border-bottom: 1px solid #e5e5e5;
   font: 14px/1.4 'Poppins', system-ui, sans-serif; color: #111111; }
 .okwan-bar a { color: inherit; text-decoration: none; }
 .okwan-bar .mark { width: 22px; height: 22px; border-radius: 6px; background: #ffd400; box-shadow: inset 0 0 0 1px #111111; }
 .okwan-bar .name { font: 500 20px/1 'Fraunces', Georgia, serif; }
-.okwan-bar .sep { color: #8a867c; }
+.okwan-bar .sep { color: #858585; }
 .okwan-bar .links { margin-left: auto; display: flex; gap: 4px; }
 .okwan-bar .links a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 10px;
-  border-radius: 8px; color: #4a4a45; }
+  border-radius: 8px; color: #4b4b4b; }
 .okwan-bar .links a:hover { background: rgba(17, 17, 17, 0.05); color: #111111; }
 .okwan-bar a:focus-visible { outline: 2px solid #111111; outline-offset: 2px; }
 @media (max-width: 600px) { .okwan-bar .sep, .okwan-bar .title { display: none; } }
@@ -331,12 +332,10 @@ def page() -> str:
         "authentication": {"preferredSecurityScheme": "OkwanKey"},
         "metaData": {"title": "Okwan API reference"},
         "hideModels": False,
-        # Scalar's hosted add-ons stay off: no AI chat, no MCP generator, no
-        # developer toolbar, no client-download button, no telemetry.
-        "showDeveloperTools": "never",
-        "agent": {"disabled": True},
-        "mcp": {"disabled": True},
-        "hideClientButton": True,
+        # Scalar's own features stay on (the owner's call): Ask AI, the MCP
+        # generator, the client button and the developer toolbar, shown in
+        # production too. Usage telemetry stays off: nothing a reader sees.
+        "showDeveloperTools": "always",
         "telemetry": False,
         "persistAuth": False,
     }
@@ -353,7 +352,7 @@ def page() -> str:
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=JetBrains+Mono:wght@400;500&family=Poppins:wght@400;500;600&display=swap">
-<style>body {{ margin: 0; background: #fdfcfa; }} {BRAND_BAR_CSS}</style>
+<style>body {{ margin: 0; background: #ffffff; }} {BRAND_BAR_CSS}</style>
 </head>
 <body>
 <header class="okwan-bar">
