@@ -148,7 +148,14 @@ export default async function ConnectorPage({ params }: { params: Promise<{ name
 
       <Section
         title="Connections"
-        description={connectedFor > 0 && merchants ? `Connected for ${connectedFor} of ${plural(merchants.length, "merchant")}` : `No merchant has ${label} connected yet.`}
+        description={
+          // No claim about merchants when their listing didn't load; the row below says so.
+          !merchants
+            ? undefined
+            : connectedFor > 0
+              ? `Connected for ${connectedFor} of ${plural(merchants.length, "merchant")}`
+              : `No merchant has ${label} connected yet.`
+        }
       >
         <Card flush>
           <CardBody list>

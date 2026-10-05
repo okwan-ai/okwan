@@ -269,7 +269,9 @@ function Item({ href, path, icon, count, exact = false, children }: {
   return (
     <Link
       href={href}
-      aria-current={active ? "page" : undefined}
+      // Looks active on a sub-page (/integrations/paypal) but names the page
+      // only on its own URL; the sub-page's breadcrumb carries aria-current.
+      aria-current={path === href ? "page" : undefined}
       className={`flex min-h-11 items-center gap-3 rounded-lg px-3 ${
         active ? "bg-ink/[0.06] font-medium text-ink" : "text-ink-soft hover:bg-ink/[0.04] hover:text-ink"
       }`}
