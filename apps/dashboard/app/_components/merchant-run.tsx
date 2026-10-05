@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, type ReactNode, useCallback, useContext, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useId, useState } from "react";
 import { type Finding, railLabel } from "@/lib/finding";
+import { type MerchantTab, tabOf } from "@/lib/merchant-tabs";
 import { formatMinor } from "@/lib/money";
 import { Button, buttonClass } from "./ui/button";
 import { IconPlay } from "./ui/icons";
@@ -30,6 +31,8 @@ type RunState = {
   /** The id of the run this page made, so its result can settle into
    *  place once; a stored run shown on load does not animate. */
   justRan: string | null;
+  /** Where a bare merchant URL opens (lib/merchant-tabs defaultTab). */
+  defaultTab: MerchantTab;
   run: () => Promise<void>;
 };
 
@@ -48,10 +51,11 @@ export function useMerchantRun(): RunState {
  * the session route, which the API stores, and then refreshes the page so
  * the history and the sidebar read it back.
  */
-export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", initial = null, initialError = null, missing = [], children }: {
+export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", initial = null, initialError = null, missing = [], defaultTab = "findings", children }: {
   tenantId: string;
   tenantName: string;
   fold?: string;
+  defaultTab?: MerchantTab;
   missing?: string[];
   /** The newest stored run, read by the layout; shown without running. */
   initial?: Shown | null;
@@ -70,7 +74,7 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
   const run = useCallback(async () => {
     setBusy(true);
     setError(null);
-    setSaid("Reading the ledger, then each rail.");
+    setSaid("Reading Shopify orders, then PayPal and Stripe.");
     const res = await fetch(
       `/api/merchants/${encodeURIComponent(tenantId)}/across/${encodeURIComponent(fold)}`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
@@ -80,7 +84,7 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
     if (!res || !res.ok) {
       const detail = data.detail ?? "the dashboard couldn't reach the API";
       setError({ status: res?.status ?? 0, detail, at: Date.now() });
-      setSaid(`The run didn't finish: ${detail}`);
+      setSaid(`The check didn't finish: ${detail}`);
       router.refresh();
       return;
     }
@@ -88,7 +92,7 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
     setShown({ finding: f, at: f.at ?? Date.now(), runId: f.run_id ?? null, surface: "dashboard" });
     setJustRan(f.run_id ?? null);
     const twice = f.summary.collected_twice;
-    setSaid(`Run finished and stored: ${f.summary.orders} orders checked, ${twice} collected twice${
+    setSaid(`Check finished and saved: ${f.summary.orders} orders checked, ${twice} collected twice${
       twice && f.twice_currency ? ` (${formatMinor(f.summary.collected_twice_minor, f.twice_currency)})` : ""}.`);
     // The API stored the run; the history, the sidebar and the other pages
     // read it on the next render.
@@ -96,46 +100,61 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
   }, [tenantId, fold, router]);
 
   return (
-    <Ctx.Provider value={{ tenantId, tenantName, busy, shown, error, missing, justRan, run }}>
+    <Ctx.Provider value={{ tenantId, tenantName, busy, shown, error, missing, justRan, defaultTab, run }}>
       <p role="status" className="sr-only">{said}</p>
       {children}
     </Ctx.Provider>
   );
 }
 
-/** The header's primary action. Runs, and shows the Findings tab. */
+/**
+ * The header's one action (primitives, RunButton matrix). While a system
+ * the check reads is missing there is no Run button, because the API would
+ * fail the run: it leads to the next missing system instead, and on the
+ * Connections tab renders nothing (CheckReadiness carries the volt). Ready
+ * and never run, or the last check failed: a primary Run check. With a
+ * result shown: a secondary Run again (the VerdictCard holds the volt).
+ */
 export function RunButton() {
-  const { busy, shown, missing, run } = useMerchantRun();
+  const { busy, shown, missing, run, defaultTab } = useMerchantRun();
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const tab = params.get("tab");
-  // A run with a rail missing fails on the API (and would read as a broken
-  // product); lead to what's missing instead.
-  if (missing.length && !shown) {
+  const note = useId();
+  const runParam = params.get("run");
+  const effective = tabOf(params.get("tab"), defaultTab, Boolean(params.get("order") || runParam));
+
+  if (missing.length) {
+    if (effective === "connections") return null;
     return (
-      <Link href={`${path}?tab=connections&connect=${missing[0]}`} scroll={false} className={buttonClass(tab === "connections" || tab === "keys" ? "secondary" : "primary")}>
-        Connect {missing.map(railLabel).join(" + ")}
+      <Link
+        href={`${path}?tab=connections&connect=${encodeURIComponent(missing[0])}`}
+        scroll={false}
+        className={buttonClass(shown ? "secondary" : "primary", "max-sm:w-full")}
+      >
+        Connect {railLabel(missing[0])}
       </Link>
     );
   }
   return (
-    <Button
-      // One volt element per view: once a result exists the band carries it,
-      // a re-run (metered) is secondary, and on the keys tab issuing a key is
-      // the primary action.
-      variant={shown || tab === "keys" ? "secondary" : "primary"}
-      disabled={busy}
-      aria-busy={busy}
-      onClick={() => {
-        // Back to the newest result: another tab, or an older run (?run=)
-        // chosen from the history, would otherwise hide what this run finds.
-        if ((tab && tab !== "findings") || params.get("run")) router.push(path, { scroll: false });
-        void run();
-      }}
-    >
-      <IconPlay className="h-4 w-4" />
-      {busy ? "Reading rails…" : shown ? "Run again" : "Run reconciliation"}
-    </Button>
+    <div className="flex flex-col items-start gap-1 max-sm:w-full sm:items-end">
+      <Button
+        variant={shown ? "secondary" : "primary"}
+        className="max-sm:w-full"
+        disabled={busy}
+        aria-busy={busy}
+        aria-describedby={note}
+        onClick={() => {
+          // The result lands on Findings, at the newest check: another tab,
+          // or an older check (?run=) chosen from the history, would hide it.
+          if (effective !== "findings" || runParam) router.push(`${path}?tab=findings`, { scroll: false });
+          void run();
+        }}
+      >
+        <IconPlay className="h-4 w-4" />
+        {busy ? "Checking…" : shown ? "Run again" : "Run check"}
+      </Button>
+      <p id={note} className="text-xs text-ink-soft">1 request · result saved</p>
+    </div>
   );
 }

@@ -88,8 +88,10 @@ export function CommandPalette({ merchants, verdicts, findings }: {
       const base = `/merchants/${encodeURIComponent(m.id)}`;
       return [
         { id: `m-${m.id}`, group: "Merchants", label: m.name, hint, href: base, keywords: m.id },
+        { id: `m-${m.id}-f`, group: "Merchant tabs", label: `${m.name}: Findings`, href: `${base}?tab=findings`, keywords: `${m.id} findings result check` },
         { id: `m-${m.id}-c`, group: "Merchant tabs", label: `${m.name}: Connections`, href: `${base}?tab=connections`, keywords: `${m.id} rails credentials` },
-        { id: `m-${m.id}-k`, group: "Merchant tabs", label: `${m.name}: API keys`, href: `${base}?tab=keys`, keywords: `${m.id} key mcp` },
+        { id: `m-${m.id}-a`, group: "Merchant tabs", label: `${m.name}: Agent setup`, href: `/agents?merchant=${encodeURIComponent(m.id)}`, keywords: `${m.id} key mcp agent` },
+        { id: `m-${m.id}-u`, group: "Merchant tabs", label: `${m.name}: Usage`, href: `/settings?tab=plan&merchant=${encodeURIComponent(m.id)}`, keywords: `${m.id} usage requests plan` },
       ];
     }),
   ], [merchants, results]);
@@ -106,7 +108,7 @@ export function CommandPalette({ merchants, verdicts, findings }: {
         group: "Orders",
         label: `${f.order} · ${f.merchantName}`,
         hint: `${OUTCOME_MARK[f.outcome] ?? ""} ${OUTCOME_LABEL[f.outcome] ?? f.outcome}${f.stake ? ` · ${f.stake}` : ""}`,
-        href: `/merchants/${encodeURIComponent(f.merchantId)}?order=${encodeURIComponent(f.order)}`,
+        href: `/merchants/${encodeURIComponent(f.merchantId)}?tab=findings&order=${encodeURIComponent(f.order)}`,
       }));
   }, [seen, q]);
 
