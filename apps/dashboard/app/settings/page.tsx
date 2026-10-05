@@ -203,7 +203,7 @@ const SECURITY: { id: string; label: string; lead: string; text: ReactNode }[] =
     id: "credentials",
     label: "Credentials",
     lead: "Encrypted per value, never shown again.",
-    text: "Each value is sealed with its own key, wrapped by a master key, and bound to its tenant, connector and field. It is written once, never shown again, and a value moved between tenants cannot be opened.",
+    text: "Each value is sealed with its own key, wrapped by a master key, and bound to its merchant (or workspace), connector and field. It is written once, never shown again, and a value moved to another merchant cannot be opened.",
   },
   {
     id: "api-keys",
@@ -215,13 +215,13 @@ const SECURITY: { id: string; label: string; lead: string; text: ReactNode }[] =
     id: "read-only",
     label: "Read-only",
     lead: "Okwan can't move money on PayPal, Stripe or Paystack. WhatsApp's two send operations are the only writes, and they're marked.",
-    text: "A reconciliation can only be declared over read operations, the SQL guard refuses anything but a read, and the hosted MCP's tools are read-only. Connector REST mounts each declared operation; the catalog marks the ones that write (today, WhatsApp's two send operations). No channel can move money on a payment rail.",
+    text: "A reconciliation can only be declared over read operations, the SQL guard refuses anything but a read, and the hosted MCP's tools are read-only. Connector REST mounts each declared operation; the catalog marks the ones that write (today, WhatsApp's two send operations). No channel can move money at a payment provider.",
   },
   {
     id: "results",
     label: "Results",
     lead: "Every check is saved as verdicts and amounts, never raw payment records; the latest 50 per merchant are kept.",
-    text: "Every run is stored: its summary and, per order, the verdict, the order reference, currency, totals and what each rail took. A rail record is never written, so a customer's fields on it reach neither the database nor a browser. The newest 50 runs per merchant and check are kept; older ones are removed as new ones arrive.",
+    text: "Every run is stored: its summary and, per order, the verdict, the order reference, currency, totals and what each payment provider took. A provider's record is never written, so a customer's fields on it reach neither the database nor a browser. The newest 50 runs per merchant and check are kept; older ones are removed as new ones arrive.",
   },
   {
     id: "errors",
@@ -233,7 +233,7 @@ const SECURITY: { id: string; label: string; lead: string; text: ReactNode }[] =
     id: "metering",
     label: "Metering",
     lead: "We count requests, never their contents.",
-    text: "One count per tenant, hour and channel. No query text, no row content, no per-call log: the meter is the record.",
+    text: "One count per merchant (or workspace), hour and channel. No query text, no row content, no per-call log: the meter is the record.",
   },
   {
     id: "egress",
@@ -251,18 +251,18 @@ const SECURITY: { id: string; label: string; lead: string; text: ReactNode }[] =
     id: "isolation",
     label: "Isolation",
     lead: "A merchant's key reads only that merchant.",
-    text: "A merchant is its own tenant: its vault and its keys are its own, and a key for it reads nothing else. The plan allowance is the workspace's, shared by its merchants. Anything outside your subtree answers as if it did not exist.",
+    text: "A merchant stands on its own: its vault and its keys are its own, and a key for it reads nothing else. The plan allowance is the workspace's, shared by its merchants. Anything outside your subtree answers as if it did not exist.",
   },
   {
     id: "sessions",
     label: "Sessions",
     lead: "A dashboard session never acts as an API key.",
-    text: "A dashboard session administers a tenant and never acts as an API key: data routes and the hosted MCP take only a key you chose to issue.",
+    text: "A dashboard session administers your workspace and never acts as an API key: data routes and the hosted MCP take only a key you chose to issue.",
   },
   {
     id: "rate-limits",
     label: "Rate limits",
     lead: "Sign-in, sign-up, tests and verification are rate-limited.",
-    text: "Sign-in and sign-up are limited per address and per account, connection tests per address and per tenant, and verification per address.",
+    text: "Sign-in and sign-up are limited per address and per account, connection tests per address and per merchant, and verification per address.",
   },
 ];

@@ -163,8 +163,8 @@ function summary(r: DrawerRow): string {
     `${r.merchantName} · order ${r.order}: ${OUTCOME_LABEL[r.outcome] ?? r.outcome}`,
     `Order total ${formatMinor(r.total_minor, r.currency)}${takes ? `; taken: ${takes}` : "; no matching payment"}.`,
     stake ? `${formatMinor(stake.minor, r.currency)} ${stake.label}.` : "",
-    r.at ? `Run ${new Date(r.at).toISOString()}.` : "",
-    "Source: Okwan reconciliation (rails), read-only.",
+    r.at ? `Checked ${new Date(r.at).toISOString()}.` : "",
+    "Source: Okwan check, read-only.",
   ].filter(Boolean).join("\n");
 }
 

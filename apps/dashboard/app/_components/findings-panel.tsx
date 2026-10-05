@@ -184,7 +184,7 @@ function RunStamp({ shown, older, saved }: { shown: Shown; older: boolean; saved
 }
 
 function CoveragePanel({ s }: { s: Finding["summary"] }) {
-  const ledger = s.ledger_coverage?.source.split(".")[0] ?? "ledger";
+  const ledger = s.ledger_coverage?.source.split(".")[0] ?? "shopify";
   const sides: { name: string; cov: Coverage | null; orphans?: number }[] = [
     { name: ledger, cov: s.ledger_coverage },
     ...Object.entries(s.rails).map(([name, r]) => ({
@@ -265,7 +265,7 @@ function span(c: Coverage): string {
 
 function Loading() {
   return (
-    <div role="status" aria-label="Reading the ledger, then each rail" className="space-y-5">
+    <div role="status" aria-label="Reading Shopify orders, then PayPal and Stripe" className="space-y-5">
       <div className="flex flex-wrap gap-x-8 gap-y-3 rounded-xl border border-line bg-surface px-5 py-4">
         {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-4 w-24" />)}
       </div>

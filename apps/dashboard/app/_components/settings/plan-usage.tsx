@@ -31,7 +31,7 @@ const INCLUDED = [
 const RANGES = [7, 30, 90] as const;
 
 const POLICY =
-  "Every call that reads a rail counts once: REST, SQL, the hosted MCP, and checks run from this dashboard " +
+  "Every call that reads a connection counts once: REST, SQL, the hosted MCP, and checks run from this dashboard " +
   "(counted to the merchant they run as). Listing tables or reconciliations is free. Connection tests count but are " +
   "never refused for quota. The month resets on the 1st, UTC.";
 
