@@ -7,8 +7,9 @@ import { CopyButton } from "./ui/copy-button";
 
 type Issued = { key_id: string; prefix: string; secret: string };
 
-/** `tenantId` issues for a merchant's tenant; without it, the signed-in tenant. */
-export function IssueKey({ tenantId, onShowing }: { tenantId?: string; onShowing?: (showing: boolean) => void } = {}) {
+/** `tenantId` issues for a merchant's tenant; without it, the signed-in tenant.
+ *  `bare` drops the idle box's own border when a Card already frames it. */
+export function IssueKey({ tenantId, onShowing, bare = false }: { tenantId?: string; onShowing?: (showing: boolean) => void; bare?: boolean } = {}) {
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +55,7 @@ export function IssueKey({ tenantId, onShowing }: { tenantId?: string; onShowing
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-surface p-5">
+    <div className={`flex flex-wrap items-center justify-between gap-4${bare ? "" : " rounded-xl border border-line bg-surface p-5"}`}>
       <p className="max-w-xl text-sm text-ink-soft">
         A key authenticates REST, SQL and the hosted MCP at <code className="font-mono">/mcp/</code>. It&apos;s shown
         once at issue. Issuing another doesn&apos;t revoke this one.

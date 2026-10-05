@@ -174,7 +174,12 @@ function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; 
         {" "}from {SURFACE_LABEL[shown.surface] ?? shown.surface}
         {shown.runId && <> · stored as <code className="font-mono">{shown.runId}</code></>}. Run again for current data.
       </p>
-      <AgentPanel apiBase={apiBase} outcome={filter === "findings" && s.collected_twice ? "collected_twice" : filter === "unverifiable" ? "unverifiable" : undefined} />
+      <AgentPanel
+        apiBase={apiBase}
+        outcome={filter === "findings" && s.collected_twice ? "collected_twice" : filter === "unverifiable" ? "unverifiable" : undefined}
+        keyFor={tenantName}
+        setupHref={`/agents?merchant=${encodeURIComponent(tenantId)}`}
+      />
     </div>
   );
 }

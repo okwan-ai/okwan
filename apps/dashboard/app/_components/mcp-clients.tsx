@@ -1,16 +1,18 @@
 "use client";
 
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { MCP_CLIENTS, type McpClientId, mcpClientOf } from "@/lib/mcp-clients";
 import { BrandMark, CLIENT_MARK } from "./ui/brand-mark";
 import { CodeBlock } from "./ui/copy-button";
 import { IconPlug } from "./ui/icons";
 
 /**
- * The integrations catalog, as four rows: each MCP client and how it
- * reaches the one hosted URL. A real tablist (arrow keys move, the panel
- * is labelled by its tab); the chosen client is kept in `?client=` so a
- * link can land on one, without a server round trip per click.
+ * Step 2 of agent setup: each MCP client and how it reaches the one hosted
+ * URL. A real tablist (arrow keys, Home and End move; the panel is labelled
+ * by its tab), drawn as underline tabs with a 24px logo tile beside each
+ * name, in one row that scrolls sideways on a phone. The chosen client is
+ * kept in `?client=` so a link can land on one, without a server round
+ * trip per click. Borderless: the Card around it is the frame.
  *
  * Snippets keep the `okw_…` placeholder even while IssueKey above may be
  * showing a secret: this component never sees a key.
@@ -18,8 +20,21 @@ import { IconPlug } from "./ui/icons";
 export function McpClients({ apiBase, server, initial }: { apiBase: string; server: string; initial?: string | null }) {
   const [id, setId] = useState<McpClientId>(mcpClientOf(initial));
   const base = useId();
+  const row = useRef<HTMLDivElement>(null);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const client = MCP_CLIENTS.find((c) => c.id === id) ?? MCP_CLIENTS[0];
+
+  // A link to ?client=any on a phone: bring the chosen tab into view along
+  // the row only, so the page itself never jumps.
+  useEffect(() => {
+    const box = row.current;
+    const el = tabs.current[MCP_CLIENTS.findIndex((c) => c.id === id)];
+    if (!box || !el) return;
+    const b = box.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (r.left < b.left) box.scrollLeft -= b.left - r.left;
+    else if (r.right > b.right) box.scrollLeft += r.right - b.right;
+  }, [id]);
 
   function choose(next: McpClientId, focus = false) {
     setId(next);
@@ -38,35 +53,47 @@ export function McpClients({ apiBase, server, initial }: { apiBase: string; serv
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-surface">
-      <div role="tablist" aria-label="MCP client" className="flex flex-wrap gap-1 border-b border-line bg-canvas/60 p-1.5">
-        {MCP_CLIENTS.map((c, i) => {
-          const active = c.id === id;
-          return (
-            <button
-              key={c.id}
-              ref={(el) => { tabs.current[i] = el; }}
-              type="button"
-              role="tab"
-              id={`${base}-tab-${c.id}`}
-              aria-selected={active}
-              aria-controls={`${base}-panel`}
-              tabIndex={active ? 0 : -1}
-              onClick={() => choose(c.id)}
-              onKeyDown={(e) => onKey(e, i)}
-              className={`min-h-9 rounded-md border-b-2 px-3 text-left text-sm font-medium ${active ? "border-ink bg-surface text-ink shadow-sm" : "border-transparent text-ink-soft hover:text-ink"}`}
-            >
-              <span className="flex items-center gap-1.5">
-                {CLIENT_MARK[c.id] ? <BrandMark name={CLIENT_MARK[c.id]} size={16} /> : <span aria-hidden className="inline-flex size-4 items-center justify-center [&_svg]:size-4"><IconPlug /></span>}
+    <>
+      <div
+        ref={row}
+        className="overflow-x-auto border-b border-line [scrollbar-width:none] max-sm:[mask-image:linear-gradient(to_right,black_85%,transparent)]"
+      >
+        <div role="tablist" aria-label="MCP client" className="flex min-w-max gap-1 px-2">
+          {MCP_CLIENTS.map((c, i) => {
+            const active = c.id === id;
+            return (
+              <button
+                key={c.id}
+                ref={(el) => { tabs.current[i] = el; }}
+                type="button"
+                role="tab"
+                id={`${base}-tab-${c.id}`}
+                aria-selected={active}
+                aria-controls={`${base}-panel`}
+                tabIndex={active ? 0 : -1}
+                onClick={() => choose(c.id)}
+                onKeyDown={(e) => onKey(e, i)}
+                // The row scrolls, so it clips: the focus ring is drawn inside the tab.
+                className={`-mb-px inline-flex min-h-12 items-center gap-2 border-b-2 px-3 text-sm font-medium whitespace-nowrap focus-visible:-outline-offset-2 ${
+                  active ? "border-ink text-ink" : "border-transparent text-ink-soft hover:text-ink"
+                }`}
+              >
+                {CLIENT_MARK[c.id] ? (
+                  <BrandMark name={CLIENT_MARK[c.id]} tile size={24} />
+                ) : (
+                  <span aria-hidden className="inline-flex size-6 shrink-0 items-center justify-center rounded-[22%] border border-line bg-white text-ink [&_svg]:size-[15px]">
+                    <IconPlug />
+                  </span>
+                )}
                 {c.label}
-              </span>
-              <span className="block text-xs font-normal text-ink-soft">{c.via}</span>
-            </button>
-          );
-        })}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-tab-${client.id}`} className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-4">
+          <p className="text-xs text-ink-soft"><span className="font-medium text-ink">Connects:</span> {client.via}</p>
           <ol className="space-y-2.5 text-sm">
             {client.steps.map((s, i) => (
               <li key={i} className="flex gap-3">
@@ -89,16 +116,15 @@ export function McpClients({ apiBase, server, initial }: { apiBase: string; serv
               </ul>
             </div>
           )}
-          <a href={client.docs.href} target="_blank" rel="noopener" className="inline-block text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">
-            {client.docs.label} <span aria-hidden>↗</span><span className="sr-only">(opens in a new tab)</span>
+          <a href={client.docs.href} target="_blank" rel="noopener" className="inline-flex min-h-11 items-center text-xs text-ink-soft underline-offset-4 hover:text-ink hover:underline">
+            {client.docs.label}&nbsp;<span aria-hidden>↗</span><span className="sr-only">(opens in a new tab)</span>
           </a>
         </div>
         <div className="min-w-0">
           <CodeBlock label={client.snippetLabel} code={client.snippet(apiBase, server)} />
-          <p className="mt-2 text-xs text-ink-soft">Use the key from step 1 in place of <code className="font-mono">okw_…</code>. The server reads only that merchant.</p>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
