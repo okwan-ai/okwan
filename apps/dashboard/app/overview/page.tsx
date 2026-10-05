@@ -87,7 +87,7 @@ async function OverviewBody() {
     <>
       {strip}
       <WorkspaceVerdict runs={runs} />
-      <div className="mt-6"><SetupChecklist steps={steps} /></div>
+      <div className="mt-6 empty:hidden"><SetupChecklist steps={steps} /></div>
 
       <Section
         title="Needs attention"
