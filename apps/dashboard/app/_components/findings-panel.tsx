@@ -177,8 +177,8 @@ function RunStamp({ shown, older, saved }: { shown: Shown; older: boolean; saved
         <CopyButton value={runId} label="Copy run id" />
       </>}
       {older
-        ? <>{" · "}<Link href="?tab=findings" scroll={false} className="underline underline-offset-4">Show latest</Link></>
-        : saved > 0 && <>{" · "}<a href="#history" className="underline underline-offset-4">{saved} saved check{saved === 1 ? "" : "s"} ↓</a></>}
+        ? <>{" · "}<Link href="?tab=findings" scroll={false} className="whitespace-nowrap underline underline-offset-4">Show latest</Link></>
+        : saved > 0 && <>{" · "}<a href="#history" className="whitespace-nowrap underline underline-offset-4">{saved} saved check{saved === 1 ? "" : "s"} ↓</a></>}
     </p>
   );
 }
