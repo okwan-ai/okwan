@@ -20,8 +20,9 @@ import { LOGOS } from "./brand-logos";
  * - `corner`: a disc from this tab's last test, "ok" ✓ or "alert" !.
  * - `pop`: the 420ms arrival, once, on the connect that caused it. The
  *   global prefers-reduced-motion rule turns it off; the state still
- *   arrives. `onAnimationEnd` reports the tile's own animation only, never
- *   the disc's bubbled one.
+ *   arrives. `onAnimationEnd` reports once, when the arrival has finished:
+ *   at the end of the ok disc's delayed pop when it plays, otherwise at the
+ *   end of the tile's own animation.
  *
  * Each logo is its owner's trademark, shown to name the integration it
  * identifies. Whether each owner's brand rules permit this use is a legal
@@ -77,7 +78,7 @@ export function BrandMark({
   pop?: boolean;
   /** A disc in the tile's corner from this tab's last test. Tiles only. */
   corner?: "ok" | "alert";
-  /** The arrival finished (the tile's own animation, not the disc's). */
+  /** The arrival finished: the ok disc's pop when it plays, else the tile's. */
   onAnimationEnd?: () => void;
   className?: string;
 }) {
@@ -88,10 +89,16 @@ export function BrandMark({
   const inner = tile ? Math.round(size * 0.62) : size;
   const initial = (label ?? name).trim().charAt(0).toUpperCase() || "?";
   // Only a client caller can pass a callback, so a server render never
-  // serializes a handler. Bubbled events (the disc's) are ignored.
+  // serializes a handler. The arrival ends with whatever finishes last: the
+  // tile's own animation, or, when the ok disc pops 180ms behind it, the
+  // disc's. Reporting the tile's end while the disc still pops would clear
+  // the pop flag and cut the disc off mid-scale; any other bubbled event is
+  // ignored.
+  const discPops = tile && pop && corner === "ok";
   const ended = onAnimationEnd
     ? (e: AnimationEvent<HTMLElement | SVGSVGElement>) => {
-        if (e.target === e.currentTarget) onAnimationEnd();
+        const own = e.target === e.currentTarget;
+        if (discPops ? !own : own) onAnimationEnd();
       }
     : undefined;
 
