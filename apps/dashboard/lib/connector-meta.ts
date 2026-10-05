@@ -124,9 +124,11 @@ export function defineOnceLine(c: Declaration): string {
 
 /**
  * How a newly connected system can be read, one line per surface, from its
- * declaration: the operation its connection test makes (or the first one
- * declared when it has no test), the table over that resource (or the first
- * table), the hosted query over it, and the SDK tool for the operation.
+ * declaration: the operation its connection test makes (or, when it has no
+ * test, the first declared operation that only reads), the table over that
+ * resource (or the first table), the hosted query over it, and the SDK tool
+ * for the operation. A write ("messages.send_text") is never offered as a
+ * way to read: WhatsApp has no test and declares its sends first.
  */
 export function nowReadableAs(c: Declaration): { rest: string; sql: string | null; hosted: string | null; sdk: string } | null {
   let resource: string | undefined;
@@ -135,8 +137,14 @@ export function nowReadableAs(c: Declaration): { rest: string; sql: string | nul
   if (probe && probe.length === 3 && probe[0] === c.name) {
     [, resource, op] = probe;
   } else {
-    const first = Object.entries(c.resources ?? {}).find(([, ops]) => ops.length > 0);
-    if (first) [resource, op] = [first[0], first[1][0]];
+    const writes = new Set(c.writes ?? []);
+    for (const [res, ops] of Object.entries(c.resources ?? {})) {
+      const read = ops.find((o) => !writes.has(`${res}.${o}`));
+      if (read) {
+        [resource, op] = [res, read];
+        break;
+      }
+    }
   }
   if (!resource || !op) return null;
   const tables = c.sql_tables ?? [];
