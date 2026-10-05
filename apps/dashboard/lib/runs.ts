@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import {
-  type AttentionRow, ATTENTION, atStake, digestOf, failedDigest, type Finding, missingFor, type RunDigest, toFinding,
+  ago, type AttentionRow, ATTENTION, atStake, digestOf, failedDigest, type Finding, missingFor, type RunDigest, toFinding,
   truncated,
 } from "./finding";
 import { formatMinor } from "./money";
@@ -61,6 +61,16 @@ export const storedRuns = cache(async (): Promise<MerchantRun[] | null> => {
 export function oldestAt(runs: MerchantRun[]): number | null {
   const ats = runs.flatMap((r) => (r.state === "ok" ? [r.at] : []));
   return ats.length ? Math.min(...ats) : null;
+}
+
+/** "Results from just now", or "Results from 3 h ago to just now" when the
+ *  oldest and newest successful checks read differently. */
+export function resultsFrom(runs: MerchantRun[], now = Date.now()): string {
+  const ats = runs.flatMap((r) => (r.state === "ok" ? [r.at] : []));
+  if (!ats.length) return "No results yet";
+  const oldest = ago(Math.min(...ats), now);
+  const newest = ago(Math.max(...ats), now);
+  return oldest === newest ? `Results from ${newest}` : `Results from ${oldest} to ${newest}`;
 }
 
 export { ranAgo } from "./finding";

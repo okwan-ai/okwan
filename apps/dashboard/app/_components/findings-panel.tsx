@@ -10,14 +10,18 @@ import { formatMinor } from "@/lib/money";
 import { AgentPanel } from "./agent-panel";
 import { FindingsTable, groupOf, type MerchantFilter } from "./findings-table";
 import { type Shown, useMerchantRun } from "./merchant-run";
-import { GRID } from "./ui/card";
+import { VerdictCard } from "./verdict-card";
+import { Card, CardBody, CardHeader, GRID } from "./ui/card";
 import { EmptyState } from "./ui/empty-state";
 import { IconPlay, IconPlug } from "./ui/icons";
+import { CopyButton } from "./ui/copy-button";
 import { OutcomeSpectrum } from "./ui/outcome-spectrum";
 import { Skeleton, SkeletonRows } from "./ui/skeleton";
 
-export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys = [] }: {
+export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys = [], saved = 0 }: {
   apiBase: string;
+  /** How many saved checks the history below lists. */
+  saved?: number;
   /** A stored run chosen from the history, shown instead of the newest. */
   view?: Shown | null;
   /** The chosen run failed: its scrubbed error and when. */
@@ -67,10 +71,10 @@ export function FindingsPanel({ apiBase, view = null, viewError = null, newKeys 
       </EmptyState>
     );
   }
-  return <Result key={`${shown.runId ?? ""}:${order ?? ""}`} shown={shown} newKeys={newKeys} apiBase={apiBase} />;
+  return <Result key={`${shown.runId ?? ""}:${order ?? ""}`} shown={shown} older={Boolean(view)} saved={saved} newKeys={newKeys} apiBase={apiBase} />;
 }
 
-function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; apiBase: string }) {
+function Result({ shown, older, saved, newKeys, apiBase }: { shown: Shown; older: boolean; saved: number; newKeys: string[]; apiBase: string }) {
   const { tenantId, tenantName, justRan } = useMerchantRun();
   const order = useSearchParams().get("order");
   const f = shown.finding;
@@ -90,22 +94,36 @@ function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; 
     return (
       <div className={GRID.mainAside}>
         <EmptyState title="Shopify returned no orders">
-          The ledger read came back empty for the window shown under What was read, so there was nothing to check.
+          The orders read came back empty for the window shown under What was read, so there was nothing to check.
         </EmptyState>
         <CoveragePanel s={s} />
       </div>
     );
   }
 
+  const twice = s.collected_twice > 0;
+  const cur = f.twice_currency;
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <h2 className="sr-only">Result</h2>
-      {s.collected_twice > 0 && <TwiceBand f={f} />}
-
-      <section aria-label="Orders by outcome" className="rounded-xl border border-line bg-surface px-5 py-4">
-        <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+      <VerdictCard
+        ariaLabel="Verdict for this check"
+        twice={twice}
+        figure={twice
+          ? (cur ? formatMinor(s.collected_twice_minor, cur) : `${s.collected_twice} orders`)
+          : <><span aria-hidden className="mr-2 font-mono text-2xl text-ok">✓</span>None</>}
+        sub={twice
+          ? <>
+            {s.collected_twice} order{s.collected_twice === 1 ? "" : "s"}
+            {cur ? (s.overcollected_minor === s.collected_twice_minor
+              ? " · all owed back to customers"
+              : <> · <strong className="font-semibold">{formatMinor(s.overcollected_minor, cur)} owed back</strong></>) : null}
+          </>
+          : `No order taken twice in ${s.orders.toLocaleString("en-US")} checked.`}
+        leftFooter={<span className="[&_button]:text-ink"><RunStamp shown={shown} older={older} saved={saved} /></span>}
+        counts={<>
           <p>
-            <span className="text-xl font-semibold tabular-nums">{s.orders.toLocaleString("en-US")}</span>
+            <span className="text-2xl font-semibold tabular-nums">{s.orders.toLocaleString("en-US")}</span>
             <span className="ml-1.5 text-sm text-ink-soft">orders checked</span>
           </p>
           <p className="text-sm text-ink-soft">
@@ -113,9 +131,10 @@ function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; 
               ? "Match rate withheld: some orders couldn't be verified"
               : <><span className="font-semibold text-ink tabular-nums">{(s.match_rate * 100).toFixed(1)}%</span> paid exactly once</>}
           </p>
-        </div>
-        <OutcomeSpectrum summary={s} unconfirmed={unconfirmedRows(f)} animate={justRan !== null && shown.runId === justRan} />
-      </section>
+        </>}
+        spectrum={<OutcomeSpectrum summary={s} unconfirmed={unconfirmedRows(f)} animate={justRan !== null && shown.runId === justRan} />}
+        footer={<a href="#agents" className="inline-flex min-h-11 items-center underline-offset-4 hover:text-ink hover:underline">Same result for your agents ↓</a>}
+      />
 
       <div className={GRID.mainAside}>
         <FindingsTable
@@ -131,14 +150,8 @@ function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; 
         <CoveragePanel s={s} />
       </div>
 
-      <p className="border-t border-line pt-4 text-xs text-ink-soft">
-        Run{" "}
-        {/* Server and browser may sit in different time zones. */}
-        <time dateTime={ranAt.toISOString()} suppressHydrationWarning>{ago(shown.at)}</time>
-        {" "}from {SURFACE_LABEL[shown.surface] ?? shown.surface}
-        {shown.runId && <> · stored as <code className="font-mono">{shown.runId}</code></>}. Run again for current data.
-      </p>
       <AgentPanel
+        id="agents"
         apiBase={apiBase}
         outcome={filter === "findings" && s.collected_twice ? "collected_twice" : filter === "unverifiable" ? "unverifiable" : undefined}
         keyFor={tenantName}
@@ -148,20 +161,25 @@ function Result({ shown, newKeys, apiBase }: { shown: Shown; newKeys: string[]; 
   );
 }
 
-function TwiceBand({ f }: { f: Finding }) {
-  const s = f.summary;
-  const cur = f.twice_currency;
+/** When the shown check ran, from where, its id, and the way to the saved
+ *  checks (or back to the latest, for an older one). Sits inside the
+ *  VerdictCard, so on volt the copy control is forced to ink. */
+function RunStamp({ shown, older, saved }: { shown: Shown; older: boolean; saved: number }) {
+  const runId = shown.runId;
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl bg-volt px-5 py-4 text-ink">
-      <span aria-hidden className="font-mono text-sm font-medium">×2</span>
-      <p className="text-2xl font-semibold tracking-tight tabular-nums">
-        {cur ? formatMinor(s.collected_twice_minor, cur) : `${s.collected_twice} orders`}
-      </p>
-      <p className="text-sm font-medium">
-        collected twice · {s.collected_twice} order{s.collected_twice === 1 ? "" : "s"}
-        {cur ? <> · {formatMinor(s.overcollected_minor, cur)} owed back</> : " · owed back"}
-      </p>
-    </div>
+    <p className="text-xs">
+      {older ? "Older check from " : "Checked "}
+      {/* Server and browser may sit in different time zones. */}
+      <time dateTime={new Date(shown.at).toISOString()} suppressHydrationWarning>{ago(shown.at)}</time>
+      {" · "}{SURFACE_LABEL[shown.surface] ?? shown.surface}
+      {runId && <>
+        {" · "}<span className="font-mono">{runId.slice(0, 8)}…</span>{" "}
+        <CopyButton value={runId} label="Copy run id" />
+      </>}
+      {older
+        ? <>{" · "}<Link href="?tab=findings" scroll={false} className="underline underline-offset-4">Show latest</Link></>
+        : saved > 0 && <>{" · "}<a href="#history" className="underline underline-offset-4">{saved} saved check{saved === 1 ? "" : "s"} ↓</a></>}
+    </p>
   );
 }
 
@@ -188,9 +206,9 @@ function CoveragePanel({ s }: { s: Finding["summary"] }) {
     return { left: ((a - lo) / (hi - lo)) * 100, width: Math.max(((b - a) / (hi - lo)) * 100, 2), open: !c.span_start };
   };
   return (
-    <section aria-labelledby="coverage-title" className="h-fit rounded-xl border border-line bg-surface">
-      <h2 id="coverage-title" className="border-b border-line px-5 py-3 text-sm font-semibold">What was read</h2>
-      <ul className="divide-y divide-line">
+    <Card aria-labelledby="coverage-title" className="h-fit">
+      <CardHeader id="coverage-title" title="What was read" />
+      <CardBody list>
         {sides.map((side, i) => (
           <li key={`${side.name}-${i}`} className="px-5 py-3 text-sm">
             <p className="font-medium">
@@ -226,8 +244,8 @@ function CoveragePanel({ s }: { s: Finding["summary"] }) {
             ) : null}
           </li>
         ))}
-      </ul>
-    </section>
+      </CardBody>
+    </Card>
   );
 }
 

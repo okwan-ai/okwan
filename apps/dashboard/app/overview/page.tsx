@@ -5,15 +5,15 @@ import { FOLD_READS, missingFor, railLabel, SURFACE_LABEL, unconfirmedRows } fro
 import { requireTenant } from "@/lib/guard";
 import { formatMinor } from "@/lib/money";
 import {
-  attentionRows, caveats, digest, eligible, type MerchantRun, oldestAt, ranAgo, storedRuns, twiceTotals,
+  attentionRows, caveats, digest, eligible, type MerchantRun, ranAgo, resultsFrom, storedRuns, twiceTotals,
 } from "@/lib/runs";
 import { myUsage } from "@/lib/usage";
-import { today, type Usage } from "@/lib/usage-shape";
 import { FindingsTable } from "../_components/findings-table";
 import { owedAmount, RunStatus } from "../_components/merchant-status";
 import { RailStrip } from "../_components/rail-strip";
 import { RunAll } from "../_components/run-all";
 import { SetupChecklist, type Step } from "../_components/setup-checklist";
+import { VerdictCard } from "../_components/verdict-card";
 import { ButtonLink } from "../_components/ui/button";
 import { Card, CardBody } from "../_components/ui/card";
 import { EmptyState } from "../_components/ui/empty-state";
@@ -98,7 +98,7 @@ async function OverviewBody() {
   return (
     <>
       {strip}
-      <VerdictStrip runs={runs} usage={usage} />
+      <WorkspaceVerdict runs={runs} />
 
       <Section
         title="Needs attention"
@@ -124,11 +124,11 @@ async function OverviewBody() {
 }
 
 /**
- * The page's signature: the one volt figure (collected twice across every
- * merchant) beside every order checked, split by verdict. Caveats sit next
- * to the figure, so "None" never hides a merchant that couldn't run.
+ * The page's signature: the workspace VerdictCard. Collected twice across
+ * every merchant beside every order checked, split by verdict. Caveats sit
+ * in the footer, so "None" never hides a merchant that couldn't run.
  */
-function VerdictStrip({ runs, usage }: { runs: MerchantRun[]; usage: Usage | null }) {
+function WorkspaceVerdict({ runs }: { runs: MerchantRun[] }) {
   const t = twiceTotals(runs);
   const ok = runs.flatMap((r) => (r.state === "ok" ? [r.finding.summary] : []));
   const sum = (k: "orders" | "collected" | "split_tender" | "collected_twice" | "collected_inconsistent" | "uncollected" | "unverifiable") =>
@@ -144,70 +144,63 @@ function VerdictStrip({ runs, usage }: { runs: MerchantRun[]; usage: Usage | nul
   const orders = sum("orders");
   const warn = caveats(runs);
   const amounts = [...t.byCurrency].map(([cur, minor]) => formatMinor(minor, cur));
+  // Integer compare per currency: everything taken twice is owed back.
+  const allOwed = [...t.byCurrency].every(([cur, minor]) => t.owedByCurrency.get(cur) === minor);
   const owed = [...t.owedByCurrency].map(([cur, minor]) => formatMinor(minor, cur));
-  const value = t.orders === 0 ? (warn.length ? "None found" : "None")
+  const twice = t.orders > 0;
+  const value = !twice ? (warn.length ? "None found" : "None")
     : t.mixed || amounts.length > 2 ? plural(t.orders, "order") : amounts.join(" + ");
   const rate = ok.some((s) => s.match_rate === null) ? null
     : orders ? (counts.collected + counts.split_tender) / orders : null;
 
   return (
-    <section aria-label="Verdict across merchants" className="grid overflow-hidden rounded-xl border border-line bg-surface md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-      {/* Volt only when there is something to act on: a clean "None" is not
-          the page's hero figure, and volt on it would cry wolf. */}
-      <div className={`flex flex-col px-5 py-5 text-ink ${t.orders > 0 ? "bg-volt" : "border-b border-line md:border-r md:border-b-0"}`}>
-        <p className="text-xs font-medium">Collected twice</p>
-        <p className={`mt-1 font-semibold tracking-tight tabular-nums ${amounts.length > 1 ? "text-3xl" : "text-4xl sm:text-5xl"}`}>
-          {t.orders === 0 && !warn.length && <span aria-hidden className="mr-2 font-mono text-2xl text-ok">✓</span>}
-          {value}
+    <VerdictCard
+      ariaLabel="Verdict across merchants"
+      twice={twice}
+      compactFigure={amounts.length > 1}
+      figure={<>{!twice && !warn.length && <span aria-hidden className="mr-2 font-mono text-2xl text-ok">✓</span>}{value}</>}
+      sub={!twice
+        ? `No order taken twice across ${plural(ok.length, "merchant")}`
+        : <>
+          {plural(t.orders, "order")} · {plural(t.merchants, "merchant")}
+          {t.mixed || !owed.length ? null : allOwed
+            ? " · all owed back to customers"
+            : <> · <strong className="font-semibold">{owed.join(" + ")} owed back</strong></>}
+        </>}
+      details={twice ? <HowItAddsUp runs={runs} /> : undefined}
+      leftFooter={twice ? (
+        <Link href="/findings?outcome=collected_twice" prefetch={false} className="inline-flex min-h-11 items-center gap-1 text-sm font-medium underline underline-offset-4">
+          Review the orders <span aria-hidden>→</span>
+        </Link>
+      ) : undefined}
+      counts={<>
+        <p>
+          <span className="text-2xl font-semibold tabular-nums">{orders.toLocaleString("en-US")}</span>
+          <span className="ml-1.5 text-sm text-ink-soft">orders checked across {plural(ok.length, "merchant")}</span>
         </p>
-        <p className="mt-2 text-sm">
-          {t.orders === 0
-            ? `No order taken twice across ${plural(ok.length, "merchant")}`
-            : <>
-              {plural(t.orders, "order")} · {plural(t.merchants, "merchant")}
-              {owed.length && !t.mixed ? <> · <strong className="font-semibold">{owed.join(" + ")} owed back</strong></> : null}
-            </>}
+        <p className="text-sm text-ink-soft">
+          {orders === 0
+            ? "No orders in what was read"
+            : rate === null
+            ? "Match rate withheld: some orders couldn't be verified"
+            : <><span className="font-semibold text-ink tabular-nums">{(rate * 100).toFixed(1)}%</span> paid exactly once</>}
         </p>
-        {t.orders > 0 && <HowItAddsUp runs={runs} />}
-        {t.orders > 0 && (
-          <Link href="/findings?outcome=collected_twice" prefetch={false} className="mt-auto inline-flex min-h-11 items-center gap-1 self-start pt-3 text-sm font-medium underline underline-offset-4">
-            Review the orders <span aria-hidden>→</span>
-          </Link>
-        )}
-      </div>
-      <div className="flex min-w-0 flex-col gap-4 px-5 py-5">
-        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
-          <p>
-            <span className="text-2xl font-semibold tabular-nums">{orders.toLocaleString("en-US")}</span>
-            <span className="ml-1.5 text-sm text-ink-soft">orders checked across {plural(ok.length, "merchant")}</span>
-          </p>
-          <p className="text-sm text-ink-soft">
-            {orders === 0
-              ? "No orders in what was read"
-              : rate === null
-              ? "Match rate withheld: some orders couldn't be verified"
-              : <><span className="font-semibold text-ink tabular-nums">{(rate * 100).toFixed(1)}%</span> paid exactly once</>}
-          </p>
-        </div>
+      </>}
+      spectrum={
         <OutcomeSpectrum
           summary={counts}
           unconfirmed={runs.reduce((n, r) => n + (r.state === "ok" ? unconfirmedRows(r.finding) : 0), 0)}
         />
-        <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
-          <span suppressHydrationWarning>{ranAgo(oldestAt(runs))}{runs.filter((r) => r.state === "ok").length > 1 ? " (oldest)" : ""}</span>
-          {usage && (
-            <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">
-              {usage.plan.used.toLocaleString("en-US")}{usage.plan.unmetered ? "" : ` of ${usage.plan.limit.toLocaleString("en-US")}`} requests this month · {today(usage).toLocaleString("en-US")} today
-            </Link>
-          )}
-          {warn.map((w) => (
-            <span key={w} className="inline-flex items-center gap-1 text-ink">
-              <span aria-hidden className="font-mono">?</span>{w}
-            </span>
-          ))}
-        </div>
-      </div>
-    </section>
+      }
+      footer={<>
+        <span suppressHydrationWarning>{resultsFrom(runs)}</span>
+        {warn.map((w) => (
+          <span key={w} className="inline-flex items-center gap-1 text-ink">
+            <span aria-hidden className="font-mono">?</span>{w}
+          </span>
+        ))}
+      </>}
+    />
   );
 }
 
