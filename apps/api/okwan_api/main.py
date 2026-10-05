@@ -92,6 +92,9 @@ app = FastAPI(
     version="0.1.0",
     description="The data connectivity layer built for AI agents.",
     lifespan=lifespan,
+    # The reference at /docs is Okwan's own page (okwan_api/docs.py).
+    docs_url=None,
+    redoc_url=None,
 )
 
 
@@ -118,7 +121,7 @@ def _probe_name(c: Connector) -> str | None:
     return None if probe is None else f"{c.name}.{probe[0].name}.{probe[1].name}"
 
 
-@app.get("/v1/connectors", response_model=list[ConnectorInfo])
+@app.get("/v1/connectors", response_model=list[ConnectorInfo], tags=["catalog"])
 async def list_connectors() -> list[ConnectorInfo]:
     return [
         ConnectorInfo(
@@ -228,7 +231,7 @@ app.mount(
 )
 
 
-@app.get("/healthz")
+@app.get("/healthz", tags=["system"])
 async def healthz() -> dict[str, Any]:
     """Liveness plus vault reachability.
 
@@ -253,3 +256,9 @@ async def healthz() -> dict[str, Any]:
         "vault": vault,
         "connectors": len(all_connectors()),
     }
+
+
+# Last, so the document it builds sees every route above.
+from okwan_api.docs import install as _install_docs  # noqa: E402
+
+_install_docs(app)
