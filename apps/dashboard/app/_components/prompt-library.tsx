@@ -30,12 +30,12 @@ export function PromptLibrary({ apiBase }: { apiBase: string }) {
               <CopyButton value={promptText(p)} label={`Copy prompt: ${p.question}`} text="Copy prompt" />
               <CopyButton value={p.rest(apiBase)} label={`Copy REST: ${p.question}`} text="REST" />
               {p.outcome ? (
-                <Link href={`/findings?outcome=${p.outcome}`} className="ml-auto inline-flex min-h-9 items-center px-2 text-ink-soft underline-offset-4 hover:text-ink hover:underline">
+                <Link href={`/findings?outcome=${p.outcome}`} className="ml-auto inline-flex min-h-11 items-center px-2 text-ink-soft underline-offset-4 hover:text-ink hover:underline">
                   Compare with Findings →
                 </Link>
               ) : (
-                <Link href="/catalog" className="ml-auto inline-flex min-h-9 items-center px-2 text-ink-soft underline-offset-4 hover:text-ink hover:underline">
-                  Tables in the catalog →
+                <Link href="/integrations" className="ml-auto inline-flex min-h-11 items-center px-2 text-ink-soft underline-offset-4 hover:text-ink hover:underline">
+                  Tables in Integrations →
                 </Link>
               )}
             </div>
