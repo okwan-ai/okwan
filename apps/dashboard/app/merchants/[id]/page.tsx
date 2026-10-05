@@ -71,7 +71,7 @@ export default async function MerchantPage({
   const newKeys = previous ? shownRows.filter((r) => ATTENTION.includes(r.outcome)).map(rowKey).filter((k) => !before.has(k)) : [];
   return (
     <div className="space-y-6">
-      <FindingsPanel apiBase={apiUrl()} view={view} viewError={viewError} newKeys={newKeys} />
+      <FindingsPanel apiBase={apiUrl()} view={view} viewError={viewError} newKeys={newKeys} saved={history.length} />
       <RunHistory runs={history} selected={shownId} href={(runId) => (runId ? `?run=${encodeURIComponent(runId)}` : "?tab=findings")} />
     </div>
   );
