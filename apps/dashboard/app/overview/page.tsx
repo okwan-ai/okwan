@@ -1,18 +1,18 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { apiUrl } from "@/lib/api";
-import { FOLD_READS, missingFor, railLabel, unconfirmedRows } from "@/lib/finding";
+import { FOLD_READS, missingFor, railLabel, SURFACE_LABEL, unconfirmedRows } from "@/lib/finding";
 import { requireTenant } from "@/lib/guard";
 import { formatMinor } from "@/lib/money";
 import {
-  attentionRows, caveats, checkedAgo, digest, eligible, type MerchantRun, oldestAt, runAll, seenFindings, twiceTotals,
+  attentionRows, caveats, digest, eligible, type MerchantRun, oldestAt, ranAgo, storedRuns, twiceTotals,
 } from "@/lib/runs";
-import { ReportRuns } from "@/lib/tab-results";
 import { myUsage } from "@/lib/usage";
 import { today, type Usage } from "@/lib/usage-shape";
 import { AttentionList } from "../_components/attention-list";
 import { owedAmount, RunStatus } from "../_components/merchant-status";
 import { RailChips } from "../_components/rail-chips";
+import { RunAll } from "../_components/run-all";
 import { SetupChecklist, type Step } from "../_components/setup-checklist";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
@@ -33,8 +33,13 @@ export default async function OverviewPage() {
     <>
       <PageHeader
         title="Overview"
-        description="Each merchant ready for a check is checked when this page loads, and the result is reused for up to 10 minutes. Each check counts as one request against your plan; results aren't saved."
-        actions={<ButtonLink href="/merchants?add=1" variant="secondary">Add merchant</ButtonLink>}
+        description="Each merchant's newest stored run, however it was made: from here, from REST, or by an agent. Opening this page runs nothing. Run all checks each ready merchant once; each check is one request against your plan and is stored."
+        actions={
+          <>
+            <ButtonLink href="/merchants?add=1" variant="secondary">Add merchant</ButtonLink>
+            <Suspense><RunAllReady /></Suspense>
+          </>
+        }
       />
       <Suspense fallback={<OverviewSkeleton />}>
         <OverviewBody />
@@ -43,8 +48,18 @@ export default async function OverviewPage() {
   );
 }
 
+/** The header's Run all, over the merchants that are ready. Same cached
+ *  read as the body, so no second request. */
+async function RunAllReady() {
+  const runs = await storedRuns();
+  const ready = (runs ?? []).filter((r) => eligible(r.merchant)).map((r) => ({ id: r.merchant.tenant.id, name: r.merchant.tenant.name }));
+  // Secondary always: the hero figure or the setup checklist's next step
+  // carries the view's one volt element (§2).
+  return <RunAll merchants={ready} variant="secondary" />;
+}
+
 async function OverviewBody() {
-  const [runs, usage] = await Promise.all([runAll(), myUsage(30)]);
+  const [runs, usage] = await Promise.all([storedRuns(), myUsage(30)]);
   if (!runs) {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
   }
@@ -61,7 +76,7 @@ async function OverviewBody() {
   const strip = (
     <PlanStrip
       usage={usage}
-      spend={`A load of this page checks each ready merchant at most once per 10 minutes (${readyNow} ready now); each check is one request.`}
+      spend={`Opening this page runs nothing. Run all checks each ready merchant once (${readyNow} ready now); each check is one request.`}
     />
   );
 
@@ -70,7 +85,6 @@ async function OverviewBody() {
     const failed = runs.filter((r) => r.state === "failed");
     return (
       <>
-        <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
         {strip}
         <SetupChecklist steps={steps} prominent />
         {failed.length > 0 && <FailedNote runs={failed} />}
@@ -87,7 +101,6 @@ async function OverviewBody() {
 
   return (
     <>
-      <ReportRuns digests={runs.map(digest).filter((d) => d !== null)} seen={seenFindings(runs)} serverNow={Date.now()} />
       {strip}
       <VerdictStrip runs={runs} usage={usage} />
 
@@ -187,7 +200,7 @@ function VerdictStrip({ runs, usage }: { runs: MerchantRun[]; usage: Usage | nul
           unconfirmed={runs.reduce((n, r) => n + (r.state === "ok" ? unconfirmedRows(r.finding) : 0), 0)}
         />
         <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-soft">
-          <span>{checkedAgo(oldestAt(runs))}</span>
+          <span suppressHydrationWarning>{ranAgo(oldestAt(runs))}{runs.filter((r) => r.state === "ok").length > 1 ? " (oldest)" : ""}</span>
           {usage && (
             <Link href="/settings?tab=plan" className="underline-offset-4 hover:text-ink hover:underline">
               {usage.plan.used.toLocaleString("en-US")}{usage.plan.unmetered ? "" : ` of ${usage.plan.limit.toLocaleString("en-US")}`} requests this month · {today(usage).toLocaleString("en-US")} today
@@ -234,7 +247,8 @@ function HowItAddsUp({ runs }: { runs: MerchantRun[] }) {
 function rank(r: MerchantRun): number {
   if (r.state === "ok") return r.finding.summary.collected_twice ? 0 : r.finding.summary.collected_inconsistent + r.finding.summary.uncollected ? 1 : 3;
   if (r.state === "failed") return 2;
-  return eligible(r.merchant) ? 4 : 5;
+  if (r.state === "none") return 4;
+  return 5;
 }
 
 function MerchantTable({ runs }: { runs: MerchantRun[] }) {
@@ -263,6 +277,7 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
                   <RunStatus m={m} d={d} />
                   <RailChips ready={m.ready} partial={m.partial} known={m.known} />
                 </div>
+                <span className="mt-1 block text-xs text-ink-soft" suppressHydrationWarning>{lastRunLine(r)}</span>
                 {r.state === "failed" && <span className="mt-1 block text-xs break-words text-danger">{r.detail}</span>}
               </Link>
             </li>
@@ -294,6 +309,7 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
                   {FOLD_READS.map((c) => <Td key={c}><RailCell m={m} rail={c} /></Td>)}
                   <Td>
                     <RunStatus m={m} d={d} />
+                    <p className="mt-1 text-xs text-ink-soft" suppressHydrationWarning>{lastRunLine(r)}</p>
                     {r.state === "failed" && (
                       <p className="mt-1 max-w-[260px] text-xs break-words text-danger">
                         {r.status ? `${r.status} · ` : ""}{r.detail}
@@ -309,6 +325,12 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
       </div>
     </>
   );
+}
+
+/** "Last run 2 days ago · agent", "Not run yet", or why it can't run. */
+function lastRunLine(r: MerchantRun): string {
+  if (r.state === "ok" || r.state === "failed") return `${ranAgo(r.at)} · ${SURFACE_LABEL[r.surface] ?? r.surface}`;
+  return r.state === "none" ? "Not run yet" : "Not ready";
 }
 
 /** One rail of the check, for one merchant: a glyph and a word, never

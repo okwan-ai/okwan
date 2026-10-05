@@ -248,3 +248,58 @@ async def test_add_account_refusals(store):
     with pytest.raises(AccountRefused, match="already taken"):
         await store.add_account(other.id, email, "h")
     assert not await store.account_exists(f"x-{email}")
+
+
+# ── stored reconciliation runs ──────────────────────────────────────
+
+async def _add_run(store, tenant_id, *, name="rails", kind="across", at, rows=None, status="ok"):
+    from datetime import timedelta
+
+    return await store.add_run(
+        tenant_id, kind=kind, name=name, surface="dashboard", status=status,
+        started_at=at - timedelta(seconds=2), finished_at=at,
+        summary=None if status == "failed" else {"orders": 1, "collected_twice": 0},
+        rows=rows, error="401 · [redacted]" if status == "failed" else None,
+    )
+
+
+async def test_runs_round_trip_with_json_rows(store):
+    from datetime import UTC, datetime
+
+    t = await store.create_tenant("runs-rt")
+    rows = [{"outcome": "collected", "order": {"ref": "#1", "currency": "USD"}, "rails": []}]
+    rec = await _add_run(store, t.id, at=datetime.now(UTC), rows=rows)
+    assert rec.id.startswith("run_") and rec.rows == rows and rec.summary["orders"] == 1
+    got = await store.get_run(t.id, rec.id)
+    assert got.rows == rows and got.finished_at.tzinfo is not None
+    listed = await store.list_runs(t.id)
+    assert [r.id for r in listed] == [rec.id] and listed[0].rows is None
+    assert await store.get_run("ten_nope", rec.id) is None
+
+
+async def test_runs_latest_per_tenant_and_pruning(store):
+    from datetime import UTC, datetime, timedelta
+
+    from okwan_vault import RUNS_KEPT
+
+    isv = await store.create_tenant("runs-isv")
+    a = await store.create_tenant("runs-a", parent_id=isv.id)
+    b = await store.create_tenant("runs-b", parent_id=isv.id)
+    now = datetime.now(UTC)
+    await _add_run(store, a.id, at=now - timedelta(hours=2))
+    newest = await _add_run(store, a.id, at=now - timedelta(hours=1))
+    await _add_run(store, a.id, at=now - timedelta(hours=3))
+    failed = await _add_run(store, b.id, at=now, status="failed")
+    latest = await store.latest_runs([a.id, b.id, isv.id], "across", "rails")
+    assert latest[a.id].id == newest.id and latest[b.id].id == failed.id and isv.id not in latest
+    ids = [(await _add_run(store, b.id, at=now + timedelta(seconds=i))).id for i in range(RUNS_KEPT + 2)]
+    kept = await store.list_runs(b.id, name="rails", limit=100)
+    assert len(kept) == RUNS_KEPT and kept[0].id == ids[-1]
+    assert await store.get_run(b.id, failed.id) is None
+
+
+async def test_runs_are_refused_for_an_unknown_tenant(store):
+    from datetime import UTC, datetime
+
+    with pytest.raises(KeyError):
+        await _add_run(store, "ten_nope", at=datetime.now(UTC))

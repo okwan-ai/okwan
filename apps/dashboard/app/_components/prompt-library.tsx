@@ -43,8 +43,8 @@ export function PromptLibrary({ apiBase }: { apiBase: string }) {
         ))}
       </ul>
       <p className="text-xs text-ink-soft">
-        Each run an agent makes from a card is one request against the plan. Okwan saves no result; the dashboard trims rows
-        before they reach a browser, and an agent sees only what the key&apos;s merchant has connected.
+        Each run an agent makes from a card is one request against the plan and is stored in that merchant&apos;s run history
+        as verdicts, never rail records. An agent sees only what the key&apos;s merchant has connected.
       </p>
     </div>
   );

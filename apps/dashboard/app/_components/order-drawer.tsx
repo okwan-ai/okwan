@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRef } from "react";
 import {
-  type AttentionRow, atStake, checkedAgo, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency,
+  ago, type AttentionRow, atStake, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency,
 } from "@/lib/finding";
 import { formatMinor } from "@/lib/money";
 import { mcpCall, restCall } from "@/lib/reproduce";
@@ -18,9 +18,10 @@ export type DrawerRow = FindingRow & { merchantId: string; merchantName: string;
 /**
  * One order's proof, where the operator already is: the verdict, what is at
  * stake, the money trail, each source's evidence, and how to reproduce it.
- * Built from rows the page holds, so opening it reads nothing and runs
- * nothing. Previous and Next step through the list it was opened from. A
- * person makes any refund on the rail; Okwan only prepares the facts.
+ * Built from rows the page holds (a stored run), so opening it reads
+ * nothing and runs nothing. Previous and Next step through the list it was
+ * opened from. A person makes any refund on the rail; Okwan only prepares
+ * the facts.
  */
 export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
   rows: (DrawerRow | AttentionRow)[];
@@ -48,7 +49,7 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
       description={r ? (
         <>
           {r.merchantName}
-          {r.at ? <> · <span suppressHydrationWarning>{checkedAgo(r.at).toLowerCase()}</span></> : null}
+          {r.at ? <> · <span suppressHydrationWarning>run {ago(r.at)}</span></> : null}
         </>
       ) : null}
     >
@@ -146,7 +147,7 @@ function summary(r: DrawerRow): string {
     `${r.merchantName} · order ${r.order}: ${OUTCOME_LABEL[r.outcome] ?? r.outcome}`,
     `Order total ${formatMinor(r.total_minor, r.currency)}${takes ? `; taken: ${takes}` : "; no matching payment"}.`,
     stake ? `${formatMinor(stake.minor, r.currency)} ${stake.label}.` : "",
-    r.at ? `Checked ${new Date(r.at).toISOString()}.` : "",
+    r.at ? `Run ${new Date(r.at).toISOString()}.` : "",
     "Source: Okwan reconciliation (rails), read-only.",
   ].filter(Boolean).join("\n");
 }

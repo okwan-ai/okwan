@@ -1,110 +1,69 @@
 import "server-only";
 import { cache } from "react";
-import { api, session } from "./api";
 import {
-  type AcrossPage, ATTENTION, type AttentionRow, atStake, digestOf, failedDigest, type Finding, FOLD_READS, missingFor, type RunDigest,
-  toFinding, truncated,
+  type AttentionRow, ATTENTION, atStake, digestOf, failedDigest, type Finding, missingFor, type RunDigest, toFinding,
+  truncated,
 } from "./finding";
 import { formatMinor } from "./money";
 import { merchantsWithRails, type MerchantRails } from "./merchants";
+import { myLatestRuns, type StoredRun } from "./stored-runs";
 
 /**
- * Overview and Findings need results, and results are not persisted. A
- * render runs the `rails` fold for each merchant with every rail the fold
- * reads connected, in parallel, through the same session route the Run button uses
- * (POST /v1/tenants/{id}/reconciliations/across/rails). Every successful run
- * is metered to its merchant, so a successful result is reused for FRESH_MS
- * from this server's memory: loading Overview then Findings, or reloading
- * either, costs nothing inside that window. The key includes the merchant's
- * ready rails, so connecting or removing a rail runs again. Failed runs are
- * not metered and not kept; they retry on the next load. The merchant
- * page's Run button always runs fresh.
- *
- * A failed run never fails the page: that merchant reads "Couldn't run"
- * with the API's own status and detail.
+ * Overview and Findings read each merchant's newest stored run. Nothing
+ * runs on a page load any more: a run happens when someone presses Run
+ * (one merchant, or Run all), or when an agent or a REST caller runs the
+ * fold with the merchant's key, and every one of those is stored by the
+ * API. A page therefore shows what was last found and when, however the
+ * run was made, and costs no request to open.
  */
 export type MerchantRun =
+  /** Not every rail the fold reads is connected. */
   | { merchant: MerchantRails; state: "skipped" }
-  | { merchant: MerchantRails; state: "ok"; finding: Finding; at: number }
-  | { merchant: MerchantRails; state: "failed"; status: number; detail: string; at: number };
+  /** Ready, but never run. */
+  | { merchant: MerchantRails; state: "none" }
+  | { merchant: MerchantRails; state: "ok"; finding: Finding; at: number; runId: string; surface: string }
+  | { merchant: MerchantRails; state: "failed"; status: number; detail: string; at: number; runId: string; surface: string };
 
-export const FOLD = "rails";
+export { FOLD } from "./stored-runs";
 
 /** Ready to check: every rail the fold reads is connected (FOLD_READS). */
 export function eligible(m: MerchantRails): boolean {
   return m.known && missingFor(m).length === 0;
 }
 
-/** How long a successful run is reused before a page load runs it again. */
-export const FRESH_MS = 10 * 60 * 1000;
-
-/** Keyed by merchant, fold and ready rails. Read only after the merchant
- * list, which is fetched per request under the caller's session, has
- * shown the caller can see that merchant. */
-const recent = new Map<string, { at: number; finding: Finding }>();
-
-/** Runs already on their way, so two loads at once share one metered run. */
-const inflight = new Map<string, Promise<{ ok: true; finding: Finding; at: number } | { ok: false; status: number; detail: string }>>();
-
-/** Only what the fold reads: connecting Paystack (not in the check) must
- *  not miss the cache and cost a second metered run. */
-function keyOf(m: { tenant: { id: string }; ready: string[] }): string {
-  return `${m.tenant.id}:${FOLD}:${FOLD_READS.filter((c) => m.ready.includes(c)).join(",")}`;
+/** A stored run as a page carries it. A merchant that is not ready is
+ *  "skipped" even if an older run exists: the fold could not run today. */
+export function fromStored(merchant: MerchantRails, run: StoredRun | undefined): MerchantRun {
+  if (!eligible(merchant)) return { merchant, state: "skipped" };
+  if (!run) return { merchant, state: "none" };
+  const at = Date.parse(run.finished_at);
+  if (run.status === "failed" || !run.summary) {
+    return { merchant, state: "failed", status: 0, detail: run.error ?? "the run failed", at, runId: run.id, surface: run.surface };
+  }
+  return {
+    merchant,
+    state: "ok",
+    finding: toFinding({ summary: run.summary, rows: run.rows ?? [], has_more: run.has_more ?? false, twice_currency: run.twice_currency }),
+    at,
+    runId: run.id,
+    surface: run.surface,
+  };
 }
 
-/**
- * A result still fresh in this server's memory, without running anything.
- * Callers must have shown the caller may see `id` first (the merchant
- * layout does: its credentials read passed the API's subtree guard).
- */
-export function cachedRun(id: string, ready: string[]): { finding: Finding; at: number } | null {
-  const hit = recent.get(keyOf({ tenant: { id }, ready }));
-  return hit && Date.now() - hit.at < FRESH_MS ? hit : null;
-}
-
-function remember(key: string, finding: Finding, at: number) {
-  for (const [k, v] of recent) if (at - v.at >= FRESH_MS) recent.delete(k);
-  recent.set(key, { at, finding });
-}
-
-export const runAll = cache(async (): Promise<MerchantRun[] | null> => {
-  const [merchants, token] = await Promise.all([merchantsWithRails(), session()]);
-  if (!merchants) return null;
-  return Promise.all(
-    merchants.map(async (merchant): Promise<MerchantRun> => {
-      if (!eligible(merchant)) return { merchant, state: "skipped" };
-      const key = keyOf(merchant);
-      const hit = recent.get(key);
-      if (hit && Date.now() - hit.at < FRESH_MS) return { merchant, state: "ok", ...hit };
-      let pending = inflight.get(key);
-      if (!pending) {
-        pending = api<AcrossPage>(
-          `/v1/tenants/${encodeURIComponent(merchant.tenant.id)}/reconciliations/across/${FOLD}?limit=1000`,
-          { method: "POST", session: token },
-        ).then((r) => {
-          if (!r.ok) return { ok: false as const, status: r.status, detail: r.detail };
-          const finding = toFinding(r.data);
-          const at = Date.now();
-          remember(key, finding, at);
-          return { ok: true as const, finding, at };
-        }).finally(() => inflight.delete(key));
-        inflight.set(key, pending);
-      }
-      const r = await pending;
-      return r.ok
-        ? { merchant, state: "ok", finding: r.finding, at: r.at }
-        : { merchant, state: "failed", status: r.status, detail: r.detail, at: Date.now() };
-    }),
-  );
+/** Every merchant with its newest stored run. Reads only; cached per render. */
+export const storedRuns = cache(async (): Promise<MerchantRun[] | null> => {
+  const [merchants, latest] = await Promise.all([merchantsWithRails(), myLatestRuns()]);
+  if (!merchants || !latest) return null;
+  return merchants.map((m) => fromStored(m, latest[m.tenant.id]));
 });
 
-/** The oldest result a page is showing, for "checked N min ago". */
+/** The oldest result a page is showing, for "last run N ago". */
 export function oldestAt(runs: MerchantRun[]): number | null {
   const ats = runs.flatMap((r) => (r.state === "ok" ? [r.at] : []));
   return ats.length ? Math.min(...ats) : null;
 }
 
-export { checkedAgo } from "./finding";
+export { ranAgo } from "./finding";
 export type { AttentionRow } from "./finding";
 
 /** Every money finding across merchants, worst first, largest first. */
@@ -161,6 +120,8 @@ export function caveats(runs: MerchantRun[]): string[] {
   const out: string[] = [];
   const failed = runs.filter((r) => r.state === "failed").length;
   if (failed) out.push(`${failed} merchant${failed === 1 ? "" : "s"} couldn't run`);
+  const never = runs.filter((r) => r.state === "none").length;
+  if (never) out.push(`${never} ready merchant${never === 1 ? "" : "s"} never run`);
   const unverifiable = runs.reduce((n, r) => n + (r.state === "ok" ? r.finding.summary.unverifiable : 0), 0);
   if (unverifiable) out.push(`${unverifiable.toLocaleString("en-US")} order${unverifiable === 1 ? "" : "s"} couldn't be verified`);
   const cut = runs.filter((r) => r.state === "ok" && (r.finding.partial || truncated(r.finding))).length;
@@ -168,29 +129,25 @@ export function caveats(runs: MerchantRun[]): string[] {
   return out;
 }
 
-
 export function digest(r: MerchantRun): RunDigest | null {
   const id = r.merchant.tenant.id;
-  if (r.state === "skipped") return null;
+  if (r.state === "skipped" || r.state === "none") return null;
   const d = r.state === "failed" ? failedDigest(id, r.detail, r.at) : digestOf(id, r.finding, r.at);
-  return { ...d, name: r.merchant.tenant.name };
+  return { ...d, name: r.merchant.tenant.name, surface: r.surface };
 }
 
-/** Findings per merchant in the shape the palette's order search needs.
- *  Only merchants that ran: a merchant left out keeps what the tab had. */
+/** Findings per merchant in the shape the palette's order search needs. */
 export function seenFindings(runs: MerchantRun[]) {
-  return Object.fromEntries(
-    runs.flatMap((r) => (r.state === "ok"
-      ? [[r.merchant.tenant.id, r.finding.rows.filter((x) => ATTENTION.includes(x.outcome)).map((x) => {
-        const s = atStake(x);
-        return {
-          merchantId: r.merchant.tenant.id,
-          merchantName: r.merchant.tenant.name,
-          order: x.order,
-          outcome: x.outcome,
-          stake: s ? `${formatMinor(s.minor, x.currency)} ${s.label}` : "",
-        };
-      })]]
-      : [])),
-  );
+  return runs.flatMap((r) => (r.state === "ok"
+    ? r.finding.rows.filter((x) => ATTENTION.includes(x.outcome)).map((x) => {
+      const s = atStake(x);
+      return {
+        merchantId: r.merchant.tenant.id,
+        merchantName: r.merchant.tenant.name,
+        order: x.order,
+        outcome: x.outcome,
+        stake: s ? `${formatMinor(s.minor, x.currency)} ${s.label}` : "",
+      };
+    })
+    : []));
 }

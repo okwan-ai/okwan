@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useState } from "react";
 import { missingFor, type RunDigest } from "@/lib/finding";
-import { pickNewer, useTabResults } from "@/lib/tab-results";
 import { LastResult } from "./last-result";
 import { RailChips } from "./rail-chips";
 import { EmptyState } from "./ui/empty-state";
@@ -17,21 +16,17 @@ export type MerchantRow = {
   ready: string[];
   partial: string[];
   known: boolean;
-  /** A result the server still holds (memory, never a run), or null. */
-  cached: RunDigest | null;
+  /** The newest stored run, read by the page; null when there is none. */
+  digest: RunDigest | null;
 };
 
 /** The merchants list, searchable in the browser. Nothing here runs a check. */
-export function MerchantsTable({ rows, serverNow }: { rows: MerchantRow[]; serverNow: number }) {
+export function MerchantsTable({ rows }: { rows: MerchantRow[] }) {
   const [q, setQ] = useState("");
-  const tab = useTabResults();
   const term = q.trim().toLowerCase();
   const shown = rows.filter((m) => !term || m.name.toLowerCase().includes(term) || m.id.toLowerCase().includes(term));
   const ready = rows.filter((m) => m.known && missingFor(m).length === 0).length;
-  const withFindings = rows.filter((m) => {
-    const d = pickNewer(tab[m.id], m.cached, serverNow);
-    return d?.ok && d.open > 0;
-  }).length;
+  const withFindings = rows.filter((m) => m.digest?.ok && m.digest.open > 0).length;
 
   return (
     <div className="space-y-3">
@@ -55,7 +50,7 @@ export function MerchantsTable({ rows, serverNow }: { rows: MerchantRow[]; serve
               <Th>Name</Th>
               <Th>ID</Th>
               <Th>Rails</Th>
-              <Th>Verdict</Th>
+              <Th>Last run</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -71,7 +66,7 @@ export function MerchantsTable({ rows, serverNow }: { rows: MerchantRow[]; serve
                 </Td>
                 <Td><code className="font-mono text-xs text-ink-soft">{m.id}</code></Td>
                 <Td><RailChips ready={m.ready} partial={m.partial} known={m.known} /></Td>
-                <Td><LastResult id={m.id} ready={m.ready} known={m.known} initial={m.cached} serverNow={serverNow} /></Td>
+                <Td><LastResult ready={m.ready} known={m.known} digest={m.digest} /></Td>
               </tr>
             ))}
           </tbody>

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { apiUrl, tenantTree } from "@/lib/api";
+import type { RunDigest } from "@/lib/finding";
+import { digest, seenFindings, storedRuns } from "@/lib/runs";
 import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import "./globals.css";
@@ -15,8 +17,14 @@ export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const tree = await tenantTree();
-  // The meter in the sidebar: one unmetered read per render, never a run.
-  const usage = tree ? await myUsage(30) : null;
+  // The meter and the verdicts in the sidebar: two unmetered reads per
+  // render (the pages share them through React's cache), never a run.
+  const [usage, runs] = tree ? await Promise.all([myUsage(30), storedRuns()]) : [null, null];
+  const verdicts: Record<string, RunDigest> = {};
+  for (const r of runs ?? []) {
+    const d = digest(r);
+    if (d) verdicts[r.merchant.tenant.id] = d;
+  }
   return (
     <html lang="en">
       <head>
@@ -41,6 +49,8 @@ export default async function RootLayout({
               merchants={tree.children.map((c) => ({ id: c.id, name: c.name }))}
               plan={usage?.plan ?? null}
               apiBase={apiUrl()}
+              verdicts={verdicts}
+              findings={runs ? seenFindings(runs) : []}
             />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
               <div className="mx-auto max-w-[1120px] px-4 py-8 sm:px-8 sm:py-10">{children}</div>

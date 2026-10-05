@@ -2,25 +2,34 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
-import { digestOf, failedDigest, type Finding, railLabel } from "@/lib/finding";
+import { createContext, type ReactNode, useCallback, useContext, useState } from "react";
+import { type Finding, railLabel } from "@/lib/finding";
 import { formatMinor } from "@/lib/money";
-import { lastRun, rebase, report, reportRun } from "@/lib/tab-results";
 import { Button, buttonClass } from "./ui/button";
 import { IconPlay } from "./ui/icons";
+
+/** A result as the merchant page holds it: a stored run, or the run this
+ *  page just made (which the API stored too). */
+export type Shown = {
+  finding: Finding;
+  /** When the run finished (ms epoch). */
+  at: number;
+  runId: string | null;
+  /** dashboard · rest · mcp */
+  surface: string;
+};
 
 type RunState = {
   tenantId: string;
   tenantName: string;
   busy: boolean;
-  finding: Finding | null;
-  ranAt: Date | null;
-  /** The result came from an earlier check this server still holds,
-   *  not from a run on this page. */
-  reused: boolean;
-  error: { status: number; detail: string } | null;
+  shown: Shown | null;
+  error: { status: number; detail: string; at: number | null } | null;
   /** Rails the fold reads that this merchant hasn't connected. */
   missing: string[];
+  /** The id of the run this page made, so its result can settle into
+   *  place once; a stored run shown on load does not animate. */
+  justRan: string | null;
   run: () => Promise<void>;
 };
 
@@ -34,40 +43,29 @@ export function useMerchantRun(): RunState {
 
 /**
  * One merchant's run, held in the merchant layout so it survives switching
- * tabs (each tab is a URL, and the page beneath remounts). Each run is a
- * fresh, metered read through the session route; nothing is kept.
+ * tabs (each tab is a URL, and the page beneath remounts). The newest
+ * stored run arrives as `initial`; Run makes a fresh, metered run through
+ * the session route, which the API stores, and then refreshes the page so
+ * the history and the sidebar read it back.
  */
-export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", initial = null, serverNow, missing = [], children }: {
+export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", initial = null, initialError = null, missing = [], children }: {
   tenantId: string;
   tenantName: string;
   fold?: string;
   missing?: string[];
-  /** A result Overview or Findings already paid for, still fresh on the
-   *  server; shown without running again. */
-  initial?: { finding: Finding; at: number } | null;
-  /** The server's clock when `initial` was read, to compare it with runs
-   *  this tab made (lib/tab-results.ts rebase). */
-  serverNow: number;
+  /** The newest stored run, read by the layout; shown without running. */
+  initial?: Shown | null;
+  /** The newest stored run failed: its scrubbed error and when. */
+  initialError?: { detail: string; at: number } | null;
   children: ReactNode;
 }) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [finding, setFinding] = useState<Finding | null>(initial?.finding ?? null);
-  const [ranAt, setRanAt] = useState<Date | null>(initial ? new Date(initial.at) : null);
-  const [reused, setReused] = useState(initial !== null);
-  const [error, setError] = useState<RunState["error"]>(null);
+  const [shown, setShown] = useState<Shown | null>(initial);
+  const [error, setError] = useState<RunState["error"]>(initialError ? { status: 0, ...initialError } : null);
+  const [justRan, setJustRan] = useState<string | null>(null);
   // Spoken progress: a run takes seconds and ends somewhere else on the page.
   const [said, setSaid] = useState("");
-
-  // A Run made in this tab after the server's cached check wins: the server
-  // cache only learns of page-load checks, never of the Run button.
-  useEffect(() => {
-    const mine = lastRun(tenantId);
-    if (mine && (!initial || mine.at > rebase(initial.at, serverNow))) {
-      setFinding(mine.finding);
-      setRanAt(new Date(mine.at));
-      setReused(false);
-    }
-  }, [tenantId, initial, serverNow]);
 
   const run = useCallback(async () => {
     setBusy(true);
@@ -81,25 +79,24 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
     setBusy(false);
     if (!res || !res.ok) {
       const detail = data.detail ?? "the dashboard couldn't reach the API";
-      setError({ status: res?.status ?? 0, detail });
+      setError({ status: res?.status ?? 0, detail, at: Date.now() });
       setSaid(`The run didn't finish: ${detail}`);
-      report([{ ...failedDigest(tenantId, detail, Date.now()), origin: "tab" }]);
+      router.refresh();
       return;
     }
-    const at = Date.now();
-    setFinding(data as Finding);
-    setRanAt(new Date(at));
-    setReused(false);
-    const f = data as Finding;
-    reportRun(tenantId, f, at);
+    const f = data as Finding & { run_id: string | null; at: number };
+    setShown({ finding: f, at: f.at ?? Date.now(), runId: f.run_id ?? null, surface: "dashboard" });
+    setJustRan(f.run_id ?? null);
     const twice = f.summary.collected_twice;
-    setSaid(`Run finished: ${f.summary.orders} orders checked, ${twice} collected twice${
+    setSaid(`Run finished and stored: ${f.summary.orders} orders checked, ${twice} collected twice${
       twice && f.twice_currency ? ` (${formatMinor(f.summary.collected_twice_minor, f.twice_currency)})` : ""}.`);
-    report([{ ...digestOf(tenantId, f, at), origin: "tab" }]);
-  }, [tenantId, fold]);
+    // The API stored the run; the history, the sidebar and the other pages
+    // read it on the next render.
+    router.refresh();
+  }, [tenantId, fold, router]);
 
   return (
-    <Ctx.Provider value={{ tenantId, tenantName, busy, finding, ranAt, reused, error, missing, run }}>
+    <Ctx.Provider value={{ tenantId, tenantName, busy, shown, error, missing, justRan, run }}>
       <p role="status" className="sr-only">{said}</p>
       {children}
     </Ctx.Provider>
@@ -108,13 +105,14 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
 
 /** The header's primary action. Runs, and shows the Findings tab. */
 export function RunButton() {
-  const { busy, finding, missing, run } = useMerchantRun();
+  const { busy, shown, missing, run } = useMerchantRun();
   const router = useRouter();
   const path = usePathname();
-  const tab = useSearchParams().get("tab");
+  const params = useSearchParams();
+  const tab = params.get("tab");
   // A run with a rail missing fails on the API (and would read as a broken
   // product); lead to what's missing instead.
-  if (missing.length && !finding) {
+  if (missing.length && !shown) {
     return (
       <Link href={`${path}?tab=connections&connect=${missing[0]}`} scroll={false} className={buttonClass(tab === "connections" || tab === "keys" ? "secondary" : "primary")}>
         Connect {missing.map(railLabel).join(" + ")}
@@ -126,16 +124,18 @@ export function RunButton() {
       // One volt element per view: once a result exists the band carries it,
       // a re-run (metered) is secondary, and on the keys tab issuing a key is
       // the primary action.
-      variant={finding || tab === "keys" ? "secondary" : "primary"}
+      variant={shown || tab === "keys" ? "secondary" : "primary"}
       disabled={busy}
       aria-busy={busy}
       onClick={() => {
-        if (tab && tab !== "findings") router.push(path, { scroll: false });
+        // Back to the newest result: another tab, or an older run (?run=)
+        // chosen from the history, would otherwise hide what this run finds.
+        if ((tab && tab !== "findings") || params.get("run")) router.push(path, { scroll: false });
         void run();
       }}
     >
       <IconPlay className="h-4 w-4" />
-      {busy ? "Reading rails…" : finding ? "Run again" : "Run reconciliation"}
+      {busy ? "Reading rails…" : shown ? "Run again" : "Run reconciliation"}
     </Button>
   );
 }
