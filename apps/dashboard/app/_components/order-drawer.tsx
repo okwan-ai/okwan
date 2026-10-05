@@ -9,6 +9,7 @@ import { formatMinor } from "@/lib/money";
 import { mcpCall, restCall } from "@/lib/reproduce";
 import { MoneyTrail } from "./money-trail";
 import { Badge } from "./ui/badge";
+import { BrandMark } from "./ui/brand-mark";
 import { Button, buttonClass } from "./ui/button";
 import { CodeBlock, CopyButton } from "./ui/copy-button";
 import { SlideOver } from "./ui/dialog";
@@ -23,12 +24,14 @@ export type DrawerRow = FindingRow & { merchantId: string; merchantName: string;
  * opened from. A person makes any refund on the rail; Okwan only prepares
  * the facts.
  */
-export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
+export function OrderDrawer({ rows, index, onIndex, onClose, apiBase, onMerchantPage = false }: {
   rows: (DrawerRow | AttentionRow)[];
   index: number | null;
   onIndex: (i: number) => void;
   onClose: () => void;
   apiBase: string;
+  /** Opened on the merchant's own page: no "Open on {merchant}". */
+  onMerchantPage?: boolean;
 }) {
   const r = index === null ? null : rows[index] ?? null;
   const stake = r ? atStake(r) : null;
@@ -49,7 +52,7 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
       description={r ? (
         <>
           {r.merchantName}
-          {r.at ? <> · <span suppressHydrationWarning>run {ago(r.at)}</span></> : null}
+          {r.at ? <> · <span suppressHydrationWarning>checked {ago(r.at)}</span></> : null}
         </>
       ) : null}
     >
@@ -61,18 +64,26 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
               <span role="status" className="mr-1 text-xs text-ink-soft tabular-nums">
                 {index + 1} of {rows.length}<span className="sr-only">: order {r.order}, {OUTCOME_LABEL[r.outcome] ?? r.outcome}</span>
               </span>
-              <Button ref={prev} variant="ghost" aria-label="Previous finding" disabled={index === 0} onClick={() => step(index - 1)}>←</Button>
-              <Button ref={next} variant="ghost" aria-label="Next finding" disabled={index === rows.length - 1} onClick={() => step(index + 1)}>→</Button>
+              <Button ref={prev} variant="ghost" aria-label="Previous order" disabled={index === 0} onClick={() => step(index - 1)}>←</Button>
+              <Button ref={next} variant="ghost" aria-label="Next order" disabled={index === rows.length - 1} onClick={() => step(index + 1)}>→</Button>
             </div>
           </div>
 
-          {stake && (
+          {stake ? (
             <div>
               <p className="text-xs text-ink-soft">At stake</p>
               <p className="text-3xl font-semibold tracking-tight tabular-nums">{formatMinor(stake.minor, r.currency)}</p>
               <p className="text-sm text-ink-soft">{stake.label}</p>
             </div>
-          )}
+          ) : (r.outcome === "collected" || r.outcome === "split_tender") && r.collected_minor !== null && sameCurrency(r) ? (
+            <div>
+              <p className="text-xs text-ink-soft">Paid</p>
+              <p className="text-3xl font-semibold tracking-tight tabular-nums">{formatMinor(r.collected_minor, r.currency)}</p>
+              <p className="text-sm text-ink-soft">
+                {r.outcome === "split_tender" ? `split across ${listOf(r.collected_on.map(railLabel)) || "PayPal and Stripe"}` : "paid once"}
+              </p>
+            </div>
+          ) : null}
 
           <section aria-labelledby="drawer-trail">
             <h3 id="drawer-trail" className="mb-2 text-sm font-semibold">Order against what was taken</h3>
@@ -82,20 +93,21 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
           <section aria-labelledby="drawer-evidence">
             <h3 id="drawer-evidence" className="mb-2 text-sm font-semibold">Evidence by source</h3>
             <dl className="divide-y divide-line overflow-hidden rounded-xl border border-line">
-              <Fact label="Shopify (ledger)" value={`Order total ${formatMinor(r.total_minor, r.currency)}`} />
+              <Fact mark="shopify" label="Shopify (orders)" value={`Order total ${formatMinor(r.total_minor, r.currency)}`} />
               {r.paid.map((p, i) => (
-                <Fact key={`${p.rail}-${i}`} label={railLabel(p.rail)} value={`Matched · took ${formatMinor(p.minor, p.currency ?? r.currency)}`} />
+                <Fact key={`${p.rail}-${i}`} mark={p.rail} label={railLabel(p.rail)} value={`Matched · took ${formatMinor(p.minor, p.currency ?? r.currency)}`} />
               ))}
               {r.unverified.map((u) => (
-                <Fact key={u} label={railLabel(u)} value="Couldn't rule out a payment" muted />
+                <Fact key={u} mark={u} label={railLabel(u)} value="Couldn't rule out a payment" muted />
               ))}
               {r.paid.length === 0 && r.unverified.length === 0 && (
                 <Fact label="PayPal and Stripe" value="No matching payment" muted />
               )}
             </dl>
-            {r.reason && (r.outcome === "unverifiable" || r.paid.length === 0 || r.total_minor === null || r.collected_minor === null || !sameCurrency(r)) && (
+            {r.reason && (r.outcome === "unverifiable" || r.unverified.length > 0 || r.paid.length === 0 || r.total_minor === null || r.collected_minor === null || !sameCurrency(r)) && (
               <p className="mt-2 text-xs break-words text-ink-soft">Reason: {r.reason}</p>
             )}
+            <p className="mt-2 text-xs text-ink-soft">Outcome code <code className="font-mono">{r.outcome}</code></p>
             {r.partial && (
               <p className="mt-2 text-xs text-ink">
                 <span aria-hidden className="mr-1 font-mono">?</span>This merchant&apos;s result was cut short, so other orders may
@@ -112,28 +124,32 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
           </section>
 
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
-            <Link
-              href={`/merchants/${encodeURIComponent(r.merchantId)}?order=${encodeURIComponent(r.order)}`}
-              className={buttonClass("secondary")}
-            >
-              Open on {r.merchantName}
-            </Link>
+            {!onMerchantPage && (
+              <Link
+                href={`/merchants/${encodeURIComponent(r.merchantId)}?tab=findings&order=${encodeURIComponent(r.order)}`}
+                className={buttonClass("secondary")}
+              >
+                Open on {r.merchantName}
+              </Link>
+            )}
             <CopyButton value={summary(r)} label="Copy summary" text="Copy summary" />
             <CopyButton value={prompt(r)} label="Copy agent prompt" text="Agent prompt" />
           </div>
-          <p className="text-xs text-ink-soft">
-            Okwan is read-only: it never refunds or writes to a rail. Make any refund on the rail itself.
-          </p>
+          <p className="text-xs text-ink-soft">Okwan only reads. Make any refund in PayPal or Stripe.</p>
         </div>
       )}
     </SlideOver>
   );
 }
 
-function Fact({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+function listOf(items: string[]): string {
+  return items.length <= 1 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+function Fact({ label, value, mark, muted = false }: { label: string; value: string; mark?: string; muted?: boolean }) {
   return (
     <div className="grid grid-cols-[130px_1fr] gap-3 px-4 py-2.5 text-sm">
-      <dt className="text-ink-soft">{label}</dt>
+      <dt className="flex items-center gap-1.5 text-ink-soft">{mark && <BrandMark name={mark} label={label} size={16} />}{label}</dt>
       <dd className={`tabular-nums ${muted ? "text-ink-soft" : ""}`}>{value}</dd>
     </div>
   );
@@ -147,8 +163,8 @@ function summary(r: DrawerRow): string {
     `${r.merchantName} · order ${r.order}: ${OUTCOME_LABEL[r.outcome] ?? r.outcome}`,
     `Order total ${formatMinor(r.total_minor, r.currency)}${takes ? `; taken: ${takes}` : "; no matching payment"}.`,
     stake ? `${formatMinor(stake.minor, r.currency)} ${stake.label}.` : "",
-    r.at ? `Run ${new Date(r.at).toISOString()}.` : "",
-    "Source: Okwan reconciliation (rails), read-only.",
+    r.at ? `Checked ${new Date(r.at).toISOString()}.` : "",
+    "Source: Okwan check, read-only.",
   ].filter(Boolean).join("\n");
 }
 

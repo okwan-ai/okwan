@@ -116,29 +116,6 @@ export function what(r: FindingRow, fmt: (minor: number | null, currency: string
   }
 }
 
-/** One plain-language line for a row, for lists that cannot show a table.
- *  `withOrder: false` drops the order number where a column already shows it. */
-export function sentence(r: FindingRow, withOrder = true): string {
-  const o = withOrder ? `Order ${r.order} ` : "";
-  const cap = (t: string) => (withOrder ? t : t.charAt(0).toUpperCase() + t.slice(1));
-  switch (r.outcome) {
-    case "collected_twice":
-      return cap(`${o}was paid in full on ${rails(r.collected_on) || "more than one rail"}.`);
-    case "collected_inconsistent":
-      return withOrder
-        ? `Order ${r.order}: what the rails took doesn't add up to the order total.`
-        : "What the rails took doesn't add up to the order total.";
-    case "uncollected":
-      return cap(`${o}has no payment on ${rails([...FOLD_RAILS]).replace(" and ", " or ")}.`);
-    case "unverifiable":
-      return withOrder
-        ? `Order ${r.order} couldn't be checked on ${rails(r.unverified) || "a rail"}.`
-        : `Couldn't be checked on ${rails(r.unverified) || "a rail"}.`;
-    default:
-      return cap(`${o}was paid once.`);
-  }
-}
-
 export type Coverage = {
   source: string;
   records: number;

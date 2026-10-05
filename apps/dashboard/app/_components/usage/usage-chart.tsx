@@ -9,7 +9,8 @@ import { CHANNELS, type Day } from "@/lib/usage-shape";
  * the breakdown on hover and focus; the largest day is labelled; a table
  * view below carries every number without hovering.
  */
-export function UsageChart({ days, title }: { days: Day[]; title: string }) {
+/** `captionHidden` keeps the title for screen readers when a Card header already shows it. */
+export function UsageChart({ days, title, captionHidden = false }: { days: Day[]; title: string; captionHidden?: boolean }) {
   const id = useId();
   const [active, setActive] = useState<number | null>(null);
   const max = Math.max(...days.map((d) => d.total), 1);
@@ -23,13 +24,13 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
 
   return (
     <figure aria-labelledby={`${id}-title`} className="min-w-0">
-      <figcaption id={`${id}-title`} className="mb-3 text-sm font-semibold">{title}</figcaption>
+      <figcaption id={`${id}-title`} className={captionHidden ? "sr-only" : "mb-3 text-sm font-semibold"}>{title}</figcaption>
       <div className="relative">
         {/* Recessive gridlines with their tick values. */}
         <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 bottom-6">
           {ticks.map((t) => (
             <div key={t} className="absolute inset-x-0 flex items-end" style={{ bottom: `${(t / top) * 100}%` }}>
-              <span className="w-10 pr-2 text-right text-[10px] leading-none text-ink-soft tabular-nums">{t.toLocaleString("en-US")}</span>
+              <span className="w-10 pr-2 text-right text-[11px] leading-none text-ink-soft tabular-nums">{t.toLocaleString("en-US")}</span>
               <span className="h-px flex-1 bg-line" />
             </div>
           ))}
@@ -54,7 +55,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
                   style={{ height: `${Math.max(h, d.total ? 2 : 0)}%` }}
                 />
                 {i === peak && d.total > 0 && active !== i && (
-                  <span aria-hidden className="absolute -top-4 text-[10px] font-medium text-ink tabular-nums" style={{ bottom: `${h}%` }}>
+                  <span aria-hidden className="absolute -top-4 text-[11px] font-medium text-ink tabular-nums" style={{ bottom: `${h}%` }}>
                     {d.total.toLocaleString("en-US")}
                   </span>
                 )}
@@ -80,7 +81,7 @@ export function UsageChart({ days, title }: { days: Day[]; title: string }) {
             );
           })}
         </div>
-        <div aria-hidden className="ml-10 flex justify-between text-[10px] text-ink-soft">
+        <div aria-hidden className="ml-10 flex justify-between text-[11px] text-ink-soft">
           <span>{fmt(days[0].day)}</span>
           <span>{fmt(days[Math.floor(days.length / 2)].day)}</span>
           <span>{fmt(days[days.length - 1].until ?? days[days.length - 1].day)}</span>

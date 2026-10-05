@@ -14,18 +14,23 @@ const PAGES: Command[] = [
   { id: "p-findings", group: "Pages", label: "Findings", href: "/findings", keywords: "collected twice refunds issues" },
   { id: "p-twice", group: "Pages", label: "Findings: collected twice", href: "/findings?outcome=collected_twice", keywords: "double refund owed" },
   { id: "p-merchants", group: "Pages", label: "Merchants", href: "/merchants", keywords: "tenants stores" },
-  { id: "p-keys", group: "Pages", label: "API keys", href: "/key", keywords: "token secret" },
-  { id: "p-mcp", group: "Pages", label: "MCP for agents", href: "/mcp", keywords: "claude agent tools" },
-  { id: "p-prompts", group: "Pages", label: "Prompts for agents", hint: "one per verdict", href: "/mcp#prompts", keywords: "prompt library questions ask collected twice sql" },
-  { id: "p-clients", group: "Pages", label: "Connect Claude Code, Cursor or Claude Desktop", href: "/mcp?client=claude-code", keywords: "mcp client config integrations cursor desktop code" },
-  { id: "p-rails", group: "Pages", label: "Your own rails", href: "/connections", keywords: "connections credentials" },
-  { id: "p-catalog", group: "Pages", label: "Connector catalog", href: "/catalog", keywords: "connectors rest sql mcp tables routes" },
+  { id: "p-catalog", group: "Pages", label: "Integrations", href: "/integrations", keywords: "connectors catalog rest sql mcp tables routes" },
+  { id: "p-keys", group: "Pages", label: "API keys", href: "/settings?tab=keys", keywords: "token secret issue revoke" },
+  { id: "p-mcp", group: "Pages", label: "Agents", href: "/agents", keywords: "mcp claude agent tools setup" },
+  { id: "p-prompts", group: "Pages", label: "Prompts for agents", hint: "one per verdict", href: "/agents#prompts", keywords: "prompt library questions ask collected twice sql" },
+  { id: "p-clients", group: "Pages", label: "Connect Claude Code, Cursor or Claude Desktop", href: "/agents?client=claude-code", keywords: "mcp client config integrations cursor desktop code" },
+  { id: "p-endpoints", group: "Pages", label: "Endpoints and tools", href: "/agents#endpoints", keywords: "mcp url header rest base sql query openapi hosted tools" },
+  { id: "p-rails", group: "Pages", label: "Your workspace's own connections", href: "/settings#own-connections", keywords: "connections credentials own rails" },
   { id: "p-settings", group: "Pages", label: "Settings", href: "/settings", keywords: "workspace account" },
   { id: "p-usage", group: "Pages", label: "Plan & usage", href: "/settings?tab=plan", keywords: "billing meter requests quota" },
+  { id: "p-security", group: "Pages", label: "How Okwan handles your data", href: "/settings?tab=security", keywords: "security read-only credentials vault encryption privacy" },
   { id: "a-add", group: "Actions", label: "Add a merchant", href: "/merchants?add=1", keywords: "new create" },
 ];
 
-const GROUP_ORDER = ["Orders", "Pages", "Actions", "Merchants", "Merchant tabs"];
+const GROUP_ORDER = ["Orders", "Pages", "Actions", "Integrations", "Merchants", "Merchant tabs"];
+
+/** Shown only while searching: they would crowd the list otherwise. */
+const SEARCH_ONLY = new Set(["Integrations", "Merchant tabs"]);
 
 /** Opens the palette from anywhere (the sidebar's Search button). */
 export function openPalette() {
@@ -39,8 +44,9 @@ export function openPalette() {
  * An ARIA combobox: the input owns a listbox, arrows move the active
  * option, Enter follows it, Escape closes.
  */
-export function CommandPalette({ merchants, verdicts, findings }: {
+export function CommandPalette({ merchants, connectors, verdicts, findings }: {
   merchants: MerchantLink[];
+  connectors: { name: string; label: string }[];
   verdicts: Record<string, RunDigest>;
   findings: SeenFinding[];
 }) {
@@ -79,6 +85,13 @@ export function CommandPalette({ merchants, verdicts, findings }: {
 
   const commands = useMemo<Command[]>(() => [
     ...PAGES,
+    ...connectors.map((c) => ({
+      id: `i-${c.name}`,
+      group: "Integrations",
+      label: c.label,
+      href: `/integrations/${encodeURIComponent(c.name)}`,
+      keywords: `${c.name} connector rest sql mcp`,
+    })),
     ...merchants.flatMap((m) => {
       const d = results[m.id];
       const v = verdictOf(d);
@@ -86,11 +99,13 @@ export function CommandPalette({ merchants, verdicts, findings }: {
       const base = `/merchants/${encodeURIComponent(m.id)}`;
       return [
         { id: `m-${m.id}`, group: "Merchants", label: m.name, hint, href: base, keywords: m.id },
-        { id: `m-${m.id}-c`, group: "Merchant tabs", label: `${m.name}: Connections`, href: `${base}?tab=connections`, keywords: `${m.id} rails credentials` },
-        { id: `m-${m.id}-k`, group: "Merchant tabs", label: `${m.name}: API keys`, href: `${base}?tab=keys`, keywords: `${m.id} key mcp` },
+        { id: `m-${m.id}-f`, group: "Merchant tabs", label: `${m.name}: Findings`, href: `${base}?tab=findings`, keywords: `${m.id} findings result check` },
+        { id: `m-${m.id}-c`, group: "Merchant tabs", label: `${m.name}: Connections`, href: `${base}?tab=connections`, keywords: `${m.id} rails credentials connect` },
+        { id: `m-${m.id}-a`, group: "Merchant tabs", label: `${m.name}: Agent setup`, href: `/agents?merchant=${encodeURIComponent(m.id)}`, keywords: `${m.id} key mcp agent` },
+        { id: `m-${m.id}-u`, group: "Merchant tabs", label: `${m.name}: Usage`, href: `/settings?tab=plan&merchant=${encodeURIComponent(m.id)}`, keywords: `${m.id} usage requests plan` },
       ];
     }),
-  ], [merchants, results]);
+  ], [merchants, connectors, results]);
 
   // Orders: open findings in the stored runs, matched on the order number.
   const orders = useMemo<Command[]>(() => {
@@ -104,7 +119,7 @@ export function CommandPalette({ merchants, verdicts, findings }: {
         group: "Orders",
         label: `${f.order} · ${f.merchantName}`,
         hint: `${OUTCOME_MARK[f.outcome] ?? ""} ${OUTCOME_LABEL[f.outcome] ?? f.outcome}${f.stake ? ` · ${f.stake}` : ""}`,
-        href: `/merchants/${encodeURIComponent(f.merchantId)}?order=${encodeURIComponent(f.order)}`,
+        href: `/merchants/${encodeURIComponent(f.merchantId)}?tab=findings&order=${encodeURIComponent(f.order)}`,
       }));
   }, [seen, q]);
 
@@ -114,11 +129,12 @@ export function CommandPalette({ merchants, verdicts, findings }: {
       const hay = `${c.label} ${c.keywords ?? ""}`.toLowerCase();
       return terms.every((t) => hay.includes(t));
     });
-    // Without a query, merchant tabs would crowd the list; show them on search.
+    // Without a query, integrations and merchant tabs would crowd the list;
+    // show them on search.
     // Contiguous groups in a fixed order (merchant rows and their tabs would
     // otherwise interleave), then capped.
     const rank = (g: string) => GROUP_ORDER.indexOf(g);
-    return [...orders, ...(terms.length ? hits : hits.filter((c) => c.group !== "Merchant tabs"))]
+    return [...orders, ...(terms.length ? hits : hits.filter((c) => !SEARCH_ONLY.has(c.group)))]
       .map((c, i) => ({ c, i }))
       .sort((a, b) => rank(a.c.group) - rank(b.c.group) || a.i - b.i)
       .map(({ c }) => c)
@@ -211,11 +227,11 @@ export function CommandPalette({ merchants, verdicts, findings }: {
         <p role="status" className={shown.length ? "sr-only" : "px-4 py-6 text-center text-sm text-ink-soft"}>
           {shown.length
             ? `${shown.length} result${shown.length === 1 ? "" : "s"}`
-            : <>Nothing matches “{q}”.{/\d/.test(q) ? " Orders come from each merchant's newest stored run." : ""}</>}
+            : <>Nothing matches “{q}”.{/\d/.test(q) ? " Orders come from each merchant's latest check." : ""}</>}
         </p>
         <p className="border-t border-line px-4 py-2 text-[11px] text-ink-soft">
-          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · verdicts and orders come from each
-          merchant&apos;s newest stored run; nothing here runs a check
+          <kbd className="font-mono">↑↓</kbd> to move · <kbd className="font-mono">↵</kbd> to open · Results come from each merchant&apos;s
+          latest check; nothing here runs one.
         </p>
       </div>
     </div>

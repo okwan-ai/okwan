@@ -119,7 +119,7 @@ export function SetupChecklist({ steps, prominent = false }: { steps: Step[]; pr
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4">
           <div>
             <h2 id="setup-title" className="text-base font-semibold">Get set up</h2>
-            <p className="mt-0.5 text-sm text-ink-soft">Three steps to the first check of a merchant&apos;s money.</p>
+            <p className="mt-0.5 text-sm text-ink-soft">Four steps to your first result and your first agent.</p>
           </div>
           <div className="flex flex-wrap items-center gap-4">
             {progress}
@@ -132,7 +132,7 @@ export function SetupChecklist({ steps, prominent = false }: { steps: Step[]; pr
   }
 
   return (
-    <section aria-labelledby="setup-title" className="mt-10 rounded-xl border border-line bg-surface">
+    <section aria-labelledby="setup-title" className="rounded-xl border border-line bg-surface">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-2">
         <h2 id="setup-title" className="text-sm font-semibold">Setup</h2>
         {progress}

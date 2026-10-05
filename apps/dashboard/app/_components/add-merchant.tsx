@@ -52,7 +52,7 @@ export function AddMerchant({ variant = "primary" }: { variant?: "primary" | "se
             <span className="text-sm font-medium">Merchant name</span>
             <input name="name" required maxLength={200} className="field" data-autofocus autoComplete="off" />
           </label>
-          <p className="text-xs text-ink-soft">Its rails and API keys are kept under this merchant, apart from your own.</p>
+          <p className="text-xs text-ink-soft">Its connections and keys are kept under this merchant, apart from your own.</p>
           {error && <p role="alert" className="text-sm text-danger">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={close}>Cancel</Button>

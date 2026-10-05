@@ -5,8 +5,10 @@ import { Button } from "../ui/button";
 
 /**
  * Revoke by id. The API lists no keys (a key is a hash and a prefix), so
- * the id comes from where it was stored at issue. Effective on the next
- * request; a key outside this workspace reads as nonexistent.
+ * the id comes from where it was stored at issue. The API guards by
+ * subtree: the workspace's keys and every merchant's can be revoked here.
+ * Effective on the next request; a key outside the subtree reads as
+ * nonexistent. Borderless: the Card around it names it.
  */
 export function RevokeKey() {
   const [busy, setBusy] = useState(false);
@@ -30,11 +32,10 @@ export function RevokeKey() {
   }
 
   return (
-    <form onSubmit={submit} className="rounded-xl border border-line bg-surface p-5">
-      <h2 className="text-sm font-semibold">Revoke a key</h2>
-      <p className="mt-1 max-w-xl text-sm text-ink-soft">
-        Paste the key id (<code className="font-mono">key_…</code>) shown when it was issued. The key stops working on its
-        next request. Issuing another key never revokes this one, so rotate by issuing first, then revoking.
+    <form onSubmit={submit}>
+      <p className="max-w-xl text-sm text-ink-soft">
+        Paste the key id shown at issue (<code className="font-mono">key_…</code>). Works for your workspace&apos;s keys and
+        every merchant&apos;s. To rotate, issue a new key first.
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <label className="min-w-0 flex-1 text-sm">

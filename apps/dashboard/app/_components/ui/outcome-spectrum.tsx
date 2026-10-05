@@ -48,7 +48,10 @@ export function OutcomeSpectrum({ summary, unconfirmed = 0, compact = false, ani
           <span key={s.key} className={`${s.fill} h-full border-r-2 border-surface last:border-r-0`} style={{ width: `${(s.n / total) * 100}%` }} />
         ))}
       </div>
-      <ul className={`mt-2 flex flex-wrap gap-x-4 gap-y-1 ${compact ? "text-[11px]" : "text-xs"} text-ink-soft`} aria-label="Orders by outcome">
+      <ul
+        className={compact ? "mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-soft" : "mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-ink-soft sm:flex sm:flex-wrap"}
+        aria-label="Orders by outcome"
+      >
         {segs.filter((s) => s.n || !compact).map((s) => (
           <li key={s.key} className="inline-flex items-center gap-1.5">
             <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${s.fill}`} />
