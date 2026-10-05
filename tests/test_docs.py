@@ -3,7 +3,8 @@
 Documentation only: these hold that every route is in a named section, every
 connector's section comes from its own declaration, the key is documented as
 a security scheme rather than as raw header fields, the write operations are
-marked, and the page loads one pinned, integrity-checked Scalar build.
+marked, and the page loads one pinned, integrity-checked Scalar build with
+Scalar's own features on.
 """
 
 from __future__ import annotations
@@ -34,10 +35,12 @@ def test_the_page_is_okwans_own_and_pins_its_script():
     assert f"@scalar/api-reference@{docs.SCALAR_VERSION}/" in r.text
     assert f'integrity="{docs.SCALAR_SRI}"' in r.text
     assert "/openapi.json" in r.text
-    # Scalar's hosted add-ons stay off.
-    for off in ('"showDeveloperTools": "never"', '"agent": {"disabled": true}', '"mcp": {"disabled": true}',
-                '"telemetry": false'):
-        assert off in r.text
+    # Scalar's own features stay on (Ask AI, MCP, toolbar); telemetry stays off.
+    assert '"showDeveloperTools": "always"' in r.text and '"telemetry": false' in r.text
+    for off in ('"agent": {"disabled": true}', '"mcp": {"disabled": true}', '"hideClientButton": true'):
+        assert off not in r.text
+    # Neutral palette, not the old cream.
+    assert "#f4f1eb" not in r.text.lower() and "#fdfcfa" not in r.text.lower()
 
 
 def test_redoc_points_at_the_one_reference():
