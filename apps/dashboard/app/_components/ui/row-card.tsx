@@ -38,7 +38,9 @@ export function RowCard({
   sentence?: ReactNode;
   meta?: ReactNode;
 }) {
-  const cls = "block w-full px-4 py-3 text-left";
+  // The list clips its corners (overflow-hidden), so the focus ring is drawn
+  // inside the row; outside, it would be cut off on every side but one.
+  const cls = "block w-full px-4 py-3 text-left focus-visible:-outline-offset-2";
   const body = (
     <>
       <span className="flex items-center justify-between gap-3">
