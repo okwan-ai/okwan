@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { missingFor, type RunDigest } from "@/lib/finding";
 import { LastResult } from "./last-result";
-import { RailChips } from "./rail-chips";
+import { RailStrip } from "./rail-strip";
 import { EmptyState } from "./ui/empty-state";
 import { IconSearch } from "./ui/icons";
 import { Table, Td, Th } from "./ui/table";
@@ -65,7 +65,7 @@ export function MerchantsTable({ rows }: { rows: MerchantRow[] }) {
                   </span>
                 </Td>
                 <Td><code className="font-mono text-xs text-ink-soft">{m.id}</code></Td>
-                <Td><RailChips ready={m.ready} partial={m.partial} known={m.known} /></Td>
+                <Td><RailStrip ready={m.ready} partial={m.partial} known={m.known} size="sm" labels /></Td>
                 <Td><LastResult ready={m.ready} known={m.known} digest={m.digest} /></Td>
               </tr>
             ))}

@@ -11,7 +11,7 @@ import { myUsage } from "@/lib/usage";
 import { today, type Usage } from "@/lib/usage-shape";
 import { AttentionList } from "../_components/attention-list";
 import { owedAmount, RunStatus } from "../_components/merchant-status";
-import { RailChips } from "../_components/rail-chips";
+import { RailStrip } from "../_components/rail-strip";
 import { RunAll } from "../_components/run-all";
 import { SetupChecklist, type Step } from "../_components/setup-checklist";
 import { ButtonLink } from "../_components/ui/button";
@@ -270,7 +270,7 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
                 </span>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <RunStatus m={m} d={d} />
-                  <RailChips ready={m.ready} partial={m.partial} known={m.known} />
+                  <RailStrip ready={m.ready} partial={m.partial} known={m.known} size="sm" labels />
                 </div>
                 <span className="mt-1 block text-xs text-ink-soft" suppressHydrationWarning>{lastRunLine(r)}</span>
                 {r.state === "failed" && <span className="mt-1 block text-xs break-words text-danger">{r.detail}</span>}
@@ -286,7 +286,7 @@ function MerchantTable({ runs }: { runs: MerchantRun[] }) {
               <Th>Merchant</Th>
               {FOLD_READS.map((c) => (
                 <Th key={c}>
-                  <span className="inline-flex items-center gap-1.5"><BrandMark name={c} label={railLabel(c)} size={13} />{railLabel(c)}{c === "shopify" ? <span className="font-normal"> · ledger</span> : null}</span>
+                  <span className="inline-flex items-center gap-1.5"><BrandMark name={c} label={railLabel(c)} size={16} />{railLabel(c)}{c === "shopify" ? <span className="font-normal"> · ledger</span> : null}</span>
                 </Th>
               ))}
               <Th>Status</Th>

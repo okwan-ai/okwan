@@ -134,7 +134,7 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase }: {
 function Fact({ label, value, mark, muted = false }: { label: string; value: string; mark?: string; muted?: boolean }) {
   return (
     <div className="grid grid-cols-[130px_1fr] gap-3 px-4 py-2.5 text-sm">
-      <dt className="flex items-center gap-1.5 text-ink-soft">{mark && <BrandMark name={mark} label={label} size={13} />}{label}</dt>
+      <dt className="flex items-center gap-1.5 text-ink-soft">{mark && <BrandMark name={mark} label={label} size={16} />}{label}</dt>
       <dd className={`tabular-nums ${muted ? "text-ink-soft" : ""}`}>{value}</dd>
     </div>
   );

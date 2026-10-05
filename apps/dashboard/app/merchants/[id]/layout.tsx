@@ -11,7 +11,7 @@ import { PlanStrip } from "../../_components/usage/plan-strip";
 import { missingFor } from "@/lib/finding";
 import { MerchantRunProvider, RunButton } from "../../_components/merchant-run";
 import { MerchantTabs } from "../../_components/merchant-tabs";
-import { RailChips } from "../../_components/rail-chips";
+import { RailStrip } from "../../_components/rail-strip";
 import { CopyButton } from "../../_components/ui/copy-button";
 import { PageHeader } from "../../_components/ui/page-header";
 
@@ -71,7 +71,7 @@ export default async function MerchantLayout({
               <code className="font-mono text-xs">{id}</code>
               <CopyButton value={id} label="Copy merchant id" />
             </div>
-            <RailChips ready={rails.ready} partial={rails.partial} />
+            <RailStrip ready={rails.ready} partial={rails.partial} size="md" labels connectBase={`/merchants/${encodeURIComponent(id)}`} tenantKey={id} />
             {usage && !usage.plan.unmetered && (
               <p className="text-xs text-ink-soft">
                 A run is one request:{" "}
