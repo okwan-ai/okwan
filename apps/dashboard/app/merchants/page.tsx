@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { requireTenant } from "@/lib/guard";
-import { digest, storedRuns } from "@/lib/runs";
+import { storedRuns, toMerchantRow } from "@/lib/runs";
 import { AddMerchant } from "../_components/add-merchant";
-import { MerchantsTable } from "../_components/merchants-table";
+import { MerchantList } from "../_components/merchants-table";
 import { ButtonLink } from "../_components/ui/button";
 import { EmptyState } from "../_components/ui/empty-state";
 import { IconStore } from "../_components/ui/icons";
@@ -19,7 +19,7 @@ export default async function MerchantsPage() {
     <>
       <PageHeader
         title="Merchants"
-        description="Each merchant holds its own connections and API keys; nothing crosses between merchants."
+        description="Each merchant keeps its own connections, keys and results."
         actions={<Suspense><AddMerchant variant={merchants && merchants.length === 0 ? "secondary" : "primary"} /></Suspense>}
       />
 
@@ -30,8 +30,8 @@ export default async function MerchantsPage() {
           icon={<IconStore />}
           title="No merchants yet"
           benefits={[
-            "Each merchant keeps its own rails, keys and plan gate",
-            "Connect Shopify, PayPal and Stripe once; every surface reads them",
+            "Each merchant keeps its own connections and keys",
+            "Connect Shopify, PayPal and Stripe once; REST, SQL, MCP and this dashboard all read them",
             "One check says whether each order was paid once, twice or not at all",
           ]}
           action={<ButtonLink href="/merchants?add=1" variant="primary">Add your first merchant</ButtonLink>}
@@ -39,17 +39,7 @@ export default async function MerchantsPage() {
           Add one for each business you serve.
         </EmptyState>
       ) : (
-        <MerchantsTable
-          rows={merchants.map((r) => ({
-            id: r.merchant.tenant.id,
-            name: r.merchant.tenant.name,
-            createdAt: r.merchant.tenant.created_at,
-            ready: r.merchant.ready,
-            partial: r.merchant.partial,
-            known: r.merchant.known,
-            digest: digest(r),
-          }))}
-        />
+        <MerchantList mode="full" rows={merchants.map(toMerchantRow)} />
       )}
     </>
   );
