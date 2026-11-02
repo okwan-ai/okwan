@@ -58,9 +58,9 @@ class ExactRef(Frozen):
 class Fuzzy(Frozen):
     """Amount + currency inside a time window. Fallback after exact refs.
 
-    Amounts are compared in integer minor units via okwan_core.currency,
-    so an XOF 5000 transaction matches an XOF 5000 order rather than
-    being scaled by 100.
+    Both amount paths name integer minor-unit fields, and the engine
+    compares them as stored, so an XOF 5000 transaction matches an XOF
+    5000 order. `amount_tolerance_minor` is in those same units.
     """
 
     kind: Literal["fuzzy"] = "fuzzy"

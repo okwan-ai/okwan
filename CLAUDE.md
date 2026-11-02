@@ -28,9 +28,11 @@ Python 3.12, FastAPI, Pydantic v2, httpx async, DuckDB, Neon Postgres.
 Next.js 15 + TypeScript + Tailwind for web. Deployed on Render.
 
 ## Money
-Integer minor units everywhere. Decimal-string sources convert with
-`Decimal`, never float. `okwan_core.currency.to_minor` uses float and is
-known debt — do not route new code through it.
+Integer minor units everywhere. Decimal-string sources convert through
+`okwan_core.currency.money_to_minor` (`Decimal`, never float; None when
+there is no amount). There is no float conversion into minor units.
+Fields a reconciliation names are already minor units and are compared
+as stored, never rescaled.
 
 ## Read-only is structural
 No write operations to any rail. `validate_against_registry()` refuses a

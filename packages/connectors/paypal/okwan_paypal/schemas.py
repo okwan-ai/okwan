@@ -12,10 +12,9 @@ row so the SQL catalog gets flat, typed columns.
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
-from okwan_core.currency import minor_unit_factor, to_major
+from okwan_core.currency import money_to_minor, to_major
 from okwan_core.pagination import CursorPage, CursorPageIn
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -25,23 +24,6 @@ from pydantic import BaseModel, Field, computed_field, model_validator
 #: T0001 and T0006 share a family — direction settles it, so a payment
 #: is a T0-family code carrying a positive amount.
 PAYMENT_EVENT_PREFIXES = ("T00", "T01", "T03", "T04", "T05", "T07")
-
-
-def money_to_minor(value: str | None, currency: str | None) -> int | None:
-    """Decimal string -> integer minor units.
-
-    Never routes through float: `299.10 * 100` is 29909.999... in binary
-    floating point, and money that rounds the wrong way is the bug class
-    reconciliation exists to catch.
-    """
-    if value is None:
-        return None
-    try:
-        amount = Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return None
-    scaled = amount * minor_unit_factor(currency)
-    return int(scaled.quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 class Transaction(BaseModel):
