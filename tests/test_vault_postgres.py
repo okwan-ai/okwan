@@ -25,8 +25,8 @@ async def store():
         def __init__(self, inner):
             self._inner = inner
 
-        async def create_tenant(self, name):
-            tenant = await self._inner.create_tenant(name)
+        async def create_tenant(self, name, parent_id=None):
+            tenant = await self._inner.create_tenant(name, parent_id=parent_id)
             created.append(tenant.id)
             return tenant
 

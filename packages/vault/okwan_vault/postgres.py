@@ -23,7 +23,7 @@ from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import ApiKey, RUNS_KEPT, RunRecord, SealedCredential, Tenant
-from .usage import DEFAULT_PLAN, PLANS, hour_bucket
+from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 
@@ -331,16 +331,29 @@ class PostgresStore:
         return row["name"], row["monthly_requests"]
 
     async def set_plan(self, tenant_id: str, name: str) -> None:
+        """Set a root tenant's plan. A child's is refused, not stored.
+
+        The tenant row is locked for the check so it cannot gain a parent
+        between the check and the write.
+        """
         if name not in PLANS:
-            raise ValueError(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
-        await self.pool.execute(
-            "INSERT INTO plans (tenant_id, name, monthly_requests) "
-            "VALUES ($1, $2, $3) "
-            "ON CONFLICT (tenant_id) DO UPDATE SET "
-            "name = EXCLUDED.name, "
-            "monthly_requests = EXCLUDED.monthly_requests, updated_at = now()",
-            tenant_id, name, PLANS[name],
-        )
+            raise PlanRefused(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
+        async with self.pool.acquire() as con, con.transaction():
+            row = await con.fetchrow(
+                "SELECT parent_id FROM tenants WHERE id = $1 FOR SHARE", tenant_id
+            )
+            if row is None:
+                raise PlanRefused(f"no such tenant: {tenant_id}")
+            if row["parent_id"] is not None:
+                raise PlanRefused(f"{tenant_id} is not a root tenant; {NOT_ROOT_PLAN}")
+            await con.execute(
+                "INSERT INTO plans (tenant_id, name, monthly_requests) "
+                "VALUES ($1, $2, $3) "
+                "ON CONFLICT (tenant_id) DO UPDATE SET "
+                "name = EXCLUDED.name, "
+                "monthly_requests = EXCLUDED.monthly_requests, updated_at = now()",
+                tenant_id, name, PLANS[name],
+            )
 
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]:
         rows = await self.pool.fetch(

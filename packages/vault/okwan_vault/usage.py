@@ -27,6 +27,18 @@ PLANS: dict[str, int] = {
 DEFAULT_PLAN = "free"
 
 
+class PlanRefused(ValueError):
+    """A plan change the vault will not make, carrying the reason.
+
+    A ValueError, so an unknown plan name fails the way it always has.
+    """
+
+
+#: Why a child tenant takes no plan: usage bills to the root, and the
+#: 402 gate reads only the root's plan.
+NOT_ROOT_PLAN = "billing rolls up to the root, so a child's plan is never read"
+
+
 def hour_bucket(when: datetime | None = None) -> datetime:
     now = when or datetime.now(UTC)
     return now.replace(minute=0, second=0, microsecond=0)
@@ -71,3 +83,16 @@ async def billing_root(store, tenant_id: str) -> str:
             return current
         current = tenant.parent_id
     return current
+
+
+async def quota(store, tenant_id: str, now: datetime | None = None) -> Quota:
+    """Month-to-date usage against the paying account's plan.
+
+    The one computation behind the 402 gate and the operator's
+    `plan show`, so the two cannot disagree. An ISV's merchants roll up:
+    the subtree shares one allowance, read from the root's plan.
+    """
+    root = await billing_root(store, tenant_id)
+    plan, limit = await store.get_plan(root)
+    used = await store.usage_since(root, month_start(now))
+    return Quota(plan=plan, limit=limit, used=used)

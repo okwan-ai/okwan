@@ -20,7 +20,7 @@ from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import RUNS_KEPT, ApiKey, RunRecord, SealedCredential, Tenant
-from .usage import DEFAULT_PLAN, PLANS, hour_bucket
+from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
 
 class Store(Protocol):
@@ -273,7 +273,12 @@ class MemoryStore:
 
     async def set_plan(self, tenant_id: str, name: str) -> None:
         if name not in PLANS:
-            raise ValueError(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
+            raise PlanRefused(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
+        tenant = self._tenants.get(tenant_id)
+        if tenant is None:
+            raise PlanRefused(f"no such tenant: {tenant_id}")
+        if not tenant.is_root:
+            raise PlanRefused(f"{tenant_id} is not a root tenant; {NOT_ROOT_PLAN}")
         self._plans[tenant_id] = name
 
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]:
