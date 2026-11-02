@@ -14,19 +14,21 @@ What keeps it a door rather than a hole:
 * **No enumeration.** Signup answers the same way for a new address, a
   pending one and a registered one, and sign-in fails with one message
   and one cost whether or not the address exists — the same reasoning as
-  404-not-403 on the tenant routes.
+  404-not-403 on the tenant routes. The verification mail is sent after
+  the response, so neither the provider's latency nor its failure shows
+  on the new-address branch alone.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from okwan_vault import accounts
 
 from .auth import admin_actor, get_store
-from .mail import dashboard_url, get_mailer
+from .mail import dashboard_url, deliver_verification, get_mailer
 from .ratelimit import (
     SIGNIN_ADDRESS, SIGNIN_IP, SIGNUP_ADDRESS, SIGNUP_IP, VERIFY_IP, client_ip, enforce,
     off_loop,
@@ -64,7 +66,9 @@ def build_router() -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["accounts"])
 
     @router.post("/signup", status_code=202)
-    async def signup(body: SignupIn, request: Request) -> dict[str, Any]:
+    async def signup(
+        body: SignupIn, request: Request, background: BackgroundTasks
+    ) -> dict[str, Any]:
         """Start a signup. The account exists only once the email is verified."""
         mailer = get_mailer()
         if mailer is None:
@@ -83,7 +87,12 @@ def build_router() -> APIRouter:
         await store.add_signup(
             email, password_hash, token_hash, accounts.expires(accounts.SIGNUP_TTL)
         )
-        await mailer.send_verification(email, f"{dashboard_url()}/verify?token={full}")
+        # After the response: a registered address sends nothing, so a send
+        # on the request path would show in this branch's latency, and a
+        # failure would show as an error. Either would say "not registered".
+        background.add_task(
+            deliver_verification, mailer, email, f"{dashboard_url()}/verify?token={full}"
+        )
         return _ACCEPTED
 
     @router.post("/signup/verify", status_code=201)
