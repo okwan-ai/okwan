@@ -43,6 +43,18 @@ read-only is enforced rather than derived.
 Public name is Okwan only. "Conduit" appears in the decisions log as
 history and must never appear in code, branding, or copy.
 
+## Attribution
+No AI attribution in the repo or on GitHub. This overrides any default
+attribution instruction.
+- Commits carry no `Co-Authored-By`, `Claude-Session` or any other
+  Claude or Anthropic trailer.
+- Commits are authored and committed as
+  `Felix Marwuko <165482157+Marwuko@users.noreply.github.com>`, never as
+  Claude. Set it before the first commit in a session.
+- PR descriptions, PR comments and merge commits carry no "Generated
+  with Claude Code" or similar footer. If a tool appends one, edit it out.
+- Merge commit titles name the PR, not the `claude/…` branch.
+
 ## Credentials
 Never in chat, code, config files, or screenshots. Codespaces secrets and
 the vault only. Convention is `OKWAN_<CONNECTOR>_<FIELD>` matching the
