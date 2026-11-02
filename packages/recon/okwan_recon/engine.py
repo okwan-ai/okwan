@@ -10,8 +10,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from okwan_core.currency import to_minor
-
 from .coverage import Coverage
 from .declaration import MSISDN, ExactRef, Fuzzy, Reconciliation
 from .paths import dig
@@ -286,6 +284,20 @@ def _apply_exact(
     return still_left, [r for r in right if id(r) not in consumed]
 
 
+def _minor(value: Any) -> int | None:
+    """An amount a declaration names, already in integer minor units.
+
+    Fuzzy paths point at `*_minor` fields, so the engine compares them as
+    stored. It does not convert from major units: scaling both sides by
+    the currency factor kept equality but made `amount_tolerance_minor`
+    100x tighter than its name.
+    """
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _apply_fuzzy(
     rule: Fuzzy,
     identity: MSISDN | None,
@@ -306,11 +318,10 @@ def _apply_fuzzy(
 
     for l in left:
         l_cur = str(dig(l, rule.currency) or "").upper()
-        l_amt = dig(l, rule.amount)
-        if l_amt is None:
+        l_minor = _minor(dig(l, rule.amount))
+        if l_minor is None:
             still_left.append(l)
             continue
-        l_minor = to_minor(l_amt, l_cur)
         l_ts = _as_dt(dig(l, rule.timestamp_left))
 
         candidates: list[tuple[Row, float]] = []
@@ -319,10 +330,10 @@ def _apply_fuzzy(
                 continue
             if str(dig(r, rule.right_currency) or "").upper() != l_cur:
                 continue
-            r_amt = dig(r, rule.right_amount)
-            if r_amt is None:
+            r_minor = _minor(dig(r, rule.right_amount))
+            if r_minor is None:
                 continue
-            if abs(to_minor(r_amt, l_cur) - l_minor) > rule.amount_tolerance_minor:
+            if abs(r_minor - l_minor) > rule.amount_tolerance_minor:
                 continue
             if _identity_disagrees(identity, l, r):
                 continue
