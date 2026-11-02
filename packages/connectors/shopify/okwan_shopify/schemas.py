@@ -13,28 +13,10 @@ a reconciliation declaration states which one it matches on.
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
-from typing import Any
 
-from okwan_core.currency import minor_unit_factor, to_major
+from okwan_core.currency import to_major
 from okwan_core.pagination import CursorPage, CursorPageIn
 from pydantic import BaseModel, Field, computed_field
-
-
-def money_to_minor(amount: Any, currency: str | None) -> int:
-    """Decimal-string major amount -> integer minor units.
-
-    Decimal, not float: 299.10 * 100 is 29909.999... in binary floating
-    point, and money that rounds the wrong way is the whole bug class
-    reconciliation exists to catch.
-    """
-    if amount is None:
-        return 0
-    try:
-        value = Decimal(str(amount))
-    except (InvalidOperation, ValueError):
-        return 0
-    return int(value * minor_unit_factor(currency))
 
 
 class Order(BaseModel):

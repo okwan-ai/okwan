@@ -34,6 +34,7 @@ from okwan_core import (
     UpstreamError,
     register,
 )
+from okwan_core.currency import money_to_minor
 
 from .schemas import (
     GetOrderIn,
@@ -43,7 +44,6 @@ from .schemas import (
     OrderPage,
     Product,
     ProductPage,
-    money_to_minor,
 )
 
 API_VERSION = "2026-07"
@@ -159,8 +159,15 @@ async def _graphql(
 
 
 def _money(node: dict[str, Any], key: str, currency: str) -> int:
+    """A Shopify money set in minor units; an absent set reads as zero.
+
+    `Order` requires every figure, so a missing or unreadable set has
+    always read as zero here. Core returns None for absence and leaves
+    that reading to the connector, which is where it is stated.
+    """
     amount = ((node.get(key) or {}).get("shopMoney") or {}).get("amount")
-    return money_to_minor(amount, currency)
+    minor = money_to_minor(amount, currency)
+    return 0 if minor is None else minor
 
 
 def _order(node: dict[str, Any]) -> Order:

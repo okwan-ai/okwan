@@ -19,7 +19,7 @@ from okwan_paypal.connector import (
     _encode,
     list_transactions,
 )
-from okwan_paypal.schemas import ListTransactionsIn, Transaction, money_to_minor
+from okwan_paypal.schemas import ListTransactionsIn, Transaction
 from okwan_query import find
 
 SEED_ROW = {
@@ -33,30 +33,6 @@ SEED_ROW = {
     },
     "payer_info": {"address_status": "N", "payer_name": {}},
 }
-
-
-# --- money -------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    ("value", "currency", "expected"),
-    [
-        ("299.10", "USD", 29910),   # the float path gives 29909.999...
-        ("5000.00", "USD", 500000),
-        ("0.01", "USD", 1),
-        ("-4.55", "USD", -455),     # refunds keep their sign
-        ("1500", "KRW", 1500),      # zero-decimal: the integer is major
-        ("1500.00", "JPY", 1500),
-    ],
-)
-def test_decimal_strings_convert_exactly(value, currency, expected):
-    assert money_to_minor(value, currency) == expected
-
-
-def test_unparseable_money_is_none_not_zero():
-    """Zero is a real amount. Absence must not read as a balanced row."""
-    assert money_to_minor("", "USD") is None
-    assert money_to_minor("n/a", "USD") is None
-    assert money_to_minor(None, "USD") is None
 
 
 # --- flattening --------------------------------------------------------

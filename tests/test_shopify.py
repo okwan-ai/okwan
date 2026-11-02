@@ -22,6 +22,7 @@ from okwan_recon.engine import match
 from okwan_recon.fetch import fetch_side
 from okwan_shopify.connector import (
     UNSCOPED_ORDER_DAYS,
+    _order,
     _read_from,
     list_orders,
     shopify,
@@ -56,6 +57,24 @@ def _data(scopes: list[str] | None) -> dict[str, Any]:
     if scopes is not None:
         data["currentAppInstallation"] = {"accessScopes": [{"handle": h} for h in scopes]}
     return data
+
+
+# --- money ------------------------------------------------------------
+
+def test_order_money_sets_convert_to_minor_units():
+    order = _order(NODE)
+    assert order.total_price_minor == 99900
+    assert order.total_received_minor == 99900
+    assert order.total_refunded_minor == 0
+
+
+def test_an_absent_money_set_reads_as_zero():
+    """`Order` requires every figure; Shopify's mapper states the zero."""
+    node = {k: v for k, v in NODE.items() if k != "totalRefundedSet"}
+    node["totalReceivedSet"] = {"shopMoney": {"amount": "n/a"}}
+    order = _order(node)
+    assert order.total_refunded_minor == 0
+    assert order.total_received_minor == 0
 
 
 # --- the bound ---------------------------------------------------------

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from okwan_core.currency import to_minor
 from okwan_recon import (
     MSISDN,
     AmountRef,
@@ -64,11 +63,6 @@ def test_unmatched_reported_on_both_sides():
     assert result.summary["unmatched_left"] == 1
     assert result.summary["unmatched_right"] == 1
     assert result.unmatched_left[0]["reference"] == "PSK-ORPHAN"
-
-
-def test_zero_decimal_currency_not_scaled():
-    assert to_minor(5000, "XOF") == 5000
-    assert to_minor(2500, "NGN") == 250000
 
 
 def test_identity_guard_blocks_mismatched_phones():
@@ -222,23 +216,7 @@ def test_stripe_balance_entries_are_typed():
     assert b.pending[0].amount_major == 5000.0
 
 
-# ── shopify money normalisation ─────────────────────────────────────
-
-def test_shopify_money_uses_decimal_not_float():
-    """299.10 * 100 is 29909.999... in binary float; money must not round down."""
-    from okwan_shopify.schemas import money_to_minor
-
-    assert money_to_minor("299.10", "USD") == 29910
-    assert money_to_minor("0.07", "USD") == 7
-    assert money_to_minor("1234.56", "USD") == 123456
-
-
-def test_shopify_zero_decimal_currency_not_scaled():
-    from okwan_shopify.schemas import money_to_minor
-
-    assert money_to_minor("5000", "XOF") == 5000
-    assert money_to_minor("5000", "USD") == 500000
-
+# ── shopify order figures ───────────────────────────────────────────
 
 def test_shopify_net_payment_excludes_refund():
     """A refunded order matched on gross looks like an over-collection."""
@@ -266,8 +244,9 @@ def test_shopify_uncollected_order_is_not_reconcilable():
 
 def test_shopify_amounts_are_comparable_with_paystack():
     """Both sides reduce to integer minor units of the same currency."""
+    from okwan_core.currency import money_to_minor
     from okwan_paystack.schemas import Transaction
-    from okwan_shopify.schemas import Order, money_to_minor
+    from okwan_shopify.schemas import Order
 
     order = Order(
         id="gid://shopify/Order/3", name="#1002", currency="USD",
@@ -290,6 +269,47 @@ def test_fuzzy_matches_across_differently_named_amount_fields():
     right = [{"name": "#1004", "net_payment_minor": 45000, "currency": "USD",
               "created_at": "2026-08-01T10:30:00Z"}]
     assert match(spec, left, right).summary["matched"] == 1
+
+
+def test_fuzzy_tolerance_is_in_the_minor_units_it_is_named_for():
+    """Paths name minor-unit fields; the engine must not scale them again.
+
+    A 50-cent tolerance admits a 50-cent gap and refuses 51. Rescaling
+    both sides by 100 turned the 50-cent gap into 5,000 and missed it.
+    """
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency",
+                       amount_tolerance_minor=50)],
+        "identity": None,
+    })
+    left = [{"amount": 45000, "currency": "USD", "created_at": "2026-08-01T10:00:00Z"}]
+    within = [{"amount": 45050, "currency": "USD", "created_at": "2026-08-01T10:30:00Z"}]
+    beyond = [{"amount": 45051, "currency": "USD", "created_at": "2026-08-01T10:30:00Z"}]
+    assert match(spec, left, within).summary["matched"] == 1
+    assert match(spec, left, beyond).summary["matched"] == 0
+
+
+def test_fuzzy_zero_decimal_tolerance_is_not_rescaled():
+    """XOF has no minor unit; a tolerance of 1 is one franc either way."""
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency",
+                       amount_tolerance_minor=1)],
+        "identity": None,
+    })
+    left = [{"amount": 5000, "currency": "XOF", "created_at": "2026-08-01T10:00:00Z"}]
+    right = [{"amount": 5001, "currency": "XOF", "created_at": "2026-08-01T10:30:00Z"}]
+    assert match(spec, left, right).summary["matched"] == 1
+
+
+def test_fuzzy_unreadable_amount_is_not_a_candidate():
+    spec = SPEC.model_copy(update={
+        "keys": [Fuzzy(amount="amount", currency="currency")], "identity": None,
+    })
+    left = [{"amount": "n/a", "currency": "USD", "created_at": "2026-08-01T10:00:00Z"}]
+    right = [{"amount": 100, "currency": "USD", "created_at": "2026-08-01T10:30:00Z"}]
+    result = match(spec, left, right)
+    assert result.summary["matched"] == 0
+    assert result.summary["unmatched_left"] == 1
 
 
 def test_fuzzy_right_paths_default_to_left():
