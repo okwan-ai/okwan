@@ -5,7 +5,15 @@ from .keys import EnvMasterKey, KmsMasterKey, MasterKeyProvider, from_env
 from .models import RUNS_KEPT, ApiKey, RunRecord, SealedCredential, Tenant
 from .postgres import PostgresStore
 from .store import MemoryStore, Store, resolver_for
-from .usage import DEFAULT_PLAN, PLANS, Quota, billing_root, month_start
+from .usage import (
+    DEFAULT_PLAN,
+    PLANS,
+    PlanRefused,
+    Quota,
+    billing_root,
+    month_start,
+    quota,
+)
 
 __all__ = [
     "DEFAULT_PLAN",
@@ -16,6 +24,7 @@ __all__ = [
     "KmsMasterKey",
     "MasterKeyProvider",
     "MemoryStore",
+    "PlanRefused",
     "PostgresStore",
     "Quota",
     "SealedCredential",
@@ -30,6 +39,7 @@ __all__ = [
     "month_start",
     "new_key",
     "open_sealed",
+    "quota",
     "require_administer",
     "resolver_for",
     "seal",

@@ -23,7 +23,7 @@ from okwan_vault import (
     resolver_for,
 )
 from okwan_vault.models import Tenant
-from okwan_vault.usage import Quota, billing_root, month_start
+from okwan_vault.usage import Quota, quota
 
 logger = logging.getLogger(__name__)
 
@@ -133,13 +133,10 @@ async def quota_for(tenant: Tenant) -> Quota:
     """Month-to-date usage against the paying account's plan.
 
     An ISV's merchants roll up: the subtree shares one allowance, because
-    the ISV is the customer and the merchants are not.
+    the ISV is the customer and the merchants are not. The arithmetic is
+    `okwan_vault.usage.quota`, which the operator's `plan show` also reads.
     """
-    store = get_store()
-    root = await billing_root(store, tenant.id)
-    plan, limit = await store.get_plan(root)
-    used = await store.usage_since(root, month_start())
-    return Quota(plan=plan, limit=limit, used=used)
+    return await quota(get_store(), tenant.id)
 
 
 async def check_quota(tenant: Tenant = Depends(current_tenant)) -> Tenant:

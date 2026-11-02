@@ -11,6 +11,12 @@ provisioning by hand and for inspecting a tenant.
     python -m okwan_vault tenant show ten_abc123
     python -m okwan_vault tenant list
     python -m okwan_vault account add ten_abc123 founder@acme.com
+    python -m okwan_vault plan set ten_abc123 pro
+    python -m okwan_vault plan show ten_abc123
+
+Setting a plan is operator-only on purpose: there is no API route for
+it, so no key or session can raise its own tenant's limit, and there is
+no billing yet to authorise a change (§9 2026-11-02).
 """
 from __future__ import annotations
 
@@ -20,11 +26,14 @@ import getpass
 import os
 import re
 import sys
+from datetime import datetime
 
 from . import accounts
 from .crypto import new_key
 from .keys import from_env
+from .models import Tenant
 from .postgres import PostgresStore
+from .usage import NOT_ROOT_PLAN, PlanRefused, billing_root, month_start, quota
 
 
 def _dsn() -> str:
@@ -121,6 +130,75 @@ async def account_add(tenant_id: str, email: str) -> None:
     print(f"tenant  {tenant_id}")
 
 
+async def _root_tenant(store, tenant_id: str) -> Tenant:
+    """The tenant, if it is a root; a child names the root that pays."""
+    tenant = await store.get_tenant(tenant_id)
+    if tenant is None:
+        raise PlanRefused(f"no such tenant: {tenant_id}")
+    if not tenant.is_root:
+        root = await billing_root(store, tenant_id)
+        raise PlanRefused(
+            f"{tenant_id} is not a root tenant; {NOT_ROOT_PLAN}. Its usage is "
+            f"billed to {root}"
+        )
+    return tenant
+
+
+async def show_plan(store, tenant_id: str, now: datetime | None = None) -> list[str]:
+    """A root tenant's plan, limit and month-to-date usage, as lines.
+
+    Read through `usage.quota`, the same call the 402 gate makes, so what
+    this prints is what the gate will decide on.
+    """
+    await _root_tenant(store, tenant_id)
+    q = await quota(store, tenant_id, now)
+    limit = "unmetered" if q.unmetered else f"{q.limit:,} requests a month"
+    lines = [
+        f"tenant     {tenant_id}",
+        f"plan       {q.plan}",
+        f"limit      {limit}",
+        f"used       {q.used:,} since {month_start(now):%Y-%m-%d} UTC, merchants included",
+    ]
+    if not q.unmetered:
+        lines.append(f"remaining  {q.remaining:,}")
+    if q.exceeded:
+        lines.append("gate       limit reached: metered calls answer 402")
+    return lines
+
+
+async def set_plan(store, tenant_id: str, name: str) -> list[str]:
+    """Set a root tenant's plan and return what `plan show` now prints.
+
+    Raises PlanRefused with the reason: an unknown plan, an unknown
+    tenant, or a child tenant.
+    """
+    await _root_tenant(store, tenant_id)
+    await store.set_plan(tenant_id, name)
+    return await show_plan(store, tenant_id)
+
+
+async def plan_set(tenant_id: str, name: str) -> None:
+    store = await _store()
+    try:
+        lines = await set_plan(store, tenant_id, name)
+    except PlanRefused as e:
+        sys.exit(str(e))
+    finally:
+        await store.close()
+    print("\n".join(lines))
+
+
+async def plan_show(tenant_id: str) -> None:
+    store = await _store()
+    try:
+        lines = await show_plan(store, tenant_id)
+    except PlanRefused as e:
+        sys.exit(str(e))
+    finally:
+        await store.close()
+    print("\n".join(lines))
+
+
 async def key_issue(tenant_id: str) -> None:
     store = await _store()
     try:
@@ -178,6 +256,8 @@ USAGE = """usage:
   python -m okwan_vault tenant show <tenant_id>
   python -m okwan_vault tenant list
   python -m okwan_vault account add <tenant_id> <email>
+  python -m okwan_vault plan set <tenant_id> <plan>
+  python -m okwan_vault plan show <tenant_id>
   python -m okwan_vault key issue <tenant_id>
   python -m okwan_vault key revoke <key_id>
   python -m okwan_vault cred set <tenant_id> <connector> <field>
@@ -203,6 +283,8 @@ def main(argv: list[str]) -> None:
         ("tenant", "show"): (tenant_show, 1),
         ("tenant", "list"): (tenant_list, 0),
         ("account", "add"): (account_add, 2),
+        ("plan", "set"): (plan_set, 2),
+        ("plan", "show"): (plan_show, 1),
         ("key", "issue"): (key_issue, 1),
         ("key", "revoke"): (key_revoke, 1),
         ("cred", "set"): (cred_set, 3),
