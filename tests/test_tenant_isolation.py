@@ -17,10 +17,18 @@ moment a new surface appears that it does not cover:
    rail answers with that account's data. Every data surface runs as each
    tenant: the response must carry the caller's stamp and no other.
 
-Runs against the in-memory store and against Postgres, because isolation
-also lives in the SQL: a missing `WHERE tenant_id` would leak in one
-backend and not the other. The Postgres runs skip without
-OKWAN_VAULT_DATABASE_URL, like tests/test_vault_postgres.py.
+Runs against three stores, because isolation also lives in the SQL:
+
+* `memory`, the reference store;
+* `postgres`, as deployed: every query filters on tenant_id, and every
+  tenant-data query also runs under row-level security as okwan_tenant;
+* `postgres_where_only`, the same with the restricted role switched off,
+  so the WHERE clauses alone must keep tenants apart. The database wall
+  alone is proven in tests/test_tenant_rls.py, so each wall is tested
+  by itself and a silently weakened one is noticed (scripts/plant_leaks.py).
+
+The Postgres runs skip without OKWAN_VAULT_DATABASE_URL, like
+tests/test_vault_postgres.py.
 """
 from __future__ import annotations
 
@@ -59,13 +67,20 @@ def _vault(stamp: str) -> dict[str, dict[str, str]]:
             for c in all_connectors()}
 
 
-@pytest.fixture(params=["memory", "postgres"])
-async def store(request):
+@pytest.fixture(params=["memory", "postgres", "postgres_where_only"])
+async def store(request, monkeypatch):
     if request.param == "memory":
         yield MemoryStore(EnvMasterKey(new_key()))
         return
     if not DSN:
         pytest.skip("no vault database configured")
+    if request.param == "postgres_where_only":
+        from okwan_vault import postgres
+
+        async def login_role_unscoped(con, tenant_ids):
+            pass
+
+        monkeypatch.setattr(postgres, "_enter_scope", login_role_unscoped)
     s = await PostgresStore(DSN, EnvMasterKey(new_key())).connect()
     created: list[str] = []
     create = s.create_tenant

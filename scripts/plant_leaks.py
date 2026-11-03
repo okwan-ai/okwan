@@ -12,8 +12,11 @@ reports what happens. Three kinds of break:
 * **held**: one database wall broken, the other intact: a Postgres query
   that drops its WHERE tenant_id (row-level security must still hold), or
   a store that never enters the restricted role (the WHERE must still
-  hold). The isolation suite must still pass; the wall's own tests must
-  fail, so the break does not go unnoticed.
+  hold). The isolation suite against the deployed store must still pass,
+  and the broken wall's own tests must fail, so a weakened wall is
+  noticed rather than silently covered for. The WHERE wall's own tests
+  are the isolation suite on `postgres_where_only`; the database wall's
+  are tests/test_tenant_rls.py.
 * **both walls**: both broken at once. The isolation suite must fail.
 
 Every file is restored after each run, also on Ctrl-C. The script refuses
@@ -31,7 +34,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ISOLATION = "tests/test_tenant_isolation.py"
-WALL = "tests/test_tenant_rls.py"
+#: Each wall tested alone: (test file, -k filter).
+WHERE_WALL = (ISOLATION, "postgres_where_only")
+DB_WALL = ("tests/test_tenant_rls.py", "")
+BOTH_WALLS = (ISOLATION, "not postgres_where_only")
 
 API_ADMIN = "apps/api/okwan_api/admin.py"
 API_AUTH = "apps/api/okwan_api/auth.py"
@@ -58,6 +64,8 @@ class Break:
     label: str
     expect: str  # "caught" | "held" | "both walls"
     edits: tuple[Edit, ...]
+    #: For "held": the tests of the wall that was broken.
+    wall: tuple[str, str] | None = None
 
 
 BREAKS = [
@@ -83,11 +91,11 @@ BREAKS = [
           "            if (name is None or r.name == name)\n"),)),
     Break("the PayPal token cache is keyed by client id alone", "caught", ((PAYPAL,
           'f"{client_id}:{secret}:{token_url}"', 'f"{client_id}:{token_url}"'),)),
-    Break("Postgres credential read drops WHERE tenant_id", "held", (CREDS_NO_WHERE,)),
-    Break("Postgres get_run drops WHERE tenant_id", "held", (RUN_NO_WHERE,)),
-    Break("Postgres list_runs drops WHERE tenant_id", "held", (LIST_NO_WHERE,)),
-    Break("Postgres latest_runs drops WHERE tenant_id", "held", (LATEST_NO_WHERE,)),
-    Break("the store never enters the restricted role", "held", (NO_SCOPE,)),
+    Break("Postgres credential read drops WHERE tenant_id", "held", (CREDS_NO_WHERE,), WHERE_WALL),
+    Break("Postgres get_run drops WHERE tenant_id", "held", (RUN_NO_WHERE,), WHERE_WALL),
+    Break("Postgres list_runs drops WHERE tenant_id", "held", (LIST_NO_WHERE,), WHERE_WALL),
+    Break("Postgres latest_runs drops WHERE tenant_id", "held", (LATEST_NO_WHERE,), WHERE_WALL),
+    Break("the store never enters the restricted role", "held", (NO_SCOPE,), DB_WALL),
     Break("no restricted role, and get_run drops WHERE", "both walls", (NO_SCOPE, RUN_NO_WHERE)),
     Break("no restricted role, and the credential read drops WHERE", "both walls",
           (NO_SCOPE, CREDS_NO_WHERE)),
@@ -95,9 +103,11 @@ BREAKS = [
 ]
 
 
-def _passes(test_file: str) -> bool:
-    run = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", test_file],
-                         check=False, cwd=ROOT, capture_output=True, text=True)
+def _passes(test_file: str, only: str = "") -> bool:
+    cmd = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", test_file]
+    if only:
+        cmd += ["-k", only]
+    run = subprocess.run(cmd, check=False, cwd=ROOT, capture_output=True, text=True)
     return run.returncode == 0
 
 
@@ -123,7 +133,7 @@ def main() -> int:
     if subprocess.run(["git", "diff", "--quiet", "--", *touched], check=False, cwd=ROOT).returncode != 0:
         print(f"uncommitted changes in {touched}; commit or stash them first")
         return 2
-    if not (_passes(ISOLATION) and _passes(WALL)):
+    if not (_passes(ISOLATION) and _passes(*DB_WALL)):
         print("the suites fail before anything is broken; fix that first")
         return 2
 
@@ -131,15 +141,19 @@ def main() -> int:
     for b in BREAKS:
         originals = _apply(b.edits)
         try:
-            isolation = _passes(ISOLATION)
-            wall = _passes(WALL) if b.expect == "held" else None
+            if b.expect == "held":
+                isolation = _passes(*BOTH_WALLS)
+                wall = _passes(*b.wall)
+            else:
+                isolation, wall = _passes(ISOLATION), None
         finally:
             for path, text in originals.items():
                 path.write_text(text)
         if b.expect == "held":
             good = isolation and wall is False
-            seen = "isolation held" + ("; the wall's own tests failed" if wall is False else
-                                       "; the wall's own tests did NOT notice")
+            seen = ("isolation held" if isolation else "isolation FAILED") + (
+                "; the broken wall's own tests noticed" if wall is False
+                else "; the broken wall's own tests did NOT notice")
         else:
             good = not isolation
             seen = "isolation suite failed" if not isolation else "isolation suite PASSED: leak missed"
