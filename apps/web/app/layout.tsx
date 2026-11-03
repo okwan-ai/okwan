@@ -1,17 +1,20 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const TITLE = "Okwan — Find where your systems disagree";
+const DESCRIPTION =
+  "Reconciliation infrastructure for retail and payments platforms. Okwan matches POS, processor, order and bank records and says what agrees, what differs and why, as an API, a SQL view and an agent tool from one definition.";
+
 export const metadata: Metadata = {
-  title: "Okwan — Reconciliation as an API",
-  description:
-    "Define a match once. Okwan gives you a REST endpoint, a SQL view, and an MCP tool for your agents — across payment rails that disagree with the order ledger.",
+  title: TITLE,
+  description: DESCRIPTION,
   metadataBase: new URL("https://okwan.ai"),
   openGraph: {
-    title: "Okwan — Reconciliation as an API",
-    description:
-      "An embeddable reconciliation engine for platforms. One declaration → REST, SQL, and MCP.",
+    title: TITLE,
+    description: DESCRIPTION,
     siteName: "Okwan",
   },
+  twitter: { card: "summary", title: TITLE, description: DESCRIPTION },
 };
 
 export default function RootLayout({
@@ -27,7 +30,7 @@ export default function RootLayout({
           crossOrigin="anonymous"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Poppins:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap"
           rel="stylesheet"
         />
       </head>

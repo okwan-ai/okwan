@@ -1,5 +1,5 @@
 # OKWAN AI — Master Project File
-**Version 1.20 · November 2, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
+**Version 1.21 · November 3, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
 
 > Single source of truth for the Okwan AI platform. Every strategic, technical, brand, and immigration-related decision lives here. Update the version and changelog with every major decision.
 
@@ -12,7 +12,7 @@
 **Legal entity:** Global Tech Startup LLC (US, Meta business-verified; Shopify Partner organization)
 **Live:** API `https://okwan.onrender.com` · hosted MCP `/mcp/` · site `https://okwan.vercel.app`
 **One-liner:** Reconciliation as an API. Define a match once; get an MCP tool, a SQL view, and a REST endpoint.
-**Wedge:** Cross-rail payment reconciliation — the query across systems that disagree.
+**Wedge:** Retail and payments first — POS, processors, order ledgers and banks that disagree — on an engine for any two systems that should agree (§9 2026-11-03). Channel: RSPA membership.
 **Positioning statement:** CData was built so BI tools could reach data. Okwan is built so AI agents can — starting where nobody else looks: reconciling money across payment rails that don't talk to each other.
 **Category:** AI-native data connectivity / integration platform (connectors, federation, reconciliation, MCP)
 **Business model:** SaaS subscriptions + OEM/ISV embed licensing + usage-based Agent API
@@ -27,43 +27,42 @@ Merchants collect money across half a dozen rails, and none of them agree with t
 ---
 
 ## 2. BRAND & DESIGN SYSTEM
-*(Adapted from the CData Sync design language — cream canvas, electric yellow, serif display type)*
+*(Okwan's own system since v1.21: neutral white and grey, ink, one signal yellow, a grotesk display face. Until v1.20 this section described the public site as adapted from CData Sync's design language and benchmarked on CData's pages; that wording is in git history and the change is §9 2026-11-03.)*
 
-**Benchmark:** CData's marketing pages. The reference is how a serious infrastructure company presents itself — the site must not drift into feeling like a demo toy.
+**Benchmark:** how a serious infrastructure company presents itself: calm, exact, data first. The site must not drift into feeling like a demo toy.
 
 ### 2.1 Color tokens
 | Token | Hex | Usage |
 |---|---|---|
-| `--canvas` | `#F4F1EB` | Page background (warm cream) on the public site. **Product (dashboard, API reference): `#F5F5F5`** (§9 2026-10-05) |
-| `--surface` | `#FDFCFA` | Cards, panels on the public site. **Product: `#FFFFFF`** |
-| `--ink` | `#111111` | Primary text, logo |
-| `--ink-soft` | `#4A4A45` | Body text. **Product: `#4B4B4B`** |
-| `--volt` | `#FFD400` | Primary accent — CTAs, highlights, brand mark |
-| `--volt-deep` | `#E8B800` | Hover states |
-| `--navy` | `#0D1B2E` | Footer, dark sections, secondary buttons |
-| `--sky` | `#B9C6F2` | Diagram flows, soft illustration fills |
-| `--line` | `#E2DED4` | Borders, dividers. **Product: `#E5E5E5`**; input borders `--line-strong` `#858585` (3.7:1 on white) |
+| `--paper` | `#FFFFFF` | Page and card background |
+| `--mist` | `#F5F5F5` | Alternate section background; the product canvas (dashboard, API reference) |
+| `--line` | `#E5E5E5` | Borders, dividers. `--line-strong` `#D4D4D4` on the site; product input borders `#858585` (3.7:1 on white) |
+| `--ink` | `#0A0A0A` | Primary text, primary buttons, the mark |
+| `--ink-soft` | `#4B4B4B` | Body text |
+| `--ink-muted` | `#6B6B6B` | Secondary text (5.3:1 on white) |
+| `--signal` | `#FFD400` | **One meaning: where two systems disagree.** The dot in the mark, a break in a result, a finding. Never a page background or a band, never a button fill, never text on white |
+| `--signal-deep` | `#E8B800` | Signal hover |
+| `--night` | `#0B0B0C` | Dark sections and footer; `--night-2` `#151517` panels, `--night-line` `#26262A`, `--night-soft` `#A3A3A3` text |
 
 ### 2.2 Typography
-- **Display / headlines:** **Fraunces** at 300–600, tight leading, sentence case. Alternative: Playfair Display.
-- **Body / UI:** **Poppins** at 400/500/600. Alternative: DM Sans.
+- **Display and UI (site):** **Instrument Sans** 400–700. Headlines semibold, tracking −0.035 to −0.04em, sentence case.
 - **Code / data:** JetBrains Mono.
-- Headline scale: hero 64–88px, section 40–48px, card 20–24px.
+- Headline scale: hero 46–76px, section 36–48px, card 16–19px.
+- The dashboard and the API reference still use Fraunces and Poppins; moving them is §10 item 26.
 
 ### 2.3 Layout language
-- Generous whitespace on cream; content max-width ~920px
-- Rounded-corner cards (12–16px radius) with subtle borders, no heavy shadows
-- Hub-and-spoke connector diagrams; flow streams in `--sky`
-- Yellow full-bleed CTA bands with oversized serif headlines
-- Dark navy footer with muted link columns
-- Buttons: volt fill + black text (primary), outlined black on cream (secondary)
+- Full-width frame: content up to 1440px with 24–64px gutters, section backgrounds full-bleed, alternating paper, mist and night
+- Two-column hero on desktop: the claim beside the result
+- Cards 18–20px radius, hairline borders, one soft shadow on the hero result only
+- Buttons: ink fill, white text (primary); hairline outline (secondary); white on night
+- Third-party logos stay off signed-out pages (§10 item 25)
 
-### 2.4 Site signature (v1.7)
-The landing page's hero is **a live reconciliation result**, not a connector diagram. Seven records, five verdicts, real numbers from a live run. Rows settle one at a time so the reader watches reconciliation happen rather than reading a screenshot of it. `prefers-reduced-motion` renders the table complete.
+### 2.4 Site signature (v1.21)
+The hero is **a reconciliation result drawn as paths**. Okwan is Twi for "path", so each verdict is the path between a record and its counterpart: a single line when they agree, a fork when one order was charged on two rails, a break with the signal dot where nothing accounts for a gap, a path that runs out where the other side has nothing. The same glyphs label the seven verdicts further down the page. The result is labelled **"Example · test data"** and captioned as modelled on the test-mode run that found #1002 and #1004 charged twice; it is never called live. Paths draw in once with CSS; `prefers-reduced-motion` renders them complete, and the page is plain HTML with no client script.
 
 Reasoning: a hub-and-spoke diagram is the picture every connector library has, and §8 records that axis as commoditized. The verdicts are the only picture a competitor cannot copy, because none of them has the primitive.
 
-**Rule:** We adopt the design *language* — never CData's logo, brand name, mark, or copied copy. All copy and assets original.
+**Rule:** Okwan's identity is its own: no competitor's logo, name, mark, layout or copy, and no competitor named as the design reference. All copy and assets original.
 
 ---
 
@@ -357,6 +356,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 | 2026-11-02 | **A plan is set by the operator CLI, never by an API route** | `Store.set_plan` had no caller, so every tenant sat on `free` and the 402 gate held all of them at 5K. `python -m okwan_vault plan set <tenant_id> <plan>` and `plan show <tenant_id>` now set and read it. Deliberately not an API route: a route would be reachable by a key or session, and a tenant must never be able to set its own plan; there is also no billing yet to authorise a change, so the only party entitled to make one is the operator. Only a root tenant takes a plan. Billing rolls up to the root and the gate reads only the root's plan, so a child's plan would be stored and never read; both stores refuse it (Postgres locks the tenant row for the check), and the CLI names the root the child bills to. `show` prints the plan, the limit and month-to-date usage through `okwan_vault.usage.quota`, which the 402 gate now calls too, so the two cannot disagree. Running the Postgres tests against a real database for the first time found the v1.16 runs test had never run: its fixture could not create a child tenant |
 | 2026-11-02 | **`main`'s history rewritten so every commit is authored by Felix Marwuko** | The owner's call: the repository's Contributors list must show the owner alone. 62 commits had been authored and committed under an AI identity, and 70 carried co-author or session trailers. A full rewrite reassigned them and stripped the trailers; all 151 trees are identical commit by commit. Every commit id on `main` changed, so an existing clone must re-clone or reset to `origin/main`. The Attribution rule in CLAUDE.md keeps new commits this way |
 | 2026-11-02 | **Verification mail goes through Resend, sent after the signup response, with tracking off on the domain** | Signup answered 503 because no mailer existed. `ResendMailer` sends plain text and HTML (the link, its expiry read from `SIGNUP_TTL`, and a line to ignore it) when `RESEND_API_KEY` and `OKWAN_MAIL_FROM` are both set. With either missing, dev logs the link and every other environment keeps the 503; there is no logging fallback outside dev. **Tracking:** the requirement was to send with click and open tracking explicitly off, because a provider that rewrites links routes every verification token through its own servers. Resend's send-email API has no per-message switch for either; both are settings on the sending domain (`PATCH /domains/{id}`, `click_tracking`/`open_tracking`), confirmed from Resend's own SDK source because resend.com is outside this environment's network allowlist. The send therefore carries only from, to, subject, text and html (a test pins that), and turning tracking off moves to domain setup (§10 items 1 and 15). Inventing per-message fields would either fail every send or be silently ignored. **No oracle:** the send runs after the response. On the request path, a failure would have been a 500 on the new-address branch only (reproduced against the old code), and the provider's latency would have timed the same difference; a registered address sends nothing. A failure is logged by status and Resend's error name only, never the message, the link, the token or the address |
+| 2026-11-03 | **Public site rebuilt: retail first, on a general engine, in Okwan's own identity** | The owner's calls: the site must serve real visitors, not sit in a narrow column; the CData-like yellow must not be a problem and the design must be Okwan's own; and the offer must reach beyond payments. Okwan is an active RSPA member, so the site now speaks to RSPA's POS dealers, ISVs and payment providers. **Identity:** the public site left the combination §2 used to describe as adapted from CData Sync (cream canvas, serif display, navy footer, yellow buttons and a full-bleed yellow band) for neutral white and grey, ink, night sections and Instrument Sans. Yellow is kept, as the dot in Okwan's own mark, and now carries one meaning: where two systems disagree. Whether the old look or §2's old wording matters legally is the attorney's question (§10 item 16). **Layout:** a 1440px frame with full-bleed sections replaced the 920px column that left wide empty sides. **Positioning:** "Find where your systems disagree." Three retail reconciliations marked Live (orders across rails, fees and refunds explained, any database against any rail) and three marked In discovery (POS batches against deposits; gift cards, tips and chargebacks; residuals against the merchant book), to be chosen with partners rather than promised. Four other industries are shown as the same engine, each needing its connectors first. **Accuracy:** six connectors where it said five; the #1001 seeding artifact and the "live run" claim are gone; the hero is labelled an example modelled on the test-mode run that found #1002 and #1004 charged twice; the declaration sample is checked to construct against the SDK and match `shopify_stripe`. **Not on the site yet, on purpose:** sign-up (production still 503s, §10 item 1), prices (§5 has plans, not prices), privacy policy and terms (§10 item 27), and any RSPA mark (its member-mark rules are unchecked) |
 
 ---
 
@@ -366,13 +366,13 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 1. ~~Wire a mail provider~~ — **built 2026-11-02 (v1.20): Resend** (`okwan_api/mail.py`, §9 2026-11-02). Signup still answers 503 in production until three things exist, none of them code: **(a)** a sending domain verified in Resend with **SPF and DKIM**, which waits on a registered domain (item 15); **(b)** **click and open tracking off on that domain**, because Resend has no per-message switch for either; **(c)** `RESEND_API_KEY` (a sending-only key) and `OKWAN_MAIL_FROM` set in Render. *Flagged, not solved.* Its other gates are closed (egress bounds, rate limits and the forwarded client IP, §9, §11)
 
 **Revenue**
-2. **Talk to one ISV.** Unmoved for five versions. Needs none of the launch path: the hosted MCP with a provisioned tenant is the demo, and `reconcile_across_rails` is the finding to show
+2. **Talk to one ISV.** Unmoved for five versions. **RSPA membership is the channel** (2026-11-03): its members are the POS dealers, ISVs and payment providers the site now addresses. Target: ten conversations and one platform running Okwan on real merchant data by mid-December. Needs none of the launch path: the hosted MCP with a provisioned tenant is the demo, and `reconcile_across_rails` is the finding to show
 3. ~~Plan setting~~ — **done 2026-11-02 (v1.19).** `python -m okwan_vault plan set|show`, root tenants only, operator-only by design (§9 2026-11-02). **Card charging** remains; invoicing stays manual for three ISVs
 
 **Build**
 4. ~~Promote a `Decimal`-based `money_to_minor` into core~~ — **done 2026-11-02 (v1.18).** `okwan_core.currency.money_to_minor`; the Shopify and PayPal copies and the float `to_minor` deleted; `Fuzzy` compares minor units as stored (§9 2026-11-02)
 5. **Enforce `MAX_RECORDS_PER_WINDOW`** with adaptive window splitting. A PayPal account busier than the sandbox truncates silently today
-6. **Correct the #1001 Shopify fixture**, and the landing hero that leads with it: §2.4's table shows #1001 as "explained" at a $2,423.00 rail figure, which §9 records as a seeding artifact not to be used as a reference case
+6. **Correct the #1001 Shopify fixture**, and the landing hero that leads with it: §2.4's table shows #1001 as "explained" at a $2,423.00 rail figure, which §9 records as a seeding artifact not to be used as a reference case — *Landing half done 2026-11-03 (v1.21):* the hero no longer shows #1001; the fixture itself remains
 7. Connectors, chosen by the §3.5 criterion rather than the stale P1 list
 8. ~~Merchant view in the dashboard~~ — **done 2026-10-03.** `/merchants` lists child tenants and adds one; `/merchants/[id]` reuses Connections and the shown-once key for that tenant, with the API's subtree guard deciding access
 9. ~~Reconciliation results in the dashboard~~ — **done 2026-10-03.** Run reconciliation on `/merchants/[id]` (the `rails` fold, run as the merchant), `/results` lists merchants to run; not persisted
@@ -384,7 +384,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 **Strategic**
 14. **Paystack account** — signup needs a business registered in a supported African country. The Ghana sole proprietorship covers sandbox access for testing only; any revenue routing is an attorney/CPA question and must not be improvised
 15. Register `okwan.ai`; point the API and dashboard at it, set `OKWAN_ALLOWED_HOSTS` and `OKWAN_DASHBOARD_URL`. **Now also the last gate on signup (item 1):** add the domain in Resend, publish its SPF and DKIM records, turn click and open tracking off on it, and only then set `OKWAN_MAIL_FROM` to an address on it
-16. Attorney: formal OKWAN clearance opinion + intent-to-use application, IC 009 + 042
+16. Attorney: formal OKWAN clearance opinion + intent-to-use application, IC 009 + 042. **Add (flagged 2026-11-03):** the public site's former CData-derived look and §2's former wording ("adapted from the CData Sync design language", in git history before v1.21), in case either matters
 17. Move the Vercel project under the LLC (§7 entity consistency)
 
 **Corporate / NIW** *(operational detail in NIW_WORKING_PACK.md)*
@@ -398,6 +398,9 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 23. **Write operations on connector REST.** Hosted REST mounts WhatsApp's two send operations (§9 2026-10-04). Unmount non-read operations from the hosted REST, or keep them and keep the catalog and Security tab saying which write. One line either way; it changes the public surface, so it is the owner's call
 24. **Request log and identities need persistence.** A per-call log (timestamp, tenant, surface, status, duration; never query text or row content) and members with roles are both new tables and both change what a session can see. Not before item 11
 25. **Brand logos: owner and legal review (flagged, not drafted).** The dashboard shows Shopify, PayPal, Stripe, PostgreSQL, WhatsApp, Claude and Cursor in their original full colour beside their names (§9 2026-10-05). Open question for the owner, and an attorney if in doubt, alongside item 16: do each owner's brand guidelines allow its full-colour logo to identify an integration in a product UI? CC0 covers the SVG drawing, not the trademark. Until it is answered, logos stay out of Okwan's branding, volt elements and signed-out pages, and dropping one is a one-line change in brand-logos.ts
+26. **One type system across the product.** The site moved to Instrument Sans and JetBrains Mono (v1.21); the dashboard and the API reference (`okwan_api/docs.py`) still load Fraunces and Poppins. Move both so a customer sees one Okwan
+27. **Privacy policy and terms before signup opens (flagged, not drafted).** The vault holds merchants' payment credentials and signup collects addresses. Attorney item, alongside 16; the site links neither until they exist
+28. **US retail connectors, chosen with RSPA members.** Which POS their merchants run decides the first; each is probed live against the §3.5 criterion (a list operation over the records being reconciled) before any code
 
 ---
 
@@ -422,6 +425,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 ---
 
 *Changelog:*
+*v1.21 — Public site rebuilt (§9 2026-11-03): retail first on a general engine, for RSPA's POS dealers, ISVs and payment providers; Okwan's own identity (neutral white and grey, ink, Instrument Sans, yellow as the single signal for a disagreement) in place of the CData-derived look; a 1440px full-width frame; the hero as a result drawn as paths, labelled as an example on test data; seven verdict glyphs; six connectors. §1 wedge, §2 rewritten, §10 items 2, 6 and 16 updated, 26–28 added. Site only; no API change.*
 *v1.20 — Verification mail through Resend (§10 item 1, §9 2026-11-02): `ResendMailer` behind the existing `Mailer` interface, plain text and HTML with the link, its 24-hour expiry and an ignore line, used when `RESEND_API_KEY` and `OKWAN_MAIL_FROM` are both set; outside dev, either missing keeps the 503. The send runs after the signup response, so a failure or the provider's latency cannot tell a new address from a registered one, and failures log status and error name only. Resend has no per-message tracking switch, so click and open tracking are turned off on the sending domain, flagged with SPF and DKIM under §10 items 1 and 15. Both variables in `render.yaml` as `sync: false`. `tests/test_mail.py`. 623 tests, all passing against a local Postgres (591 run, 32 skipped without a vault DSN).*
 *v1.19 — Plans can be set (§10 item 3, §9 2026-11-02): `python -m okwan_vault plan set|show`, operator-only and deliberately not an API route, root tenants only in both stores, with `show` and the 402 gate sharing `okwan_vault.usage.quota`. The Postgres test fixture can create a child tenant, which un-breaks the v1.16 runs test. `main`'s history rewritten so every commit is authored by the owner. 600 tests, all passing against a local Postgres (568 run, 32 skipped without a vault DSN).*
 *v1.18 — Decimal money conversion promoted into core (§10 item 4, §9 2026-11-02): `okwan_core.currency.money_to_minor` replaces the Shopify and PayPal copies and the float `to_minor` is deleted; `Fuzzy` compares minor units as stored, so `amount_tolerance_minor` means what its name says. `tests/test_currency.py` holds the conversion cases. 568 tests (550 run, 18 skipped without a vault DSN).*
