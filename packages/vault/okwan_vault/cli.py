@@ -11,6 +11,7 @@ provisioning by hand and for inspecting a tenant.
     python -m okwan_vault tenant show ten_abc123
     python -m okwan_vault tenant list
     python -m okwan_vault account add ten_abc123 founder@acme.com
+    python -m okwan_vault account reset-password founder@acme.com
     python -m okwan_vault plan set ten_abc123 pro
     python -m okwan_vault plan show ten_abc123
 
@@ -97,19 +98,37 @@ def _read_password() -> str:
     return password
 
 
+def _check_password(password: str) -> None:
+    """The bounds signup holds every password to."""
+    if not accounts.MIN_PASSWORD <= len(password) <= accounts.MAX_PASSWORD:
+        raise accounts.AccountRefused(
+            f"password must be {accounts.MIN_PASSWORD} to "
+            f"{accounts.MAX_PASSWORD} characters"
+        )
+
+
 async def add_account(store, tenant_id: str, email: str, password: str) -> str:
     """The checks and the insert, apart from where the store and the
     password come from. Raises AccountRefused with the reason."""
     email = accounts.normalize_email(email)
     if len(email) > 254 or not re.match(accounts.EMAIL_PATTERN, email):
         raise accounts.AccountRefused(f"not an email address: {email!r}")
-    if not accounts.MIN_PASSWORD <= len(password) <= accounts.MAX_PASSWORD:
-        raise accounts.AccountRefused(
-            f"password must be {accounts.MIN_PASSWORD} to "
-            f"{accounts.MAX_PASSWORD} characters"
-        )
+    _check_password(password)
     await store.add_account(tenant_id, email, accounts.hash_password(password))
     return email
+
+
+async def reset_password(store, email: str, password: str) -> tuple[str, str]:
+    """A new password for an existing login; returns (email, tenant_id).
+
+    Every session the login holds ends with it, so a browser signed in
+    with the old password is signed out. Raises AccountRefused with the
+    reason: no such login, or a password outside signup's bounds.
+    """
+    email = accounts.normalize_email(email)
+    _check_password(password)
+    tenant_id = await store.reset_password(email, accounts.hash_password(password))
+    return email, tenant_id
 
 
 async def account_add(tenant_id: str, email: str) -> None:
@@ -199,6 +218,26 @@ async def plan_show(tenant_id: str) -> None:
     print("\n".join(lines))
 
 
+async def account_reset_password(email: str) -> None:
+    """A forgotten password, replaced by the operator.
+
+    There is no reset by email yet, and no API route for this on
+    purpose: only someone holding the vault database can run it. The
+    password is read the same way as for `account add`.
+    """
+    password = _read_password()
+    store = await _store()
+    try:
+        email, tenant_id = await reset_password(store, email, password)
+    except accounts.AccountRefused as e:
+        sys.exit(str(e))
+    finally:
+        await store.close()
+    print(f"account {email}")
+    print(f"tenant  {tenant_id}")
+    print("password replaced; every session for this account has ended")
+
+
 async def key_issue(tenant_id: str) -> None:
     store = await _store()
     try:
@@ -256,6 +295,7 @@ USAGE = """usage:
   python -m okwan_vault tenant show <tenant_id>
   python -m okwan_vault tenant list
   python -m okwan_vault account add <tenant_id> <email>
+  python -m okwan_vault account reset-password <email>
   python -m okwan_vault plan set <tenant_id> <plan>
   python -m okwan_vault plan show <tenant_id>
   python -m okwan_vault key issue <tenant_id>
@@ -283,6 +323,7 @@ def main(argv: list[str]) -> None:
         ("tenant", "show"): (tenant_show, 1),
         ("tenant", "list"): (tenant_list, 0),
         ("account", "add"): (account_add, 2),
+        ("account", "reset-password"): (account_reset_password, 1),
         ("plan", "set"): (plan_set, 2),
         ("plan", "show"): (plan_show, 1),
         ("key", "issue"): (key_issue, 1),

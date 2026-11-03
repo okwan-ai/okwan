@@ -53,6 +53,7 @@ class Store(Protocol):
     async def account_exists(self, email: str) -> bool: ...
     async def account_login(self, email: str) -> tuple[str, str] | None: ...
     async def add_account(self, tenant_id: str, email: str, password_hash: str) -> None: ...
+    async def reset_password(self, email: str, password_hash: str) -> str: ...
     async def list_tenants(self) -> list[Tenant]: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
@@ -336,6 +337,16 @@ class MemoryStore:
         if email in self._accounts:
             raise AccountRefused(f"{email} is already taken")
         self._accounts[email] = (tenant_id, password_hash)
+
+    async def reset_password(self, email: str, password_hash: str) -> str:
+        found = self._accounts.get(email)
+        if found is None:
+            raise AccountRefused(f"no account for {email}")
+        tenant_id = found[0]
+        self._accounts[email] = (tenant_id, password_hash)
+        for token_hash in [h for h, (t, _) in self._sessions.items() if t == tenant_id]:
+            del self._sessions[token_hash]
+        return tenant_id
 
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
