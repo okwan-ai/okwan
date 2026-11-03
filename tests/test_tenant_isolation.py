@@ -651,3 +651,92 @@ async def test_an_accounts_latest_runs_cover_its_merchants_and_no_one_else(clien
         assert set(r.json()["data"]) == {world.t[k].id for k in own}
         for key, run_id in victim_runs.items():
             assert (run_id in r.text) == (key in own), f"{who} latest and {key}"
+
+
+# ── 5. the query engine reaches nothing outside its tables ─────────────
+#
+# One tenant's SQL that could read a file could read every tenant's data:
+# the server's environment holds the vault's master key and database
+# address. Two walls again: the DuckDB connection is opened with file,
+# network and extension access off and its configuration locked (the
+# engine wall), and the statement guard refuses the readers by name (the
+# coarse wall). Each is tested alone.
+
+SENTINEL = "okwan-isolation-sentinel-7f3a"
+
+#: SQL that tries to leave the engine: a file standing in for the master
+#: key, the process environment, the file system, the network.
+ESCAPES = [
+    "SELECT content FROM read_text('{path}')",
+    "SELECT content FROM read_blob('{path}')",
+    "SELECT * FROM read_csv_auto('{path}')",
+    "SELECT * FROM read_json_auto('{path}')",
+    "SELECT * FROM '{path}'",
+    "SELECT * FROM query('SELECT content FROM read_text(''{path}'')')",
+    "SELECT content FROM read_text('/proc/self/environ')",
+    "SELECT * FROM glob('/*')",
+    "SELECT content FROM read_text('https://example.com/')",
+]
+
+
+@pytest.fixture
+def secret_file(tmp_path):
+    path = tmp_path / "vault.csv"
+    path.write_text(f"master_key\n{SENTINEL}\n")
+    return str(path)
+
+
+@pytest.mark.parametrize("template", ESCAPES)
+def test_the_engine_itself_refuses_to_leave_its_tables(secret_file, template):
+    """Bypasses the guard on purpose: the connection must hold alone."""
+    import duckdb
+    from okwan_query.session import QuerySession
+
+    session = QuerySession(max_records=5)
+    try:
+        with pytest.raises(duckdb.Error):
+            leaked = session.connection.execute(template.format(path=secret_file)).fetchall()
+            assert SENTINEL not in str(leaked)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("setting", ["enable_external_access = true", "lock_configuration = false",
+                                     "autoload_known_extensions = true"])
+def test_the_engine_cannot_be_unlocked(setting):
+    import duckdb
+    from okwan_query.session import QuerySession
+
+    session = QuerySession(max_records=5)
+    try:
+        with pytest.raises(duckdb.Error):
+            session.connection.execute(f"SET {setting}")
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("template", ESCAPES)
+def test_the_statement_guard_refuses_every_escape(secret_file, template):
+    from okwan_query.guard import UnsafeStatement, check
+
+    with pytest.raises(UnsafeStatement):
+        check(template.format(path=secret_file))
+
+
+@pytest.mark.parametrize("template", ESCAPES)
+async def test_no_escape_works_over_rest(client, world, secret_file, template):
+    r = await client.post("/v1/query", json={"sql": template.format(path=secret_file)},
+                          headers=_auth(world.keys["b1"]))
+    assert r.status_code == 400, r.text[:200]
+    assert SENTINEL not in r.text and "PATH=" not in r.text
+
+
+@pytest.mark.parametrize("template", ESCAPES)
+async def test_no_escape_works_over_hosted_mcp(store, world, secret_file, template):
+    from okwan_api.auth import set_store
+
+    set_store(store)
+    ctx = SimpleNamespace(headers={"authorization": f"Bearer {world.keys['b1']}"})
+    out = json.dumps(await _tool("okwan_query")(ctx=ctx, sql=template.format(path=secret_file)), default=str)
+    assert '"error"' in out
+    assert SENTINEL not in out and "PATH=" not in out

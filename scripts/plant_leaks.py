@@ -37,7 +37,9 @@ ISOLATION = "tests/test_tenant_isolation.py"
 #: Each wall tested alone: (test file, -k filter).
 WHERE_WALL = (ISOLATION, "postgres_where_only")
 DB_WALL = ("tests/test_tenant_rls.py", "")
-BOTH_WALLS = (ISOLATION, "not postgres_where_only")
+GUARD_WALL = (ISOLATION, "statement_guard")
+#: Everything but the WHERE-only store: what must still pass while one wall is down.
+BOTH_WALLS = "not postgres_where_only"
 
 API_ADMIN = "apps/api/okwan_api/admin.py"
 API_AUTH = "apps/api/okwan_api/auth.py"
@@ -45,6 +47,8 @@ MCP = "packages/query/okwan_query/mcp_http.py"
 STORE = "packages/vault/okwan_vault/store.py"
 PG = "packages/vault/okwan_vault/postgres.py"
 PAYPAL = "packages/connectors/paypal/okwan_paypal/auth.py"
+SESSION = "packages/query/okwan_query/session.py"
+GUARD = "packages/query/okwan_query/guard.py"
 
 #: (file, exact text, replacement)
 Edit = tuple[str, str, str]
@@ -57,6 +61,10 @@ LIST_NO_WHERE: Edit = (PG, '"WHERE tenant_id = $1 AND ($2::text IS NULL OR name 
                        '"WHERE $1::text IS NOT NULL AND ($2::text IS NULL OR name = $2) "')
 LATEST_NO_WHERE: Edit = (PG, '"WHERE tenant_id = ANY($1::text[]) AND kind = $2 AND name = $3 "',
                          '"WHERE $1::text[] IS NOT NULL AND kind = $2 AND name = $3 "')
+ENGINE_OPEN: Edit = (SESSION, 'duckdb.connect(":memory:", config=SANDBOX)', 'duckdb.connect(":memory:")')
+#: The guard's reader names and its quoted-path rule, removed.
+GUARD_BLIND: Edit = (GUARD, "|\\b(read_\\w+|\\w+_scan|sniff_csv|query|query_table)\\s*\\(", "|(?!x)x")
+GUARD_BLIND_PATHS: Edit = (GUARD, "|\\b(FROM|JOIN)\\s+'", "|(?!x)x")
 
 
 @dataclass(frozen=True)
@@ -96,6 +104,11 @@ BREAKS = [
     Break("Postgres list_runs drops WHERE tenant_id", "held", (LIST_NO_WHERE,), WHERE_WALL),
     Break("Postgres latest_runs drops WHERE tenant_id", "held", (LATEST_NO_WHERE,), WHERE_WALL),
     Break("the store never enters the restricted role", "held", (NO_SCOPE,), DB_WALL),
+    Break("the query engine may read files and the network", "caught", (ENGINE_OPEN,)),
+    Break("the statement guard misses the readers", "held", (GUARD_BLIND, GUARD_BLIND_PATHS),
+          GUARD_WALL),
+    Break("an open engine behind a blind guard", "both walls",
+          (ENGINE_OPEN, GUARD_BLIND, GUARD_BLIND_PATHS)),
     Break("no restricted role, and get_run drops WHERE", "both walls", (NO_SCOPE, RUN_NO_WHERE)),
     Break("no restricted role, and the credential read drops WHERE", "both walls",
           (NO_SCOPE, CREDS_NO_WHERE)),
@@ -142,7 +155,9 @@ def main() -> int:
         originals = _apply(b.edits)
         try:
             if b.expect == "held":
-                isolation = _passes(*BOTH_WALLS)
+                # The broken wall's own tests are left out of "still isolated".
+                own = f" and not {b.wall[1]}" if b.wall == GUARD_WALL else ""
+                isolation = _passes(ISOLATION, BOTH_WALLS + own)
                 wall = _passes(*b.wall)
             else:
                 isolation, wall = _passes(ISOLATION), None

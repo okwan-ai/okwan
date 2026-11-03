@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import duckdb
 from fastapi import APIRouter, Depends, HTTPException
 from okwan_core import CredentialError, OkwanError, UpstreamError
 from pydantic import BaseModel, Field
@@ -47,6 +48,10 @@ def build_router() -> APIRouter:
             return result
         except UnsafeStatement as exc:
             raise HTTPException(400, str(exc)) from exc
+        except duckdb.Error as exc:
+            # The SQL itself failed: a typo, an unknown column, or the
+            # sandbox refusing a file or the network. The caller's to fix.
+            raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
         except CredentialError as exc:
             raise HTTPException(401, str(exc)) from exc
         except UpstreamError as exc:

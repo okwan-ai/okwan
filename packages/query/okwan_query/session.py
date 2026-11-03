@@ -31,6 +31,21 @@ _REF = re.compile(r"\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b", re.IGNORECASE)
 
 DEFAULT_LIMIT = 500
 
+#: DuckDB here is a sandbox for one query over rows the session loaded
+#: itself (CREATE TABLE and INSERT, never a file). Everything else is off:
+#: reading or writing any file (read_text('/proc/self/environ') would hand
+#: a caller the server's environment, the vault's master key included),
+#: the network, and loading extensions. Locked, so no statement can switch
+#: any of it back on. This is the wall; the statement guard in guard.py is
+#: a second, coarser one and must never be the only thing in the way.
+SANDBOX: dict[str, Any] = {
+    "enable_external_access": False,
+    "autoload_known_extensions": False,
+    "autoinstall_known_extensions": False,
+    "allow_community_extensions": False,
+    "lock_configuration": True,
+}
+
 
 class QuerySession:
     """One DuckDB connection plus the connector tables it has loaded."""
@@ -40,7 +55,7 @@ class QuerySession:
         resolver: CredentialResolver = env_credentials,
         max_records: int = DEFAULT_LIMIT,
     ) -> None:
-        self._con = duckdb.connect(":memory:")
+        self._con = duckdb.connect(":memory:", config=SANDBOX)
         self._resolver = resolver
         self._max_records = max_records
         self._loaded: set[str] = set()
