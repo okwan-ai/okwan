@@ -1,0 +1,319 @@
+# Okwan runbook
+
+For whoever is on call. It assumes no knowledge of the code. Each failure
+the monitor detects has a section here with the same name as the link in
+the incident issue. Each section says what the failure looks like, what
+to check, and what to do, in that order.
+
+**Ground rules, every time:**
+
+- Okwan is read-only towards every payment rail. Nothing in this runbook
+  moves money, and no fix ever needs to.
+- Never paste a key, password, master key or connection string into an
+  issue, a chat, a ticket or a screenshot. If one was pasted, treat it as
+  leaked ([A key or password leaked](#a-key-or-password-leaked)).
+- Never read a customer's stored credentials to debug. Nothing here
+  needs them.
+- Write what you did in the incident issue as you go. The next person
+  starts from your notes.
+
+## Who answers
+
+| Tier | Who | Does | Needs access to |
+|---|---|---|---|
+| 1. First response | **Not yet named** (see [Owner decisions](#owner-decisions)) | Acknowledges the customer, checks the [status of the parts](#where-things-run), follows this runbook's sections marked *Tier 1* | GitHub (triage), Render (viewer), status pages |
+| 2. On call | Felix Marwuko (`@Marwuko`) until a second engineer is named | Every section here: restarts, rollbacks, operator commands | Render (deploy), Neon (console), Vercel, the Okwan Codespace |
+| 3. Owner | Felix Marwuko | Code changes, security incidents, master key, anything this runbook does not cover | Everything |
+
+The monitor assigns each incident issue to the GitHub user in the
+repository variable `OKWAN_ONCALL` (default `Marwuko`). Change that
+variable when the rota changes; nothing else has to change.
+
+**Severity and proposed response targets.** These are proposals. They
+are not in any contract until the owner signs one that states them.
+
+| Severity | Means | Acknowledge | Update the customer |
+|---|---|---|---|
+| SEV1 | Suspected cross-tenant exposure, a leaked secret, or the API down for everyone | 1 hour, any day | Every 2 hours until resolved |
+| SEV2 | One surface down or degraded for everyone (signup, MCP, dashboard, one rail) | 4 business hours | Daily |
+| SEV3 | One customer affected (their credentials, their plan, their key) | 1 business day | When resolved |
+
+## Where things run
+
+| Part | Where | Health |
+|---|---|---|
+| API and hosted MCP (`api.okwan.ai`, `/mcp/`) | Render service `okwan` (Docker, Oregon, one instance) | `https://api.okwan.ai/healthz` |
+| Dashboard (`app.okwan.ai`) | Render service `okwan-dashboard` (Node) | `https://app.okwan.ai/` |
+| Site (`okwan.ai`) | Vercel project `okwan`, static | `https://okwan.ai/` |
+| Vault database | Neon Postgres | Neon console; the API's `/healthz` says `"vault": "postgres"` |
+| Verification mail | Resend | Resend dashboard, *Emails* |
+| DNS for okwan.ai | Vercel (domain bought there) | Vercel, *Domains* |
+
+Status pages for the dependencies: Render, Neon, Vercel, Resend, and the
+rails (Stripe, Shopify, PayPal, Paystack).
+
+Operator commands (`python -m okwan_vault …`) run in the Okwan Codespace,
+where `OKWAN_VAULT_DATABASE_URL` and `OKWAN_VAULT_MASTER_KEY` are already
+set as Codespaces secrets. Run `python -m okwan_vault` with no arguments
+to list them.
+
+## Failures the monitor detects
+
+### API down
+
+*Looks like:* `/healthz` unreachable or not 200. Customers see timeouts or
+errors from every route.
+
+1. Render → `okwan` → *Events*. Is a deploy failing or the service
+   restarting in a loop? Open *Logs* for the last start.
+2. If the last deploy started it: [Roll back a deploy](#roll-back-a-deploy).
+3. If the logs show the store refusing to start, go to
+   [Startup refused](#startup-refused).
+4. If the logs show the master key missing ("OKWAN_VAULT_MASTER_KEY"), the
+   environment lost it: Render → `okwan` → *Environment*. Do **not**
+   generate a new one: a new key cannot open anything stored. Restore the
+   original from where the owner keeps it, or escalate to Tier 3.
+5. If Render itself is down (status page), there is nothing to fix on our
+   side: post in the incident issue and update customers.
+
+### Vault unreachable
+
+*Looks like:* `/healthz` answers 503, "vault unreachable".
+
+1. Neon console: is the project's compute running? A suspended compute
+   wakes on the next query; give it a minute and rerun the monitor
+   (*Actions → monitor → Run workflow*).
+2. Neon status page. If Neon is down, wait and update customers.
+3. If the connection string changed (password reset in Neon, branch
+   renamed), update `OKWAN_VAULT_DATABASE_URL` on the Render `okwan`
+   service and redeploy. The value is never pasted anywhere else.
+
+### In-memory vault
+
+*Looks like:* `/healthz` answers 200 but `"vault": "memory"`.
+
+The API is running without its database, on an empty in-memory store.
+Every customer's key is refused and nothing is saved. Render → `okwan` →
+*Environment*: `OKWAN_VAULT_DATABASE_URL` is missing. Restore it and
+redeploy. SEV1 while it lasts.
+
+### Wrong build
+
+*Looks like:* `/healthz` reports a different number of connectors than the
+monitor expects.
+
+Either a deploy shipped a build that failed to register a connector, or
+a connector was added or removed on purpose. In the second case, update
+`OKWAN_MONITOR_CONNECTORS` in the monitor workflow. In the first case,
+[roll back a deploy](#roll-back-a-deploy).
+
+### Slow
+
+*Looks like:* `/healthz` took more than 5 seconds.
+
+Usually a cold database (see [Vault unreachable](#vault-unreachable),
+step 1) or a Render instance under load. If it is still slow after three
+runs, check Render → `okwan` → *Metrics* for CPU and memory. One worker
+serves every request; a sustained spike there is a Tier 3 question.
+
+### Dashboard down
+
+*Looks like:* `app.okwan.ai` unreachable or answering 4xx/5xx.
+
+1. Render → `okwan-dashboard` → *Events* and *Logs*.
+2. If the API is also down, fix that first: the dashboard depends on it.
+3. If only the dashboard's last deploy broke it,
+   [roll it back](#roll-back-a-deploy).
+4. `OKWAN_API_URL` on the dashboard must be `https://api.okwan.ai`, and
+   `OKWAN_DASHBOARD_SECRET` must match the API's (Render generates it
+   once and shares it; it is never typed).
+
+### Site down
+
+*Looks like:* `okwan.ai` unreachable or answering 4xx/5xx.
+
+Vercel → project `okwan` → *Deployments*. Promote the last good
+deployment (*⋯ → Promote*). If the domain shows a configuration error,
+Vercel → *Domains*. The site holds no customer data; this is SEV2 at most.
+
+### MCP
+
+*Looks like:* the MCP handshake at `api.okwan.ai/mcp/` fails while
+`/healthz` is fine.
+
+The API is up but the hosted MCP's session manager is not answering.
+Render → `okwan` → *Logs*, search for `mcp`. Restarting the service from
+its Render page usually clears a stuck session manager; if it fails again
+after a restart, roll back the last deploy.
+
+### MCP host
+
+*Looks like:* the handshake answers 421, invalid host.
+
+DNS-rebinding protection refused the host name. `OKWAN_ALLOWED_HOSTS` on
+the Render `okwan` service must list every host the API answers on:
+`api.okwan.ai,okwan.onrender.com`. If clients broke right after it was
+set, remove the variable and redeploy (protection off) and tell Tier 3.
+
+### Monitor key
+
+*Looks like:* the authenticated check answers 401.
+
+The monitor's own key (`OKWAN_MONITOR_KEY`, a GitHub Actions secret) was
+revoked or the monitor tenant deleted. Issue a new one for the monitor
+tenant (see [Monitoring](#monitoring)) and replace the secret. Customers
+are not affected by this check failing alone.
+
+### Quota
+
+*Looks like:* 402 "monthly request limit reached". For the monitor, its
+tenant is over plan; for a customer, theirs is.
+
+`python -m okwan_vault plan show <tenant_id>` prints plan, limit and
+month-to-date use. Raising a customer's plan is a commercial decision
+(Tier 3): `python -m okwan_vault plan set <root_tenant_id> <plan>`. Only a
+root tenant has a plan; a merchant uses its account's.
+
+### TLS
+
+*Looks like:* a certificate expires in 14 days or fewer, or the TLS
+handshake fails.
+
+Render (api, app) and Vercel (site) renew certificates themselves. A
+renewal that is stuck almost always means the DNS record moved: Vercel →
+*Domains* → `okwan.ai` records must still point `api` and `app` at
+Render, and Render → service → *Settings → Custom Domains* must show the
+domain verified. Re-verify there.
+
+## Failures customers report
+
+### Startup refused
+
+*Looks like:* the API will not start. The log says `IsolationUnavailable`,
+or "cannot create or join the okwan_tenant role".
+
+The API refuses to serve when the database cannot keep tenants apart.
+That refusal is deliberate: do not work around it.
+
+- "role okwan_tenant does not exist" or "cannot create or join": the
+  database role the API runs tenant queries as is missing. In the Neon
+  SQL editor, as the project owner, run the two statements the log's
+  HINT prints (`CREATE ROLE okwan_tenant NOLOGIN NOINHERIT;` and a
+  `GRANT` to the API's login role), then restart the service.
+- "must be NOSUPERUSER NOBYPASSRLS NOLOGIN": someone changed the role.
+  Tier 3; treat as a possible security incident.
+- "row-level security is off for: …": someone disabled the protection
+  on a table. Tier 3, SEV1: restart once (the migration turns it back
+  on); whatever the result, escalate.
+
+### Signup answers 503
+
+"signup is not open yet". The API has no mailer: `RESEND_API_KEY` or
+`OKWAN_MAIL_FROM` is missing on the Render `okwan` service. Restore both
+and redeploy. If they are set and mail still does not arrive, Resend →
+*Domains*: the sending domain must be verified (SPF and DKIM) with click
+and open tracking off.
+
+### A customer's connection test fails *(Tier 1)*
+
+The dashboard's *Test* on a connection, or a 401 or 403 from a connector
+route whose message comes from the rail rather than Okwan, means the
+customer's own credential at that rail is wrong, expired or missing a
+permission. Okwan cannot fix it. Ask the customer to create a new
+credential at the rail (Stripe restricted key, Shopify token with
+`read_orders` and `read_all_orders`, PayPal client id and secret) and
+save it in the dashboard under *Settings*. Never ask them to send it to you.
+
+### A rail is down *(Tier 1)*
+
+Errors from one connector only, with the rail's own status (5xx, or
+"upstream"). Check the rail's status page. Nothing to fix on our side;
+tell the customer and close when the rail recovers.
+
+### Rate limited *(Tier 1)*
+
+429 with `Retry-After`. Sign-in allows 10 tries per address and 20 per IP
+every 15 minutes; signup and the connection test have their own limits.
+Wait out `Retry-After`. Limits reset when the API restarts, but do not
+restart for this.
+
+### A key or password leaked
+
+SEV1 if it is a customer's or an operator secret; SEV2 for a customer's
+own API key they leaked themselves.
+
+- A customer's Okwan API key: the customer revokes it in the dashboard
+  (*Settings*, keys), or `python -m okwan_vault key revoke <key_id>`. Revocation takes
+  effect on the next request. Issue a new one.
+- A customer's password: `python -m okwan_vault account reset-password
+  <email>` (password from a file, never typed into a chat). Every session
+  of that login ends at once.
+- A rail credential: the customer rolls it at the rail; then deletes the
+  old one in Okwan.
+- The master key or the database connection string: Tier 3 immediately.
+  Do not rotate anything yourself.
+
+### Suspected cross-tenant exposure
+
+A customer says they saw data that is not theirs. SEV1. Tier 3 at once.
+
+1. Do not ask the customer to send screenshots of the data; ask what they
+   saw (which page, which order reference, when) and their tenant id.
+2. Record the time window. Render logs are short-lived; export them now
+   (*Logs → download*).
+3. The owner decides on taking the API down. The suites
+   `tests/test_tenant_isolation.py` and `tests/test_tenant_rls.py` and
+   `scripts/plant_leaks.py` are the place to start reproducing.
+4. Notifying affected customers and any regulator is a legal decision,
+   not an engineering one: the owner, with counsel.
+
+### Roll back a deploy
+
+Render → service → *Events*: pick the last deploy that was live and
+healthy → *Rollback*. Then open an issue saying which commit was rolled
+back and why. Merging a fix to `main` deploys forward again.
+
+## Monitoring
+
+`.github/workflows/monitor.yml` runs `scripts/monitor.py` every ten
+minutes and keeps one issue labelled `incident` open while anything fails.
+To run it now: *Actions → monitor → Run workflow*. To run it from a
+laptop: `python scripts/monitor.py`.
+
+One-time setup (owner):
+
+1. A monitor tenant with no rail credentials:
+   `python -m okwan_vault tenant create "okwan-monitor"`, then
+   `python -m okwan_vault key issue <tenant_id>`.
+2. GitHub → repository *Settings → Secrets and variables → Actions*:
+   secret `OKWAN_MONITOR_KEY` = that key. Variable `OKWAN_ONCALL` = the
+   on-call GitHub username.
+3. Optional: secret `OKWAN_ALERT_WEBHOOK` = a Slack-compatible incoming
+   webhook, posted to when an incident opens and closes.
+4. The on-call person turns on GitHub notifications for issues assigned
+   to them (email, and push in the GitHub mobile app).
+
+Limits to know. GitHub runs schedules late under load, usually by
+minutes. It also stops a scheduled workflow after 60 days without a
+commit to the repository; a commit or a manual run starts it again. The
+monitor runs on GitHub, so a GitHub outage silences it. For a second
+opinion from outside GitHub, an uptime service pointed at
+`https://api.okwan.ai/healthz` costs nothing.
+
+## Branch protection
+
+CI (`.github/workflows/ci.yml`) runs the tests against a real Postgres,
+lint on changed Python, and both web builds, on every pull request. It
+only blocks a bad merge once `main` requires it: GitHub → *Settings →
+Branches → Add rule* for `main`, require status checks `python`,
+`web (web)` and `web (dashboard)`, and require a pull request before
+merging.
+
+## Owner decisions
+
+Open, and not this runbook's to make:
+
+- Who is Tier 1 and the second on-call engineer, and their access.
+- A support address customers write to (for example `support@okwan.ai`,
+  which needs a mailbox: Resend only sends).
+- The response targets above, before any contract states them.
