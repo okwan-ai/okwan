@@ -178,7 +178,7 @@ export function ConnectorForm({ c, tenantId, tenantKey, onResult, next, autoFocu
         </label>
       ))}
 
-      {/* The sheet's one volt until a success hands it to what comes next. */}
+      {/* The sheet's one primary action until a success hands it on. */}
       <Button ref={submitButton} type="submit" variant={done ? "secondary" : "primary"} disabled={busy} aria-busy={busy} className="w-full">
         {busy ? "Testing…" : "Test and Save"}
       </Button>

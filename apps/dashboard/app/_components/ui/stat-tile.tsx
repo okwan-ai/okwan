@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-/** A KPI. `hero` is the page's one volt figure; at most one per page. */
+/** A KPI. `hero` is the page's one night figure; at most one per page. */
 export function StatTile({
   label,
   value,
@@ -17,15 +17,15 @@ export function StatTile({
 }) {
   return (
     <div
-      className={`flex min-w-0 flex-col rounded-xl border px-5 py-4 ${
-        hero ? "border-volt-deep bg-volt text-ink" : "border-line bg-surface"
+      className={`flex min-w-0 flex-col rounded-[14px] border px-5 py-4 ${
+        hero ? "border-night bg-night text-white" : "border-line bg-surface"
       }`}
     >
-      <p className={`text-xs font-medium ${hero ? "text-ink" : "text-ink-soft"}`}>{label}</p>
+      <p className={`text-xs font-medium ${hero ? "text-night-soft" : "text-ink-soft"}`}>{label}</p>
       <p className={`mt-1 truncate font-semibold tracking-tight tabular-nums ${hero ? "text-4xl" : "text-2xl"}`}>
         {value}
       </p>
-      {sub && <p className={`mt-1 text-xs ${hero ? "text-ink" : "text-ink-soft"}`}>{sub}</p>}
+      {sub && <p className={`mt-1 text-xs ${hero ? "text-night-ink" : "text-ink-soft"}`}>{sub}</p>}
       {action && (
         <Link
           href={action.href}

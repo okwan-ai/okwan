@@ -55,7 +55,7 @@ export function MoneyTrail({ r }: { r: FindingRow }) {
             {takes.map((p, i) => (
               <div
                 key={`${p.rail}-${i}`}
-                className="h-full border-r-2 border-surface bg-sky last:border-r-0"
+                className="h-full border-r-2 border-surface bg-trace last:border-r-0"
                 style={{ width: `${(p.minor / Math.max(taken, 1)) * 100}%` }}
               />
             ))}
@@ -110,7 +110,7 @@ export function MiniTrail({ r }: { r: FindingRow }) {
         <span className="absolute inset-y-0 left-0 rounded-full border border-ink/70" style={{ width: pct(total) }} />
       </span>
       <span className="relative block h-1.5 rounded-full bg-canvas">
-        <span className="absolute inset-y-0 left-0 rounded-full bg-sky" style={{ width: pct(taken) }} />
+        <span className="absolute inset-y-0 left-0 rounded-full bg-trace" style={{ width: pct(taken) }} />
         {taken > total && <span className="bg-hatch-danger absolute inset-y-0 rounded-r-full" style={{ left: pct(total), width: pct(taken - total) }} />}
       </span>
     </span>

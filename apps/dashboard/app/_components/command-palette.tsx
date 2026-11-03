@@ -165,7 +165,7 @@ export function CommandPalette({ merchants, connectors, verdicts, findings }: {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[min(12vh,5rem)]">
-      <div className="absolute inset-0 bg-navy/40" onClick={() => setOpen(false)} aria-hidden />
+      <div className="absolute inset-0 bg-night/40" onClick={() => setOpen(false)} aria-hidden />
       <div
         ref={panel}
         role="dialog"

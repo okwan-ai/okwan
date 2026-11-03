@@ -74,7 +74,7 @@ export function SlideOver({ open, onClose, title, description, icon, children }:
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-navy/40" onClick={onClose} aria-hidden />
+      <div className="absolute inset-0 bg-night/40" onClick={onClose} aria-hidden />
       <div
         ref={panel}
         role="dialog"
@@ -109,7 +109,7 @@ export function Modal({ open, onClose, title, children }: {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 pt-[min(15vh,4rem)] pb-4">
-      <div className="absolute inset-0 bg-navy/40" onClick={onClose} aria-hidden />
+      <div className="absolute inset-0 bg-night/40" onClick={onClose} aria-hidden />
       <div
         ref={panel}
         role="dialog"

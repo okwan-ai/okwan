@@ -3,12 +3,13 @@ import type { ComponentProps } from "react";
 
 type Variant = "primary" | "secondary" | "ghost";
 
-/** Primary: volt fill, ink text (§2.3), for the one main action on a view.
- *  Secondary: outlined ink. Ghost: text only, for low-weight actions.
+/** Primary: ink fill, white text (§2.3), for the one main action on a view.
+ *  Secondary: a hairline on white. Ghost: text only, for low-weight actions.
+ *  Yellow is never a button: it means "two systems disagree" (§2.1).
  *  Every size keeps a 44px touch target. */
 const VARIANT: Record<Variant, string> = {
-  primary: "bg-volt text-ink hover:bg-volt-deep",
-  secondary: "border border-ink/80 bg-surface text-ink hover:bg-canvas",
+  primary: "bg-ink text-white shadow-[0_1px_2px_rgba(0,0,0,0.12)] hover:bg-[#262626]",
+  secondary: "border border-ink/20 bg-surface text-ink shadow-[0_1px_2px_rgba(0,0,0,0.05)] hover:border-ink/50",
   ghost: "text-ink-soft hover:bg-ink/5 hover:text-ink",
 };
 

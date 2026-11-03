@@ -9,6 +9,7 @@ import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
 import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
 import { PlanMeter } from "./usage/plan-meter";
+import { Wordmark } from "./ui/mark";
 
 export type MerchantLink = { id: string; name: string };
 
@@ -214,9 +215,8 @@ function Glyph({ d }: { d: RunDigest | undefined }) {
 
 function Logo() {
   return (
-    <Link href="/overview" prefetch={false} className="flex min-h-11 items-center gap-2 rounded-lg px-2">
-      <span className="inline-block h-6 w-6 rounded-md bg-volt ring-1 ring-ink" aria-hidden />
-      <span className="font-display text-xl font-medium">Okwan</span>
+    <Link href="/overview" prefetch={false} aria-label="Okwan, overview" className="flex min-h-11 items-center rounded-lg px-2">
+      <Wordmark />
     </Link>
   );
 }

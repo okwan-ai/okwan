@@ -264,53 +264,54 @@ def build_openapi(app: FastAPI) -> dict[str, Any]:
 
 
 #: Okwan's tokens (OKWAN_PROJECT.md §2) as Scalar theme variables: neutral
-#: white and grey, the same as the dashboard. Volt is the one accent, the
-#: active section in the sidebar; links and buttons stay ink for contrast.
+#: white and grey and Instrument Sans, the same as the site and the dashboard,
+#: and night for dark mode. Yellow means "two systems disagree" and is not
+#: used here: the active section is a quiet ink tint, links stay ink.
 THEME_CSS = """
 :root {
-  --scalar-font: 'Poppins', system-ui, sans-serif;
+  --scalar-font: 'Instrument Sans', system-ui, sans-serif;
   --scalar-font-code: 'JetBrains Mono', ui-monospace, monospace;
   --scalar-radius: 8px; --scalar-radius-lg: 12px; --scalar-radius-xl: 12px;
   --scalar-custom-header-height: 56px;
 }
 .light-mode {
-  --scalar-color-1: #111111; --scalar-color-2: #4b4b4b; --scalar-color-3: #6b6b6b;
-  --scalar-color-accent: #111111;
+  --scalar-color-1: #0a0a0a; --scalar-color-2: #4b4b4b; --scalar-color-3: #6b6b6b;
+  --scalar-color-accent: #0a0a0a;
   --scalar-background-1: #ffffff; --scalar-background-2: #f5f5f5; --scalar-background-3: #ebebeb;
-  --scalar-background-accent: #fff6c2;
+  --scalar-background-accent: rgba(10, 10, 10, 0.06);
   --scalar-border-color: #e5e5e5;
   --scalar-sidebar-background-1: #fafafa; --scalar-sidebar-color-1: #111111; --scalar-sidebar-color-2: #4b4b4b;
   --scalar-sidebar-border-color: #e5e5e5;
-  --scalar-sidebar-item-hover-background: rgba(17, 17, 17, 0.05);
-  --scalar-sidebar-item-active-background: #ffd400; --scalar-sidebar-color-active: #111111;
+  --scalar-sidebar-item-hover-background: rgba(10, 10, 10, 0.04);
+  --scalar-sidebar-item-active-background: rgba(10, 10, 10, 0.07); --scalar-sidebar-color-active: #0a0a0a;
   --scalar-sidebar-search-background: #ffffff; --scalar-sidebar-search-border-color: #858585;
   --scalar-sidebar-search-color: #4b4b4b;
 }
 .dark-mode {
-  --scalar-color-1: #f5f5f5; --scalar-color-2: #c8ccd4; --scalar-color-3: #98a1b0;
-  --scalar-color-accent: #ffd400;
-  --scalar-background-1: #0d1b2e; --scalar-background-2: #112339; --scalar-background-3: #183050;
-  --scalar-background-accent: rgba(255, 212, 0, 0.12);
-  --scalar-border-color: #22385a;
-  --scalar-sidebar-background-1: #0a1626; --scalar-sidebar-color-1: #f5f5f5; --scalar-sidebar-color-2: #c8ccd4;
-  --scalar-sidebar-border-color: #22385a;
-  --scalar-sidebar-item-hover-background: rgba(245, 245, 245, 0.06);
-  --scalar-sidebar-item-active-background: #ffd400; --scalar-sidebar-color-active: #111111;
-  --scalar-sidebar-search-background: #112339; --scalar-sidebar-search-border-color: #3a5378;
-  --scalar-sidebar-search-color: #c8ccd4;
+  --scalar-color-1: #f5f5f5; --scalar-color-2: #c4c4c4; --scalar-color-3: #a3a3a3;
+  --scalar-color-accent: #ffffff;
+  --scalar-background-1: #0b0b0c; --scalar-background-2: #161618; --scalar-background-3: #1f1f22;
+  --scalar-background-accent: rgba(255, 255, 255, 0.08);
+  --scalar-border-color: #2a2a2e;
+  --scalar-sidebar-background-1: #0b0b0c; --scalar-sidebar-color-1: #f5f5f5; --scalar-sidebar-color-2: #c4c4c4;
+  --scalar-sidebar-border-color: #2a2a2e;
+  --scalar-sidebar-item-hover-background: rgba(255, 255, 255, 0.05);
+  --scalar-sidebar-item-active-background: rgba(255, 255, 255, 0.1); --scalar-sidebar-color-active: #ffffff;
+  --scalar-sidebar-search-background: #161618; --scalar-sidebar-search-border-color: #4a4a50;
+  --scalar-sidebar-search-color: #c4c4c4;
 }
 .scalar-app h1, .scalar-app .section-header, .scalar-app .markdown h2 {
-  font-family: 'Fraunces', Georgia, serif; font-weight: 500; letter-spacing: -0.01em;
+  font-family: 'Instrument Sans', system-ui, sans-serif; font-weight: 600; letter-spacing: -0.025em;
 }
 """
 
 BRAND_BAR_CSS = """
 .okwan-bar { position: sticky; top: 0; z-index: 1000; height: 56px; display: flex; align-items: center;
   gap: 12px; padding: 0 20px; background: #ffffff; border-bottom: 1px solid #e5e5e5;
-  font: 14px/1.4 'Poppins', system-ui, sans-serif; color: #111111; }
+  font: 14px/1.4 'Instrument Sans', system-ui, sans-serif; color: #0a0a0a; }
 .okwan-bar a { color: inherit; text-decoration: none; }
-.okwan-bar .mark { width: 22px; height: 22px; border-radius: 6px; background: #ffd400; box-shadow: inset 0 0 0 1px #111111; }
-.okwan-bar .name { font: 500 20px/1 'Fraunces', Georgia, serif; }
+.okwan-bar .mark { width: 22px; height: 22px; display: block; }
+.okwan-bar .name { font: 600 19px/1 'Instrument Sans', system-ui, sans-serif; letter-spacing: -0.02em; }
 .okwan-bar .sep { color: #858585; }
 .okwan-bar .links { margin-left: auto; display: flex; gap: 4px; }
 .okwan-bar .links a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 10px;
@@ -348,16 +349,16 @@ def page() -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Okwan API reference</title>
 <meta name="description" content="Read-only reconciliation across Shopify, PayPal and Stripe: the REST API, SQL and hosted MCP.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='7' fill='%23FFD400' stroke='%23111' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B0B0C'/%3E%3Cpath d='M7.5 9.5H24.5M7.5 22.5H24.5' stroke='%23fff' stroke-width='2.75' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='16' r='3.5' fill='%23FFD400'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=JetBrains+Mono:wght@400;500&family=Poppins:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>body {{ margin: 0; background: #ffffff; }} {BRAND_BAR_CSS}</style>
 </head>
 <body>
 <header class="okwan-bar">
   <a href="/docs" aria-label="Okwan API reference" style="display:flex;align-items:center;gap:10px">
-    <span class="mark" aria-hidden="true"></span><span class="name">Okwan</span>
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M6 8h20M6 24h20" stroke="#0A0A0A" stroke-width="3.5" stroke-linecap="round"/><circle cx="16" cy="16" r="4.5" fill="#FFD400" stroke="#0A0A0A" stroke-width="2"/></svg><span class="name">okwan</span>
   </a>
   <span class="sep" aria-hidden="true">/</span><span class="title">API reference</span>
   <nav class="links" aria-label="Elsewhere">{dashboard_link}<a href="/openapi.json">OpenAPI JSON</a></nav>
