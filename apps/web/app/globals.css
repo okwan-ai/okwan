@@ -1,66 +1,75 @@
 @import "tailwindcss";
 
-/* ── Okwan brand tokens (OKWAN_PROJECT.md §2.1) ─────────────────── */
+/* ── Okwan brand tokens (OKWAN_PROJECT.md §2) ─────────────────────
+   Neutral white and grey, ink for the dark sections, and one signal
+   colour. Yellow means "here is where two systems disagree": the dot
+   in the mark, a break in a result, the highlight on a finding. It is
+   never a page background or a band, and text never sits in yellow on
+   white.                                                            */
 @theme {
-  --color-canvas: #f4f1eb;
-  --color-surface: #fdfcfa;
-  --color-ink: #111111;
-  --color-ink-soft: #4a4a45;
-  --color-volt: #ffd400;
-  --color-volt-deep: #e8b800;
-  --color-navy: #0d1b2e;
-  --color-sky: #b9c6f2;
-  --color-line: #e2ded4;
+  --color-paper: #ffffff;
+  --color-mist: #f5f5f5;
+  --color-line: #e5e5e5;
+  --color-line-strong: #d4d4d4;
+  --color-ink: #0a0a0a;
+  --color-ink-soft: #4b4b4b;
+  --color-ink-muted: #6b6b6b;
+  --color-signal: #ffd400;
+  --color-signal-deep: #e8b800;
+  --color-night: #0b0b0c;
+  --color-night-2: #151517;
+  --color-night-line: #26262a;
+  --color-night-soft: #a3a3a3;
 
-  --font-display: "Fraunces", Georgia, serif;
-  --font-body: "Poppins", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
 }
 
 body {
-  background: var(--color-canvas);
+  background: var(--color-paper);
   color: var(--color-ink);
-  font-family: var(--font-body);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-}
-
-@keyframes rise {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-.rise {
-  opacity: 0;
-  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rise { animation: none; opacity: 1; }
-}
-
-/* Signature: data dots traveling the hub-and-spoke rails */
-@keyframes travel-in {
-  0% { offset-distance: 0%; opacity: 0; }
-  8% { opacity: 1; }
-  92% { opacity: 1; }
-  100% { offset-distance: 100%; opacity: 0; }
-}
-
-.dot {
-  offset-rotate: 0deg;
-  animation: travel-in 3.6s linear infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dot { animation: none; opacity: 0; }
-  html { scroll-behavior: auto; }
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: var(--color-volt);
+  background: var(--color-signal);
   color: var(--color-ink);
+}
+
+/* A faint dotted field behind the hero, fading toward the edges. */
+.hero-field {
+  background-image: radial-gradient(circle, #d4d4d4 1px, transparent 1.2px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse 70% 60% at 70% 40%, #000 30%, transparent 75%);
+}
+
+/* Paths draw left to right, one row after another. */
+@keyframes draw {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+
+@keyframes settle {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.path-draw {
+  animation: draw 0.9s cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+.settle {
+  animation: settle 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .path-draw, .settle { animation: none; }
 }
