@@ -16,7 +16,7 @@ const WORKSPACE = "workspace";
  * connections, never a merchant's.
  *
  * Three steps: the key, the client, the question. The client tabs carry
- * the per-client recipe; the navy panel carries what to ask and the same
+ * the per-client recipe; the night panel carries what to ask and the same
  * read on the other channels. The choice is kept in `?merchant=` (an id,
  * or "workspace"), so a merchant's "Agent setup" link lands on it.
  */

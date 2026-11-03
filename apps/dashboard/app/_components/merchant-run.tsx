@@ -111,9 +111,9 @@ export function MerchantRunProvider({ tenantId, tenantName, fold = "rails", init
  * The header's one action (primitives, RunButton matrix). While a system
  * the check reads is missing there is no Run button, because the API would
  * fail the run: it leads to the next missing system instead, and on the
- * Connections tab renders nothing (CheckReadiness carries the volt). Ready
+ * Connections tab renders nothing (CheckReadiness carries the primary action). Ready
  * and never run, or the last check failed: a primary Run check. With a
- * result shown: a secondary Run again (the VerdictCard holds the volt).
+ * result shown: a secondary Run again (the VerdictCard holds the signal).
  */
 export function RunButton() {
   const { busy, shown, missing, run, defaultTab } = useMerchantRun();

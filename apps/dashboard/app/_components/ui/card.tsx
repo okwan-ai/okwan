@@ -2,7 +2,7 @@ import type { AriaAttributes, ElementType, ReactNode } from "react";
 
 /**
  * Every bordered block on a page is a Card, a Table, an EmptyState (dashed),
- * the navy AgentPanel or the VerdictCard. A Card is a surface with a hairline;
+ * the night AgentPanel or the VerdictCard. A Card is a surface with a hairline;
  * `flush` clips its corners for a table or list that runs edge to edge.
  */
 export function Card({

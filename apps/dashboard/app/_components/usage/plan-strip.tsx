@@ -8,7 +8,7 @@ import { planState, resetAfter, type Usage } from "@/lib/usage-shape";
  * that spends it); at the limit it states the consequence (a 402 on REST
  * and checks, an error result for an agent) and the reset instant from the
  * API's month start, never the browser clock. The sidebar meter stays the
- * always-on gauge. Never volt; warn is ink, danger is danger.
+ * always-on gauge. Never the signal yellow; warn is ink, danger is danger.
  */
 export function PlanStrip({ usage }: { usage: Usage | null }) {
   if (!usage || usage.plan.unmetered) return null;

@@ -4,7 +4,7 @@
  * per merchant is the key, never the client. Every snippet keeps the
  * `okw_…` placeholder: a key is shown once at issue and no page holds one.
  *
- * Pure: strings only, so the client tabs and the navy panel share it.
+ * Pure: strings only, so the client tabs and the night panel share it.
  *
  * Client command and file forms come from the vendors' docs, not this
  * repo, and change between releases. Each lives here once so a fix is one
@@ -62,14 +62,16 @@ export const MCP_CLIENTS: McpClient[] = [
     via: "one command; native HTTP with a header",
     needs: "The Claude Code CLI, signed in.",
     steps: [
-      "In a terminal where **Claude Code** is installed, run the command with the key in place of `okw_…`. Add `--scope user` to keep the server across projects.",
+      "In a terminal where **Claude Code** is installed (PowerShell, Terminal or any shell), run the command with the key in place of `okw_…`. It is one line, and `--scope user` keeps the server across projects.",
       "Start `claude` and type **/mcp**: the server shows as connected, with its four tools.",
       "Ask it the question below.",
     ],
     snippetLabel: "Terminal",
+    // One line on purpose: a trailing backslash continues a line in bash and
+    // zsh but not in PowerShell, where the second line ran as its own command.
     snippet: (apiBase, server) =>
-      [`claude mcp add --transport http ${server} ${mcpUrl(apiBase)} \\`, `  --header "Authorization: Bearer okw_…"`].join("\n"),
-    docs: { label: "Claude Code: MCP", href: "https://docs.claude.com/en/docs/claude-code/mcp" },
+      `claude mcp add --transport http ${server} --scope user ${mcpUrl(apiBase)} --header "Authorization: Bearer okw_…"`,
+    docs: { label: "Claude Code: MCP", href: "https://code.claude.com/docs/en/mcp" },
   },
   {
     id: "cursor",

@@ -20,7 +20,7 @@ const LABEL: Record<View, string> = {
  * The same result on the channels that exist hosted: the MCP tool call
  * (okwan_reconcile with name "rails"; the hosted server has no
  * reconcile_across_rails), the REST route, a prompt that hands the work to
- * an agent, and the MCP client config. The page's one navy panel (§2).
+ * an agent, and the MCP client config. The page's one night panel (§2).
  *
  * The key is always a placeholder: a key is shown once at issue, and this
  * panel never holds one; the footer names whose key goes in its place.
@@ -58,24 +58,24 @@ export function AgentPanel({ apiBase, outcome, views = ["mcp", "rest", "prompt"]
   };
 
   return (
-    <section id={id} aria-label="Same result for agents" className="min-w-0 scroll-mt-6 overflow-hidden rounded-xl bg-navy text-canvas">
+    <section id={id} aria-label="Same result for agents" className="min-w-0 scroll-mt-6 overflow-hidden rounded-xl bg-night text-canvas">
       <div className="flex items-center gap-2 border-b border-canvas/15 py-1.5 pr-1.5 pl-4">
         <p className="hidden shrink-0 text-xs font-medium text-canvas/80 sm:block">Same result for your agents</p>
-        <ReadOnlyChip tone="navy" />
+        <ReadOnlyChip tone="night" />
         {/* Scrolls sideways on a phone; the padding keeps the focus ring inside the clip. */}
         <div className="-m-1 min-w-0 flex-1 overflow-x-auto p-1 [scrollbar-width:none]">
-          <Segmented tone="navy" label="Channel" value={view} onChange={(k) => setView(k as View)} items={views.map((v) => ({ key: v, label: LABEL[v] }))} />
+          <Segmented tone="night" label="Channel" value={view} onChange={(k) => setView(k as View)} items={views.map((v) => ({ key: v, label: LABEL[v] }))} />
         </div>
         <span className="shrink-0 [&_button]:text-canvas/80 [&_button:focus-visible]:outline-canvas [&_button:hover]:bg-canvas/10 [&_button:hover]:text-canvas">
           <CopyButton value={code[view]} label={`Copy ${LABEL[view]}`} />
         </span>
       </div>
-      {/* Focusable so a keyboard can scroll a long line; the ring is light on navy.
+      {/* Focusable so a keyboard can scroll a long line; the ring is light on night.
           A prompt wraps; code keeps its lines and fades at the edge on a phone. */}
       <pre
         tabIndex={0}
         aria-label={LABEL[view]}
-        className={`overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed text-sky focus-visible:outline-canvas focus-visible:-outline-offset-2 ${
+        className={`overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed text-night-ink focus-visible:outline-canvas focus-visible:-outline-offset-2 ${
           view === "prompt" ? "whitespace-pre-wrap break-words" : "whitespace-pre [mask-image:linear-gradient(to_right,black_90%,transparent)] sm:[mask-image:none]"
         }`}
       >

@@ -46,7 +46,7 @@ async function RunAllReady() {
   const runs = await storedRuns();
   const ready = (runs ?? []).filter((r) => eligible(r.merchant)).map((r) => ({ id: r.merchant.tenant.id, name: r.merchant.tenant.name }));
   // Secondary always: the hero figure or the setup checklist's next step
-  // carries the view's one volt element (§2).
+  // carries the view's one signal element (§2).
   return <RunAll merchants={ready} variant="secondary" />;
 }
 

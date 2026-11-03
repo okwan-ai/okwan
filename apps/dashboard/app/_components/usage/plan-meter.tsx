@@ -1,12 +1,12 @@
 import type { Usage } from "@/lib/usage-shape";
 import { planState } from "@/lib/usage-shape";
 
-/** The month against the plan. The fill carries the state (navy → warn →
+/** The month against the plan. The fill carries the state (trace → warn →
  *  danger); the track is a lighter step of the same hue; the text and a
  *  symbol say the same, so the bar is never the only carrier. */
 export function PlanMeter({ plan, compact = false }: { plan: Usage["plan"]; compact?: boolean }) {
   const s = planState(plan);
-  const fill = { ok: "bg-navy", warn: "bg-ink", danger: "bg-danger" }[s.state];
+  const fill = { ok: "bg-trace", warn: "bg-ink", danger: "bg-danger" }[s.state];
   const mark = { ok: "", warn: "!", danger: "✕" }[s.state];
   return (
     <div className="min-w-0">
@@ -22,7 +22,7 @@ export function PlanMeter({ plan, compact = false }: { plan: Usage["plan"]; comp
           aria-valuemax={plan.limit}
           aria-valuenow={Math.min(plan.used, plan.limit)}
           aria-valuetext={s.text}
-          className={`mt-1 overflow-hidden rounded-full bg-navy/10 ${compact ? "h-1.5" : "h-2"}`}
+          className={`mt-1 overflow-hidden rounded-full bg-night/10 ${compact ? "h-1.5" : "h-2"}`}
         >
           <div className={`h-full rounded-full ${fill}`} style={{ width: `${s.share * 100}%` }} />
         </div>

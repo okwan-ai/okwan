@@ -8,7 +8,7 @@ import { LOGOS } from "./brand-logos";
  * 2026-10-05, which supersedes the monochrome entry of 2026-10-04): a
  * connected PayPal shows PayPal's own logo. On a white tile (`tile`) with a
  * hairline border, 22% radius, the logo at 62% of the tile, so a third
- * party's colours sit on neutral ground and never on volt, which stays
+ * party's colours sit on neutral ground and never on the signal yellow, which stays
  * Okwan's only accent (§2). Tiles of 40, 32 or 24px and a bare 16px logo;
  * nothing smaller.
  *
@@ -36,7 +36,7 @@ import { LOGOS } from "./brand-logos";
  * white tile (ink-outlined when bare), never a filled square, so it takes
  * the same states; adding a logo is one entry in brand-logos.ts. The mark
  * is decorative (`aria-hidden`); the name beside it is the text. Never on
- * volt, in a finding sentence, in Okwan's own branding or on signed-out pages.
+ * the signal yellow, in a finding sentence, in Okwan's own branding or on signed-out pages.
  */
 
 /** Marks for MCP clients, keyed by the recipe id (lib/mcp-clients.ts). */

@@ -120,7 +120,7 @@ function Result({ shown, older, saved, newKeys, apiBase }: { shown: Shown; older
               : <> · <strong className="font-semibold">{formatMinor(s.overcollected_minor, cur)} owed back</strong></>) : null}
           </>
           : `No order taken twice in ${s.orders.toLocaleString("en-US")} checked.`}
-        leftFooter={<span className="[&_button]:text-ink"><RunStamp shown={shown} older={older} saved={saved} /></span>}
+        leftFooter={<RunStamp shown={shown} older={older} saved={saved} />}
         counts={<>
           <p>
             <span className="text-2xl font-semibold tabular-nums">{s.orders.toLocaleString("en-US")}</span>
@@ -163,7 +163,7 @@ function Result({ shown, older, saved, newKeys, apiBase }: { shown: Shown; older
 
 /** When the shown check ran, from where, its id, and the way to the saved
  *  checks (or back to the latest, for an older one). Sits inside the
- *  VerdictCard, so on volt the copy control is forced to ink. */
+ *  VerdictCard, whose night panel sets the copy control's colour. */
 function RunStamp({ shown, older, saved }: { shown: Shown; older: boolean; saved: number }) {
   const runId = shown.runId;
   return (

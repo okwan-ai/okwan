@@ -51,7 +51,7 @@ export function UsageChart({ days, title, captionHidden = false }: { days: Day[]
               >
                 <span
                   aria-hidden
-                  className={`block w-full max-w-6 rounded-t-[4px] ${active === i ? "bg-ink" : "bg-navy"} ${d.total === 0 ? "opacity-0" : ""}`}
+                  className={`block w-full max-w-6 rounded-t-[4px] ${active === i ? "bg-ink" : "bg-trace"} ${d.total === 0 ? "opacity-0" : ""}`}
                   style={{ height: `${Math.max(h, d.total ? 2 : 0)}%` }}
                 />
                 {i === peak && d.total > 0 && active !== i && (

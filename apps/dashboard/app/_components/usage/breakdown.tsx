@@ -19,8 +19,8 @@ export function Breakdown({ title, rows, empty, hrefs }: { title: string; rows: 
                 <span className="ml-1 font-normal text-ink-soft">{Math.round(r.share * 100)}%</span>
               </span>
             </span>
-            <span aria-hidden className="mt-1 block h-1.5 overflow-hidden rounded-full bg-navy/10">
-              <span className="block h-full rounded-full bg-navy" style={{ width: `${Math.max(r.share * 100, 1)}%` }} />
+            <span aria-hidden className="mt-1 block h-1.5 overflow-hidden rounded-full bg-night/10">
+              <span className="block h-full rounded-full bg-night" style={{ width: `${Math.max(r.share * 100, 1)}%` }} />
             </span>
           </>
         );

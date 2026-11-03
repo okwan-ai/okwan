@@ -4,7 +4,7 @@ import { Fragment, type ReactNode } from "react";
 export type Crumb = { href: string; label: string };
 
 /**
- * The page's title row: an optional trail back, the Fraunces title (with
+ * The page's title row: an optional trail back, the title (with
  * an optional icon), one line of description, a meta row, and at most one
  * primary and one secondary action on the right, top-aligned with the title.
  * Buttons that spend requests carry their own cost note.
@@ -51,7 +51,7 @@ export function PageHeader({
         )}
         <div className="flex items-center gap-3">
           {icon}
-          <h1 className="font-display text-3xl font-normal tracking-tight sm:text-4xl">{title}</h1>
+          <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.03em] sm:text-[32px]">{title}</h1>
         </div>
         {description && <p className="mt-2 line-clamp-2 text-sm text-ink-soft">{description}</p>}
         {meta && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-soft">{meta}</div>}

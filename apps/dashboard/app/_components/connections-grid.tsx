@@ -122,7 +122,7 @@ export function ConnectionsGrid({ connectors, tenantId, tenantKey, fold = false 
   const test = current ? tests[`${tenantKey}:${current.name}`] : undefined;
   const corner = test?.status === "failed" ? "alert" : test?.status === "rows" || test?.status === "empty" ? "ok" : undefined;
 
-  // After a success the sheet's one volt moves on: the next system the check
+  // After a success the sheet's one primary action moves on: the next system the check
   // still needs (fold grids only), else Done.
   const upNext = current && fold ? missingForCheck(connectors, [...landed, current.name])[0] : undefined;
   const next = sheet && isSuccess(sheet) ? (
