@@ -29,6 +29,19 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Content-Type-Options", value: "nosniff" },
+          // HTTPS only, for two years, on app.okwan.ai and below it.
+          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+          // The policy covers what never needs scripts to be loosened: no
+          // framing, no plugins, no foreign <base>, forms post only here.
+          // Scripts and styles are left to Next's own handling rather than
+          // a nonce scheme this app has no use for yet.
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
+          },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+          // An account's pages are nobody's search result.
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
         ],
       },
     ];

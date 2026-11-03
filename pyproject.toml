@@ -16,7 +16,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.6"]
+# ruff pinned to a minor: its default rules grow between releases, and CI
+# lints every file a change touches.
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.17,<0.18"]
 
 [tool.setuptools.package-data]
 okwan_vault = ["*.sql"]
@@ -27,6 +29,15 @@ packages = { find = { where = ["packages/core", "packages/connectors/whatsapp", 
 [tool.ruff]
 line-length = 90
 target-version = "py312"
+
+[tool.ruff.lint]
+# Depends() in a parameter default is how FastAPI declares a dependency.
+extend-ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Import order is load order there: connectors register before the
+# reconciliations and tables that are validated against them.
+"apps/api/okwan_api/main.py" = ["I001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

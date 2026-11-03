@@ -38,7 +38,7 @@ import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.admin import build_router as build_admin_router
 from okwan_api.signup import build_router as build_signup_router
 from okwan_api.auth import (
-    check_quota, close_store, current_tenant, load_credentials, meter, open_store,
+    check_quota, close_store, load_credentials, meter, open_store,
 )
 from okwan_query.catalog import tables_for
 from okwan_query.mcp_http import build_server as build_mcp_server
@@ -259,6 +259,12 @@ async def healthz() -> dict[str, Any]:
 
 
 # Last, so the document it builds sees every route above.
-from okwan_api.docs import install as _install_docs  # noqa: E402
+from okwan_api.docs import install as _install_docs
 
 _install_docs(app)
+
+# Outermost: the size cap and protective headers cover every route and
+# the MCP mount, and an oversized body is refused before anything parses it.
+from okwan_api.edge import Edge
+
+app.add_middleware(Edge)
