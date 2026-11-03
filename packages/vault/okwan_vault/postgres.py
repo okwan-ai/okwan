@@ -484,6 +484,24 @@ class PostgresStore:
                     raise AccountRefused(f"{email} is already taken") from None
                 raise AccountRefused(f"{tenant_id} already has an account") from None
 
+    async def reset_password(self, email: str, password_hash: str) -> str:
+        """Replace a login's password and end every session it holds.
+
+        One transaction: a session opened with the old password must not
+        outlive the change. A tenant has at most one login, so the
+        tenant's sessions are exactly this login's.
+        """
+        async with self.pool.acquire() as con, con.transaction():
+            tenant_id = await con.fetchval(
+                "UPDATE accounts SET password_hash = $2 WHERE email = $1 "
+                "RETURNING tenant_id",
+                email, password_hash,
+            )
+            if tenant_id is None:
+                raise AccountRefused(f"no account for {email}")
+            await con.execute("DELETE FROM sessions WHERE tenant_id = $1", tenant_id)
+        return tenant_id
+
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
     ) -> None:
