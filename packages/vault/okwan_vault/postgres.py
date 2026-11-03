@@ -8,11 +8,21 @@ connector at all.
 
 Key lookup is by hash with a partial index on active keys, so
 authenticating a request stays O(1) as tenants accumulate.
+
+Tenants are kept apart twice. Every query names its tenant in a WHERE
+clause, and every read or write of a tenant's own data also runs as the
+restricted TENANT_ROLE inside a transaction scoped to that tenant, where
+row-level security (schema.sql) hides every other tenant's rows. Either
+wall alone keeps a tenant's data from another; tests/test_tenant_rls.py
+proves each one, and scripts/plant_leaks.py shows each holding while the
+other is broken.
 """
 from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -22,10 +32,40 @@ from . import apikey
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
-from .models import ApiKey, RUNS_KEPT, RunRecord, SealedCredential, Tenant
+from .models import RUNS_KEPT, ApiKey, RunRecord, SealedCredential, Tenant
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
+
+#: The role every read and write of a tenant's own data runs as. It cannot
+#: log in, owns nothing, does not bypass row-level security, and holds
+#: privileges on TENANT_TABLES only.
+TENANT_ROLE = "okwan_tenant"
+
+#: Tables holding a tenant's own data. Each has row-level security with one
+#: policy: a row is visible, and may be written, only while its tenant_id
+#: is in the transaction's scope.
+TENANT_TABLES = ("credentials", "usage", "plans", "reconciliation_runs")
+
+
+class IsolationUnavailable(RuntimeError):
+    """The database cannot enforce tenant isolation; refuse to serve."""
+
+
+async def _enter_scope(con, tenant_ids: Iterable[str]) -> None:
+    """Become TENANT_ROLE, limited to these tenants, until the transaction ends.
+
+    Both settings are transaction-local, so a pooled connection goes back
+    to the pool as the login role with no scope: nothing one request sets
+    can be inherited by the next. One round trip for both.
+    """
+    ids = list(tenant_ids)
+    if any("," in t for t in ids):
+        raise ValueError("a tenant id cannot contain a comma")
+    await con.execute(
+        "SELECT set_config('okwan.tenant_ids', $1, true), set_config('role', $2, true)",
+        ",".join(ids), TENANT_ROLE,
+    )
 
 
 class _Lost(Exception):
@@ -54,7 +94,41 @@ class PostgresStore:
         if migrate:
             async with self._pool.acquire() as con:
                 await con.execute(SCHEMA)
+        await self._check_isolation()
         return self
+
+    async def _check_isolation(self) -> None:
+        """Fail closed: never serve while the database could not keep
+        tenants apart. Checked on every connect, migrating or not."""
+        async with self.pool.acquire() as con:
+            role = await con.fetchrow(
+                "SELECT rolsuper, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = $1",
+                TENANT_ROLE,
+            )
+            unprotected = await con.fetch(
+                "SELECT c.relname FROM pg_class c "
+                "WHERE c.relname = ANY($1::text[]) AND c.relnamespace = current_schema()::regnamespace "
+                "AND NOT (c.relrowsecurity AND EXISTS ("
+                " SELECT 1 FROM pg_policies p WHERE p.schemaname = current_schema()"
+                " AND p.tablename = c.relname AND p.policyname = 'tenant_scope'))",
+                list(TENANT_TABLES),
+            )
+        if role is None:
+            raise IsolationUnavailable(f"role {TENANT_ROLE} does not exist; run the migration")
+        if role["rolsuper"] or role["rolbypassrls"] or role["rolcanlogin"]:
+            raise IsolationUnavailable(
+                f"role {TENANT_ROLE} must be NOSUPERUSER NOBYPASSRLS NOLOGIN"
+            )
+        if unprotected:
+            names = ", ".join(r["relname"] for r in unprotected)
+            raise IsolationUnavailable(f"row-level security is off for: {names}")
+
+    @asynccontextmanager
+    async def _scoped(self, *tenant_ids: str) -> AsyncIterator[asyncpg.Connection]:
+        """A connection in a transaction that can see only these tenants' data."""
+        async with self.pool.acquire() as con, con.transaction():
+            await _enter_scope(con, tenant_ids)
+            yield con
 
     async def close(self) -> None:
         if self._pool is not None:
@@ -152,53 +226,65 @@ class PostgresStore:
             tenant_id=tenant_id, connector=connector, field_name=field_name,
             ciphertext=b"", wrapped_key=b"", key_id=self._master.key_id,
         )
-        await self.pool.execute(
-            "INSERT INTO credentials "
-            "(tenant_id, connector, field_name, ciphertext, wrapped_key, key_id) "
-            "VALUES ($1, $2, $3, $4, $5, $6) "
-            "ON CONFLICT (tenant_id, connector, field_name) DO UPDATE SET "
-            "ciphertext = EXCLUDED.ciphertext, "
-            "wrapped_key = EXCLUDED.wrapped_key, "
-            "key_id = EXCLUDED.key_id, updated_at = now()",
-            tenant_id, connector, field_name,
-            seal(data_key, value.encode(), aad=record.aad),
-            self._master.wrap(data_key),
-            self._master.key_id,
-        )
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "INSERT INTO credentials "
+                "(tenant_id, connector, field_name, ciphertext, wrapped_key, key_id) "
+                "VALUES ($1, $2, $3, $4, $5, $6) "
+                "ON CONFLICT (tenant_id, connector, field_name) DO UPDATE SET "
+                "ciphertext = EXCLUDED.ciphertext, "
+                "wrapped_key = EXCLUDED.wrapped_key, "
+                "key_id = EXCLUDED.key_id, updated_at = now()",
+                tenant_id, connector, field_name,
+                seal(data_key, value.encode(), aad=record.aad),
+                self._master.wrap(data_key),
+                self._master.key_id,
+            )
 
     async def credentials_for(
         self, tenant_id: str, connector: str, fields: tuple[str, ...]
     ) -> dict[str, str]:
-        rows = await self.pool.fetch(
-            "SELECT field_name, ciphertext, wrapped_key, key_id FROM credentials "
-            "WHERE tenant_id = $1 AND connector = $2 AND field_name = ANY($3)",
-            tenant_id, connector, list(fields),
-        )
-        found = {r["field_name"]: r for r in rows}
-        out: dict[str, str] = {}
-        for name in fields:
-            row = found.get(name)
-            if row is None:
-                out[name] = ""
-                continue
-            record = SealedCredential(
-                tenant_id=tenant_id, connector=connector, field_name=name,
-                ciphertext=bytes(row["ciphertext"]),
-                wrapped_key=bytes(row["wrapped_key"]),
-                key_id=row["key_id"],
+        return (await self.credentials_many(tenant_id, {connector: fields}))[connector]
+
+    async def credentials_many(
+        self, tenant_id: str, wanted: dict[str, tuple[str, ...]]
+    ) -> dict[str, dict[str, str]]:
+        """Several connectors' credentials in one scoped read: what a query
+        or reconciliation loads up front. A missing field reads as ""."""
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                "SELECT connector, field_name, ciphertext, wrapped_key, key_id FROM credentials "
+                "WHERE tenant_id = $1 AND connector = ANY($2::text[])",
+                tenant_id, list(wanted),
             )
-            data_key = self._master.unwrap(record.wrapped_key)
-            out[name] = open_sealed(data_key, record.ciphertext, aad=record.aad).decode()
+        found = {(r["connector"], r["field_name"]): r for r in rows}
+        out: dict[str, dict[str, str]] = {}
+        for connector, fields in wanted.items():
+            out[connector] = {}
+            for name in fields:
+                row = found.get((connector, name))
+                out[connector][name] = "" if row is None else self._open(tenant_id, row)
         return out
+
+    def _open(self, tenant_id: str, row) -> str:
+        record = SealedCredential(
+            tenant_id=tenant_id, connector=row["connector"], field_name=row["field_name"],
+            ciphertext=bytes(row["ciphertext"]),
+            wrapped_key=bytes(row["wrapped_key"]),
+            key_id=row["key_id"],
+        )
+        data_key = self._master.unwrap(record.wrapped_key)
+        return open_sealed(data_key, record.ciphertext, aad=record.aad).decode()
 
     async def delete_credential(
         self, tenant_id: str, connector: str, field_name: str
     ) -> None:
-        await self.pool.execute(
-            "DELETE FROM credentials "
-            "WHERE tenant_id = $1 AND connector = $2 AND field_name = $3",
-            tenant_id, connector, field_name,
-        )
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "DELETE FROM credentials "
+                "WHERE tenant_id = $1 AND connector = $2 AND field_name = $3",
+                tenant_id, connector, field_name,
+            )
 
     # ── usage ───────────────────────────────────────────────────────
 
@@ -209,54 +295,45 @@ class PostgresStore:
         amplification the moment anyone has traffic, and no plan bills by
         the second.
         """
-        await self.pool.execute(
-            "INSERT INTO usage (tenant_id, hour, surface, requests) "
-            "VALUES ($1, $2, $3, 1) "
-            "ON CONFLICT (tenant_id, hour, surface) DO UPDATE SET "
-            "requests = usage.requests + 1",
-            tenant_id, hour_bucket(), surface,
-        )
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "INSERT INTO usage (tenant_id, hour, surface, requests) "
+                "VALUES ($1, $2, $3, 1) "
+                "ON CONFLICT (tenant_id, hour, surface) DO UPDATE SET "
+                "requests = usage.requests + 1",
+                tenant_id, hour_bucket(), surface,
+            )
 
     async def usage_since(self, root_id: str, since) -> int:
         """Requests across a tenant and everything it provisioned.
 
-        Recursive rather than a join on parent_id: the hierarchy is two
-        levels today but the query should not be the thing that breaks
-        when a reseller tier appears.
+        The subtree is read as the login role (the hierarchy is identity,
+        not a tenant's data), then the counters as TENANT_ROLE scoped to
+        exactly that subtree, in one transaction.
         """
-        return await self.pool.fetchval(
-            """
-            WITH RECURSIVE subtree AS (
-                SELECT id FROM tenants WHERE id = $1
-                UNION ALL
-                SELECT t.id FROM tenants t JOIN subtree s ON t.parent_id = s.id
+        async with self.pool.acquire() as con, con.transaction():
+            ids = await _subtree(con, root_id)
+            await _enter_scope(con, ids)
+            return await con.fetchval(
+                "SELECT COALESCE(SUM(requests), 0) FROM usage "
+                "WHERE tenant_id = ANY($1::text[]) AND hour >= $2",
+                ids, since,
             )
-            SELECT COALESCE(SUM(u.requests), 0)
-            FROM usage u JOIN subtree s ON s.id = u.tenant_id
-            WHERE u.hour >= $2
-            """,
-            root_id, since,
-        )
 
     async def usage_buckets(
         self, root_id: str, since
     ) -> list[tuple[str, datetime, str, int]]:
         """The hourly counters behind `usage_since`, per tenant and surface,
         so a dashboard can show where a subtree's allowance went."""
-        rows = await self.pool.fetch(
-            """
-            WITH RECURSIVE subtree AS (
-                SELECT id FROM tenants WHERE id = $1
-                UNION ALL
-                SELECT t.id FROM tenants t JOIN subtree s ON t.parent_id = s.id
+        async with self.pool.acquire() as con, con.transaction():
+            ids = await _subtree(con, root_id)
+            await _enter_scope(con, ids)
+            rows = await con.fetch(
+                "SELECT tenant_id, hour, surface, requests FROM usage "
+                "WHERE tenant_id = ANY($1::text[]) AND hour >= $2 "
+                "ORDER BY tenant_id, hour, surface",
+                ids, since,
             )
-            SELECT u.tenant_id, u.hour, u.surface, u.requests
-            FROM usage u JOIN subtree s ON s.id = u.tenant_id
-            WHERE u.hour >= $2
-            ORDER BY u.tenant_id, u.hour, u.surface
-            """,
-            root_id, since,
-        )
         return [(r["tenant_id"], r["hour"], r["surface"], r["requests"]) for r in rows]
 
     # ── reconciliation runs ─────────────────────────────────────────
@@ -271,7 +348,7 @@ class PostgresStore:
         construction, never by a job that might not run."""
         run_id = f"run_{uuid.uuid4().hex[:16]}"
         try:
-            async with self.pool.acquire() as con, con.transaction():
+            async with self._scoped(tenant_id) as con:
                 row = await con.fetchrow(
                     "INSERT INTO reconciliation_runs (id, tenant_id, kind, name, surface, "
                     "status, started_at, finished_at, summary, rows, error) "
@@ -295,37 +372,41 @@ class PostgresStore:
     async def list_runs(
         self, tenant_id: str, name: str | None = None, limit: int = 20
     ) -> list[RunRecord]:
-        rows = await self.pool.fetch(
-            f"SELECT {_RUN_COLS_NO_ROWS} FROM reconciliation_runs "
-            "WHERE tenant_id = $1 AND ($2::text IS NULL OR name = $2) "
-            "ORDER BY finished_at DESC, id DESC LIMIT $3",
-            tenant_id, name, limit,
-        )
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                f"SELECT {_RUN_COLS_NO_ROWS} FROM reconciliation_runs "
+                "WHERE tenant_id = $1 AND ($2::text IS NULL OR name = $2) "
+                "ORDER BY finished_at DESC, id DESC LIMIT $3",
+                tenant_id, name, limit,
+            )
         return [_run(r) for r in rows]
 
     async def get_run(self, tenant_id: str, run_id: str) -> RunRecord | None:
-        row = await self.pool.fetchrow(
-            f"SELECT {_RUN_COLS} FROM reconciliation_runs WHERE tenant_id = $1 AND id = $2",
-            tenant_id, run_id,
-        )
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                f"SELECT {_RUN_COLS} FROM reconciliation_runs WHERE tenant_id = $1 AND id = $2",
+                tenant_id, run_id,
+            )
         return None if row is None else _run(row)
 
     async def latest_runs(
         self, tenant_ids: list[str], kind: str, name: str
     ) -> dict[str, RunRecord]:
-        rows = await self.pool.fetch(
-            f"SELECT DISTINCT ON (tenant_id) {_RUN_COLS} FROM reconciliation_runs "
-            "WHERE tenant_id = ANY($1::text[]) AND kind = $2 AND name = $3 "
-            "ORDER BY tenant_id, finished_at DESC, id DESC",
-            list(tenant_ids), kind, name,
-        )
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                f"SELECT DISTINCT ON (tenant_id) {_RUN_COLS} FROM reconciliation_runs "
+                "WHERE tenant_id = ANY($1::text[]) AND kind = $2 AND name = $3 "
+                "ORDER BY tenant_id, finished_at DESC, id DESC",
+                list(tenant_ids), kind, name,
+            )
         return {r["tenant_id"]: _run(r) for r in rows}
 
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
-        row = await self.pool.fetchrow(
-            "SELECT name, monthly_requests FROM plans WHERE tenant_id = $1",
-            tenant_id,
-        )
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                "SELECT name, monthly_requests FROM plans WHERE tenant_id = $1",
+                tenant_id,
+            )
         if row is None:
             return DEFAULT_PLAN, PLANS[DEFAULT_PLAN]
         return row["name"], row["monthly_requests"]
@@ -346,6 +427,7 @@ class PostgresStore:
                 raise PlanRefused(f"no such tenant: {tenant_id}")
             if row["parent_id"] is not None:
                 raise PlanRefused(f"{tenant_id} is not a root tenant; {NOT_ROOT_PLAN}")
+            await _enter_scope(con, [tenant_id])
             await con.execute(
                 "INSERT INTO plans (tenant_id, name, monthly_requests) "
                 "VALUES ($1, $2, $3) "
@@ -356,11 +438,12 @@ class PostgresStore:
             )
 
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]:
-        rows = await self.pool.fetch(
-            "SELECT connector, field_name FROM credentials WHERE tenant_id = $1 "
-            "ORDER BY connector, field_name",
-            tenant_id,
-        )
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                "SELECT connector, field_name FROM credentials WHERE tenant_id = $1 "
+                "ORDER BY connector, field_name",
+                tenant_id,
+            )
         out: dict[str, list[str]] = {}
         for r in rows:
             out.setdefault(r["connector"], []).append(r["field_name"])
@@ -524,6 +607,24 @@ class PostgresStore:
         await self.pool.execute(
             "DELETE FROM sessions WHERE token_hash = $1", token_hash
         )
+
+
+async def _subtree(con, root_id: str) -> list[str]:
+    """A tenant and everything below it. Recursive rather than a join on
+    parent_id: the hierarchy is two levels today but this should not be
+    the thing that breaks when a reseller tier appears."""
+    rows = await con.fetch(
+        """
+        WITH RECURSIVE subtree AS (
+            SELECT id FROM tenants WHERE id = $1
+            UNION ALL
+            SELECT t.id FROM tenants t JOIN subtree s ON t.parent_id = s.id
+        )
+        SELECT id FROM subtree
+        """,
+        root_id,
+    )
+    return [r["id"] for r in rows]
 
 
 # ── reconciliation runs: row shapes ─────────────────────────────────

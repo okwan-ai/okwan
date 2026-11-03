@@ -36,6 +36,9 @@ class Store(Protocol):
     async def credentials_for(
         self, tenant_id: str, connector: str, fields: tuple[str, ...]
     ) -> dict[str, str]: ...
+    async def credentials_many(
+        self, tenant_id: str, wanted: dict[str, tuple[str, ...]]
+    ) -> dict[str, dict[str, str]]: ...
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]: ...
     async def record_request(self, tenant_id: str, surface: str) -> None: ...
     async def usage_since(self, root_id: str, since) -> int: ...
@@ -182,6 +185,11 @@ class MemoryStore:
                 data_key, record.ciphertext, aad=record.aad
             ).decode()
         return out
+
+    async def credentials_many(
+        self, tenant_id: str, wanted: dict[str, tuple[str, ...]]
+    ) -> dict[str, dict[str, str]]:
+        return {c: await self.credentials_for(tenant_id, c, f) for c, f in wanted.items()}
 
     async def record_request(self, tenant_id: str, surface: str) -> None:
         key = (tenant_id, hour_bucket(), surface)
@@ -377,13 +385,12 @@ async def resolver_for(store: Store, tenant_id: str, connectors=None):
     """
     from okwan_core import all_connectors
 
-    loaded: dict[tuple[str, str], str] = {}
-    for connector in connectors or all_connectors():
-        creds = await store.credentials_for(
-            tenant_id, connector.name, connector.auth.required_fields
-        )
-        for field, value in creds.items():
-            loaded[(connector.name, field)] = value
+    wanted = {c.name: c.auth.required_fields for c in connectors or all_connectors()}
+    loaded: dict[tuple[str, str], str] = {
+        (connector, field): value
+        for connector, creds in (await store.credentials_many(tenant_id, wanted)).items()
+        for field, value in creds.items()
+    }
 
     def resolve(connector_name: str, fields: tuple[str, ...]) -> dict[str, str]:
         return {f: loaded.get((connector_name, f), "") for f in fields}
