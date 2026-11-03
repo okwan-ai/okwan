@@ -2,7 +2,7 @@
    and the only motion is CSS, which prefers-reduced-motion turns off. */
 
 const GITHUB = "https://github.com/okwan-ai/okwan";
-const API_DOCS = "https://okwan.onrender.com/docs";
+const API_DOCS = "https://api.okwan.ai/docs";
 const CONTACT = "mailto:info@globaltechstartup.com?subject=Okwan%20%E2%80%94%20reconciliation";
 
 /* ── Brand ──────────────────────────────────────────────────────── */
@@ -556,7 +556,7 @@ function How() {
 
 const CONNECTORS = ["Shopify", "Stripe", "PayPal", "Paystack", "PostgreSQL", "WhatsApp"];
 
-const QUERY = `curl https://okwan.onrender.com/v1/query \\
+const QUERY = `curl https://api.okwan.ai/v1/query \\
   -H "Authorization: Bearer okw_…" \\
   -d '{"sql": "SELECT o.name, o.total_price_minor, c.amount
                FROM shopify.orders o

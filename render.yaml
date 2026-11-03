@@ -1,6 +1,12 @@
+# Reference, not applied. The live services were created in the Render
+# dashboard, not from this Blueprint: the API is "okwan" (in My project,
+# serving okwan.onrender.com and api.okwan.ai) and the dashboard is
+# "okwan-dashboard" (okwan-dashboard.onrender.com and app.okwan.ai).
+# Editing a value here changes nothing until it is also set on that
+# service's Environment page. Names below match the live services.
 services:
   - type: web
-    name: okwan-api
+    name: okwan
     runtime: docker
     plan: starter
     region: oregon
@@ -18,7 +24,13 @@ services:
         sync: false
       # Where verification links point.
       - key: OKWAN_DASHBOARD_URL
-        value: https://okwan-dashboard.onrender.com
+        value: https://app.okwan.ai
+      # DNS-rebinding protection for the hosted MCP (okwan_api/main.py).
+      # Unset, it is off. Set it to both hosts the API answers on, then
+      # confirm an MCP client still connects; delete it if clients start
+      # getting invalid-host errors behind Render's proxy.
+      - key: OKWAN_ALLOWED_HOSTS
+        value: api.okwan.ai,okwan.onrender.com
       # Verification mail through Resend (okwan_api/mail.py). Set both in
       # the Render dashboard; with either missing, signup answers 503.
       # Use a sending-only key. OKWAN_MAIL_FROM must be an address on a
@@ -54,10 +66,11 @@ services:
         value: "22"
       - key: NEXT_TELEMETRY_DISABLED
         value: "1"
+      # Every MCP, REST and docs snippet on the dashboard is built from it.
       - key: OKWAN_API_URL
-        value: https://okwan.onrender.com
+        value: https://api.okwan.ai
       - key: OKWAN_DASHBOARD_SECRET
         fromService:
           type: web
-          name: okwan-api
+          name: okwan
           envVarKey: OKWAN_DASHBOARD_SECRET
