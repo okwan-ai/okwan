@@ -9,9 +9,19 @@ CREATE TABLE IF NOT EXISTS tenants (
 
 -- CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so on a
 -- database created before hierarchy the column arrives here instead.
--- Anything referencing it must come after this line.
-ALTER TABLE tenants ADD COLUMN IF NOT EXISTS parent_id text
-    REFERENCES tenants(id) ON DELETE CASCADE;
+-- Anything referencing it must come after this line. Checked first:
+-- ALTER TABLE takes the table's strongest lock even with nothing to add,
+-- and this file runs on every start.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'tenants'
+          AND column_name = 'parent_id'
+    ) THEN
+        ALTER TABLE tenants ADD COLUMN parent_id text REFERENCES tenants(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS tenants_parent_idx ON tenants (parent_id)
     WHERE parent_id IS NOT NULL;
@@ -118,3 +128,77 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
 -- The newest run per tenant and name is what every page asks for.
 CREATE INDEX IF NOT EXISTS reconciliation_runs_latest_idx
     ON reconciliation_runs (tenant_id, name, finished_at DESC);
+
+-- ── row-level security: the database keeps tenants apart too ────────
+-- Every read and write of a tenant's own data (credentials, usage, plans,
+-- stored runs) runs as okwan_tenant, inside one transaction that names
+-- the tenants it may touch (PostgresStore._scoped). The policy below lets
+-- that role see, and write, only rows whose tenant_id is in that scope.
+-- With no scope it sees nothing and can write nothing. The WHERE
+-- tenant_id in every query stays: two walls, each enough on its own.
+--
+-- The login role owns the tables and is not bound by the policy. It does
+-- only what comes before a tenant is known (resolving a key, a session or
+-- an address to a tenant), the tenant hierarchy, and migrations. The
+-- identity tables (tenants, api_keys, sessions, accounts, signups) hold
+-- hashes and names, not a tenant's data, and okwan_tenant cannot read them.
+--
+-- Creating the role needs CREATEROLE, which Neon's owner role has. Where
+-- the login role lacks it, startup fails with what an admin should run:
+-- the API never serves tenant data without this wall.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'okwan_tenant') THEN
+        CREATE ROLE okwan_tenant NOLOGIN NOINHERIT NOBYPASSRLS;
+    END IF;
+    -- From PostgreSQL 16 creating a role grants the right to administer it
+    -- but not to switch into it; switching is what the store does.
+    IF current_setting('server_version_num')::int >= 160000 THEN
+        IF NOT pg_has_role(current_user, 'okwan_tenant', 'SET') THEN
+            EXECUTE format('GRANT okwan_tenant TO %I WITH SET TRUE', current_user);
+        END IF;
+    ELSIF NOT pg_has_role(current_user, 'okwan_tenant', 'MEMBER') THEN
+        EXECUTE format('GRANT okwan_tenant TO %I', current_user);
+    END IF;
+EXCEPTION WHEN insufficient_privilege THEN
+    RAISE EXCEPTION 'cannot create or join the okwan_tenant role as %', current_user
+        USING HINT = format('As a database admin run: CREATE ROLE okwan_tenant NOLOGIN NOINHERIT; '
+                            'GRANT okwan_tenant TO %I;', current_user);
+END $$;
+
+-- Every step checks before it acts. This runs on every start, and ALTER
+-- TABLE and GRANT take locks that a running instance's queries, or
+-- autovacuum, would wait for or deadlock against; once the database is
+-- current, a start takes none of them.
+DO $$
+DECLARE
+    t text;
+    scope constant text :=
+        $s$tenant_id = ANY (string_to_array(current_setting('okwan.tenant_ids', true), ','))$s$;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs'] LOOP
+        IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
+                AND has_table_privilege('okwan_tenant', t, 'INSERT')
+                AND has_table_privilege('okwan_tenant', t, 'UPDATE')
+                AND has_table_privilege('okwan_tenant', t, 'DELETE')) THEN
+            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO okwan_tenant', t);
+        END IF;
+        IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass(quote_ident(t))) THEN
+            EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname = current_schema() AND tablename = t AND policyname = 'tenant_scope'
+        ) THEN
+            EXECUTE format('CREATE POLICY tenant_scope ON %I TO okwan_tenant USING (%s) WITH CHECK (%s)',
+                           t, scope, scope);
+        END IF;
+    END LOOP;
+    -- The identity tables: nothing for okwan_tenant, whatever was granted before.
+    FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups'] LOOP
+        IF has_table_privilege('okwan_tenant', t,
+                               'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+            EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);
+        END IF;
+    END LOOP;
+END $$;
