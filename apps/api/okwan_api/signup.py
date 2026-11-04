@@ -20,17 +20,23 @@ What keeps it a door rather than a hole:
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
-
 from okwan_vault import accounts
+from pydantic import BaseModel, Field
 
 from .auth import admin_actor, get_store
 from .mail import dashboard_url, deliver_verification, get_mailer
 from .ratelimit import (
-    SIGNIN_ADDRESS, SIGNIN_IP, SIGNUP_ADDRESS, SIGNUP_IP, VERIFY_IP, client_ip, enforce,
+    SIGNIN_ADDRESS,
+    SIGNIN_IP,
+    SIGNUP_ADDRESS,
+    SIGNUP_IP,
+    VERIFY_IP,
+    client_ip,
+    enforce,
     off_loop,
 )
 
@@ -62,6 +68,17 @@ async def _session(tenant_id: str) -> dict[str, Any]:
     return {"session": full, "tenant_id": tenant_id, "expires_at": expires_at.isoformat()}
 
 
+def signup_open() -> bool:
+    """Whether strangers may sign up. Outside dev, only when the operator
+    says so with OKWAN_SIGNUP_OPEN=true: mail working is necessary, not
+    sufficient. The privacy policy and terms come first (OKWAN_PROJECT.md
+    §10 item 27), and the same mailer also carries support escalations,
+    which should not have to wait for them."""
+    if os.environ.get("OKWAN_ENV", "dev") == "dev":
+        return True
+    return os.environ.get("OKWAN_SIGNUP_OPEN", "").strip().lower() == "true"
+
+
 def build_router() -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["accounts"])
 
@@ -70,6 +87,8 @@ def build_router() -> APIRouter:
         body: SignupIn, request: Request, background: BackgroundTasks
     ) -> dict[str, Any]:
         """Start a signup. The account exists only once the email is verified."""
+        if not signup_open():
+            raise HTTPException(503, "signup is not open yet")
         mailer = get_mailer()
         if mailer is None:
             raise HTTPException(503, "signup is not open yet: email verification "

@@ -54,7 +54,8 @@ STATIC_TAGS: list[tuple[str, str, str]] = [
     ("support", "Support",
      ("Okwan's support assistant: answers about your own account, reads it live and never "
      "changes it, and hands what it cannot settle to a person. Takes a key or a dashboard "
-     "session. Not metered.")),
+     "session. Messages are not metered; a connection test it runs counts as one request, "
+     "like Test in the dashboard.")),
     ("catalog", "Catalog",
      "Every connector and what its one declaration generates. Public."),
     ("system", "System", "Health of this API and its vault. Public."),

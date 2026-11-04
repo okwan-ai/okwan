@@ -36,6 +36,7 @@ table cannot point at something that no longer exists.
 | C27 | Every tool reads; the only write is a support ticket | `apps/api/okwan_api/support.py` (`TOOLS`, `READ_ONLY_TOOLS`) | `tests/test_support.py::test_every_tool_reads_except_escalate` |
 | C28 | The transcript is kept server-side and replayed exactly as produced | `apps/api/okwan_api/support.py` (`answer`), `packages/vault/okwan_vault/postgres.py` (`save_conversation`) | `tests/test_support.py::test_the_history_replays_exactly_as_produced` |
 | C29 | An escalation is never lost, mailed or not | `packages/vault/okwan_vault/cli.py` (`support list`) | `tests/test_support.py::test_without_mail_an_escalation_is_still_recorded` |
+| C30 | Strangers cannot sign up until the operator opens signup, even with mail working | `apps/api/okwan_api/signup.py` (`signup_open`) | `tests/test_signup.py::test_outside_dev_signup_opens_only_when_the_operator_says_so` |
 
 ## Secrets and credentials
 

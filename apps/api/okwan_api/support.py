@@ -251,7 +251,8 @@ TOOLS: list[dict[str, Any]] = [
                       "required": ["connector"], "additionalProperties": False}},
     {"name": "test_connection",
      "description": "Run the same one-row read the dashboard's Test button runs, with the "
-                    "saved credentials, and report whether the rail accepted them.",
+                    "saved credentials, and report whether the rail accepted them. Like "
+                    "Test, it counts as one request against the plan.",
      "input_schema": {"type": "object", "properties": {"connector": {"type": "string"},
                                                        "tenant_id": _TENANT},
                       "required": ["connector"], "additionalProperties": False}},
@@ -367,16 +368,22 @@ async def escalate(actor, conversation_id: str | None, tool_input: dict[str, Any
     ticket = await get_store().add_ticket(
         actor.id, conversation_id=conversation_id, severity=severity, category=category,
         summary=summary, notified=notified)
-    return {"ticket": ticket.id, "notified": notified,
-            "next": "A person at Okwan has the conversation and will follow up by email."
-                    if notified else
-                    "Recorded for a person at Okwan, who reviews every ticket."}
+    # Whether the mail went out is the operator's concern, not the
+    # customer's: the model hears the same thing either way.
+    return {"ticket": ticket.id,
+            "next": "A person at Okwan has this conversation and will follow up."}
 
 
 async def _notify(actor, conversation_id, severity, category, summary, recent) -> bool:
     to = os.environ.get("OKWAN_SUPPORT_ESCALATION_TO", "").strip()
     mailer = get_mailer()
-    if not to or mailer is None:
+    if not to:
+        logger.warning("support escalation for %s not mailed: OKWAN_SUPPORT_ESCALATION_TO "
+                       "is not set", actor.id)
+        return False
+    if mailer is None:
+        logger.warning("support escalation for %s not mailed: no mailer (RESEND_API_KEY "
+                       "and OKWAN_MAIL_FROM)", actor.id)
         return False
     lines = [
         f"Severity: {severity}   Category: {category}",
@@ -496,9 +503,11 @@ def build_router() -> APIRouter:
         """One customer message to the support assistant, and its reply.
 
         Session or key, like the administration routes; the assistant sees
-        only the caller's account and its merchants. Not metered: asking
-        for help must not use up a plan. Rate limited, because each message
-        is a model call. 503 until the assistant is switched on.
+        only the caller's account and its merchants. A message is not
+        metered: asking for help must not use up a plan. A connection test
+        the assistant runs is, like pressing Test in the dashboard. Rate
+        limited, because each message is a model call. 503 until the
+        assistant is switched on.
         """
         if not enabled():
             raise HTTPException(503, "the support assistant is not switched on yet")

@@ -389,13 +389,49 @@ async def test_an_escalation_is_recorded_and_mailed_to_the_owner(client, world, 
     assert "is_error" not in m.tool_results(1)[0]
 
 
-async def test_without_mail_an_escalation_is_still_recorded(client, world, store, model, monkeypatch):
+async def test_without_mail_an_escalation_is_still_recorded(client, world, store, model, monkeypatch,
+                                                         caplog):
     monkeypatch.delenv("OKWAN_SUPPORT_ESCALATION_TO", raising=False)
     model(turn(use("escalate", {"severity": "sev3", "category": "billing",
                                 "summary": "wants the pro plan"})), turn(text("Recorded.")))
-    ticket = (await ask(client, world, "upgrade me")).json()["ticket"]
+    with caplog.at_level("WARNING", logger="okwan_api.support"):
+        ticket = (await ask(client, world, "upgrade me")).json()["ticket"]
     found = next(t for t in await store.list_tickets() if t.id == ticket)
     assert found.notified is False
+    assert "OKWAN_SUPPORT_ESCALATION_TO is not set" in caplog.text
+    assert world.a.id in caplog.text
+
+
+async def test_without_a_mailer_the_log_says_so(client, world, model, monkeypatch, caplog):
+    from okwan_api import mail
+
+    monkeypatch.setenv("OKWAN_SUPPORT_ESCALATION_TO", "owner@okwan.test")
+    mail.set_mailer(None)
+    try:
+        model(turn(use("escalate", {"severity": "sev2", "category": "bug", "summary": "x"})),
+              turn(text("Recorded.")))
+        with caplog.at_level("WARNING", logger="okwan_api.support"):
+            await ask(client, world, "it broke")
+    finally:
+        mail._overridden = False
+    assert "no mailer" in caplog.text
+
+
+@pytest.mark.parametrize("mailed", [True, False])
+async def test_the_customer_hears_the_same_whether_or_not_mail_went_out(
+    client, world, model, monkeypatch, outbox, mailed
+):
+    """Delivery is the operator's concern: nothing in the model's view of the
+    escalation changes with it, so the customer is never told about it."""
+    if not mailed:
+        monkeypatch.delenv("OKWAN_SUPPORT_ESCALATION_TO", raising=False)
+    m = model(turn(use("escalate", {"severity": "sev3", "category": "other", "summary": "x"})),
+              turn(text("A person has it.")))
+    await ask(client, world, "please pass this to a person")
+    result = json.loads(m.tool_results(1)[0]["content"])
+    assert set(result) == {"ticket", "next"}
+    assert result["next"] == "A person at Okwan has this conversation and will follow up."
+    assert bool(outbox.sent) is mailed
 
 
 async def test_an_escalation_with_an_unknown_severity_is_refused(client, world, store, model, outbox):
