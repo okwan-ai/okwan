@@ -224,6 +224,18 @@ BEGIN
     END IF;
 END $$;
 
+-- When a session was last used: idle for SESSION_IDLE, it no longer signs in.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'sessions'
+          AND column_name = 'last_seen_at'
+    ) THEN
+        ALTER TABLE sessions ADD COLUMN last_seen_at timestamptz NOT NULL DEFAULT now();
+    END IF;
+END $$;
+
 -- Every operator action, append-only: the database refuses to change or
 -- remove a row, so the log cannot be quietly edited by the application.
 CREATE TABLE IF NOT EXISTS operator_actions (

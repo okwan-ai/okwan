@@ -9,7 +9,7 @@ import { cache } from "react";
  */
 
 export const SESSION_COOKIE = "okwan_session";
-const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // matches the API's SESSION_TTL
+const SESSION_MAX_AGE = 60 * 60 * 12; // matches the API's SESSION_TTL (12 hours)
 
 export function apiUrl(): string {
   return (process.env.OKWAN_API_URL ?? "http://localhost:8000").replace(/\/$/, "");

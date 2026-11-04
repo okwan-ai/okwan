@@ -153,7 +153,8 @@ nothing in Okwan moves money.
 ## Accounts
 - An account is a tenant. An ISV's account provisions a tenant per merchant
   (Merchants page). The account administers itself and its merchants, nothing else.
-- Sign-in is by email and password; sessions last 7 days. A forgotten password
+- Sign-in is by email and password. A sign-in ends after 30 minutes without
+  activity and 12 hours after signing in; the sign-in page says which. A forgotten password
   is reset by Okwan's operator: escalate as `account`.
 
 ## Privacy and account deletion

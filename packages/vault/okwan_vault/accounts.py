@@ -29,7 +29,15 @@ from datetime import UTC, datetime, timedelta
 SESSION_PREFIX = "oks"
 VERIFY_PREFIX = "okv"
 SIGNUP_TTL = timedelta(hours=24)
-SESSION_TTL = timedelta(days=7)
+#: A dashboard session ends 12 hours after sign-in, and after 30 minutes
+#: without a request: OWASP ASVS 4.0 V3.3.2 at level 2, for an app that
+#: holds payment credentials. API keys are machine credentials and do not
+#: time out; they are revoked.
+SESSION_TTL = timedelta(hours=12)
+SESSION_IDLE = timedelta(minutes=30)
+#: A session's last-seen time is written at most this often, so every
+#: request does not write a row; the idle limit is accurate to this much.
+SESSION_TOUCH = timedelta(seconds=60)
 MIN_PASSWORD = 12
 MAX_PASSWORD = 256
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
