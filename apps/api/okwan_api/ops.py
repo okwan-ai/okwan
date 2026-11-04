@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import html
 import os
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,6 +41,10 @@ from .ratelimit import OPS_UNLOCK, OPS_UNLOCK_IP, client_ip, enforce
 from .support import CATEGORY_LABELS, redact
 
 UNLOCK_FOR = timedelta(minutes=30)
+#: When this process started, so Health can say how long the deploy has run.
+STARTED = datetime.now(UTC)
+#: How far back Health looks for failed checks.
+HEALTH_DAYS = 7
 STATUSES = ("open", "answered", "resolved")
 _replay = totp.ReplayGuard()
 
@@ -199,6 +204,49 @@ async def _open_tickets() -> dict[str, int]:
     for t in await get_store().list_tickets(500, "open"):
         counts[t.tenant_id] = counts.get(t.tenant_id, 0) + 1
     return counts
+
+
+# ── health ─────────────────────────────────────────────────────────────
+
+def _switches() -> list[dict[str, Any]]:
+    """Which of the service's switches are on. Whether a variable is set,
+    never its value."""
+    from .mail import DevLogMailer
+    from .signup import signup_open
+    from .support import enabled as assistant_enabled
+
+    def has(name: str) -> bool:
+        return bool(os.environ.get(name, "").strip())
+
+    mailer = get_mailer()
+    mail = "off" if mailer is None else "dev log" if isinstance(mailer, DevLogMailer) else "on"
+    return [
+        {"name": "Mail", "state": mail, "ok": mail == "on",
+         "needs": "RESEND_API_KEY and OKWAN_MAIL_FROM"},
+        {"name": "Escalation inbox", "state": "on" if has("OKWAN_SUPPORT_ESCALATION_TO") else "off",
+         "ok": has("OKWAN_SUPPORT_ESCALATION_TO"), "needs": "OKWAN_SUPPORT_ESCALATION_TO"},
+        {"name": "Support assistant", "state": "on" if assistant_enabled() else "off",
+         "ok": assistant_enabled(), "needs": "ANTHROPIC_API_KEY"},
+        {"name": "Sign-up", "state": "open" if signup_open() else "closed",
+         # Closed is the intended state until the privacy policy and terms.
+         "ok": None, "needs": "OKWAN_SIGNUP_OPEN=true"},
+        {"name": "MCP host allowlist", "state": "on" if has("OKWAN_ALLOWED_HOSTS") else "off",
+         "ok": has("OKWAN_ALLOWED_HOSTS"), "needs": "OKWAN_ALLOWED_HOSTS"},
+        {"name": "Dashboard client addresses", "state": "on" if has("OKWAN_DASHBOARD_SECRET") else "off",
+         "ok": has("OKWAN_DASHBOARD_SECRET"), "needs": "OKWAN_DASHBOARD_SECRET"},
+    ]
+
+
+async def _vault() -> dict[str, Any]:
+    """The vault's kind and one round trip. A vault that is down never gets
+    here: the operator check above already needed it (and /healthz, which
+    the monitor polls, answers 503)."""
+    pool = getattr(get_store(), "_pool", None)
+    if pool is None:
+        return {"kind": "memory", "ms": None}
+    started = time.perf_counter()
+    await pool.fetchval("SELECT 1")
+    return {"kind": "postgres", "ms": round((time.perf_counter() - started) * 1000, 1)}
 
 
 class UnlockIn(BaseModel):
@@ -364,6 +412,54 @@ def build_router() -> APIRouter:
             "keys": sorted(keys, key=lambda k: k["issued"], reverse=True),
             "runs": [{**_run(r), "tenant_id": r.tenant_id} for r in runs],
             "tickets": tickets,
+        }
+
+    @router.get("/health")
+    async def health(op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
+        store = get_store()
+        since = datetime.now(UTC) - timedelta(days=HEALTH_DAYS)
+        tenants = await store.list_tenants()
+        by_id = {t.id: t for t in tenants}
+        ok = failed = 0
+        failures = []
+        # Through each tenant's own reads: one query per tenant, which is
+        # fine at today's size and keeps row-level security in the path.
+        for t in tenants:
+            for r in await store.list_runs(t.id, None, 20):
+                if r.finished_at < since:
+                    continue
+                if r.status == "ok":
+                    ok += 1
+                    continue
+                failed += 1
+                root = by_id.get(t.parent_id) if t.parent_id else t
+                failures.append({**_run(r), "tenant_id": t.id, "tenant": t.name,
+                                 "account_id": root.id if root else t.id,
+                                 "account": root.name if root else t.name})
+        failures.sort(key=lambda f: f["finished_at"], reverse=True)
+        tickets = await store.list_tickets(500, None)
+        not_mailed = [await _ticket_row(t) for t in tickets
+                      if not t.notified and t.status != "resolved"][:20]
+        near = []
+        for t in tenants:
+            if t.parent_id is not None:
+                continue
+            q = await quota(store, t.id)
+            if not q.unmetered and q.limit and q.used >= 0.8 * q.limit:
+                near.append({"id": t.id, "name": t.name, "plan": q.plan, "used": q.used, "limit": q.limit})
+        commit = os.environ.get("RENDER_GIT_COMMIT", "").strip()
+        await _log(op, "view_health")
+        return {
+            "service": {"commit": commit[:7] or None, "started_at": STARTED.isoformat(),
+                        "vault": await _vault()},
+            "switches": _switches(),
+            "runs": {"days": HEALTH_DAYS, "ok": ok, "failed": failed, "failures": failures[:50]},
+            "not_mailed": not_mailed,
+            "near_limit": sorted(near, key=lambda a: a["used"] / a["limit"], reverse=True),
+            "accounts": sum(t.parent_id is None for t in tenants),
+            "merchants": sum(t.parent_id is not None for t in tenants),
+            "open_tickets": sum(t.status == "open" for t in tickets),
+            "activity": [{**e, "at": e["at"].isoformat()} for e in await store.operator_log(15)],
         }
 
     @router.get("/log")

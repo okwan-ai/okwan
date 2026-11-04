@@ -33,6 +33,7 @@ ROUTES = [
     ("GET", "/v1/ops/log", None),
     ("GET", "/v1/ops/accounts", None),
     ("GET", "/v1/ops/accounts/{a}", None),
+    ("GET", "/v1/ops/health", None),
 ]
 #: A saved credential's value: it must never leave the vault through the console.
 STRIPE_VALUE = "sk_test_51ConsoleMustNeverShowThisValue"
@@ -414,6 +415,47 @@ async def test_a_merchant_or_unknown_id_is_not_an_account(client, world):
     for tenant_id in (world.shop.id, "ten_0000000000000000"):
         r = await client.get(f"/v1/ops/accounts/{tenant_id}", headers=_auth(world.ops))
         assert r.status_code == 404
+
+
+# ── health ─────────────────────────────────────────────────────────────
+
+async def test_health_shows_failed_checks_and_unmailed_escalations(client, world, store):
+    await _unlock(client, world)
+    h = (await client.get("/v1/ops/health", headers=_auth(world.ops))).json()
+    mine = [f for f in h["runs"]["failures"] if f["tenant_id"] == world.shop.id]
+    assert [(f["tenant"], f["account"], f["error"]) for f in mine] == [
+        ("Kofi's Store", "Acme ISV", "stripe answered 401")]
+    assert world.ticket_b.id in [t["id"] for t in h["not_mailed"]]
+    assert world.ticket_a.id not in [t["id"] for t in h["not_mailed"]]  # that one was mailed
+    assert h["service"]["vault"]["kind"] in ("memory", "postgres")
+    entry = (await store.operator_log())[0]
+    assert entry["action"] == "view_health"
+
+
+async def test_health_names_switches_but_never_their_values(client, world, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-HealthMustNotShowThis")
+    monkeypatch.setenv("OKWAN_ALLOWED_HOSTS", "api.okwan.test")
+    monkeypatch.delenv("OKWAN_DASHBOARD_SECRET", raising=False)
+    await _unlock(client, world)
+    r = await client.get("/v1/ops/health", headers=_auth(world.ops))
+    assert "HealthMustNotShowThis" not in r.text and "api.okwan.test" not in r.text
+    state = {s["name"]: s["state"] for s in r.json()["switches"]}
+    assert state["Support assistant"] == "on" and state["MCP host allowlist"] == "on"
+    assert state["Dashboard client addresses"] == "off"
+
+
+async def test_health_lists_accounts_near_their_limit(client, world, monkeypatch):
+    from okwan_vault.usage import Quota
+
+    real = ops.quota
+
+    async def near(store, tenant_id):
+        return Quota("growth", 1000, 900) if tenant_id == world.a.id else await real(store, tenant_id)
+
+    monkeypatch.setattr(ops, "quota", near)
+    await _unlock(client, world)
+    h = (await client.get("/v1/ops/health", headers=_auth(world.ops))).json()
+    assert [(a["id"], a["used"], a["limit"]) for a in h["near_limit"]] == [(world.a.id, 900, 1000)]
 
 
 def test_the_setup_file_carries_the_key_for_an_authenticator_app():

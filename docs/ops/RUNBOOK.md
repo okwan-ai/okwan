@@ -341,6 +341,14 @@ it is a 404.
   merchant's saved connections (by field name), its recent checks with
   their errors, keys by prefix, and its tickets. Nothing secret is ever
   shown: no credential value, no key. Opening an account is logged.
+- **Check health.** *Health* shows, in one place: failed checks across
+  every account in the last 7 days with their errors, escalations whose
+  email to you did not go out, accounts at 80% or more of their monthly
+  limit, which switches are on (mail, escalation inbox, assistant,
+  sign-up, MCP host allowlist, dashboard client addresses; never their
+  values), the deployed commit, the vault's round trip, and recent
+  console activity. The outside monitor lives on GitHub; Health links to
+  its runs and open incidents.
 - **Wrong code, or "too many attempts".** Codes change every 30 seconds
   and each works once; check the phone's clock is set automatically.
   Five unlock attempts in 15 minutes is the limit; after that, wait.

@@ -9,8 +9,10 @@ import { LockButton, UnlockForm } from "./console-actions";
 export const CONSOLE_TITLE = "Console";
 export const CONSOLE_DESCRIPTION = "Every account and every support request, across all customers. Only you can open this page.";
 
+type Section = "inbox" | "accounts" | "health";
+
 /** The console's sections, under its header. */
-export function ConsoleTabs({ active }: { active: "inbox" | "accounts" }) {
+export function ConsoleTabs({ active }: { active: Section }) {
   return (
     <div className="mb-6">
       <Tabs
@@ -18,6 +20,7 @@ export function ConsoleTabs({ active }: { active: "inbox" | "accounts" }) {
         items={[
           { href: "/ops", label: "Support inbox", active: active === "inbox" },
           { href: "/ops/accounts", label: "Accounts", active: active === "accounts" },
+          { href: "/ops/health", label: "Health", active: active === "health" },
         ]}
       />
     </div>
@@ -25,7 +28,7 @@ export function ConsoleTabs({ active }: { active: "inbox" | "accounts" }) {
 }
 
 /** The header every top-level console page shares. */
-export function ConsoleHeader({ op, lock, active }: { op: OperatorMe; lock: ReactNode; active: "inbox" | "accounts" }) {
+export function ConsoleHeader({ op, lock, active }: { op: OperatorMe; lock: ReactNode; active: Section }) {
   return (
     <>
       <PageHeader

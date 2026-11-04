@@ -87,6 +87,28 @@ export type AccountDetail = AccountRow & {
   tickets: TicketRow[];
 };
 
+export type Switch = { name: string; state: string; ok: boolean | null; needs: string };
+export type Activity = { at: string; operator: string; action: string; target: string | null; detail: Record<string, unknown> | null };
+
+export type Health = {
+  service: { commit: string | null; started_at: string; vault: { kind: "memory" | "postgres"; ms: number | null } };
+  switches: Switch[];
+  runs: {
+    days: number; ok: number; failed: number;
+    failures: (RunBrief & { tenant_id: string; tenant: string; account_id: string; account: string })[];
+  };
+  not_mailed: TicketRow[];
+  near_limit: { id: string; name: string; plan: string; used: number; limit: number }[];
+  accounts: number;
+  merchants: number;
+  open_tickets: number;
+  activity: Activity[];
+};
+
+export async function health() {
+  return api<Health>("/v1/ops/health", { session: await session() });
+}
+
 export function planLine(p: AccountRow["plan"]): string {
   return p.unmetered
     ? `${p.name} · ${p.used.toLocaleString("en-US")} this month, unmetered`
