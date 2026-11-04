@@ -267,26 +267,43 @@ function Bubble({ line }: { line: Line }) {
 /** The assistant writes light Markdown. Rendered from text, never as HTML:
  *  paragraphs, "- " lists, **bold**, `code` and links. */
 function Rich({ text }: { text: string }) {
-  const blocks = text.split(/\n{2,}/);
+  // Line by line, so a list right under a heading ("**How to fix it:**"
+  // then "- ...") is still a list: runs of list lines become one list, and
+  // runs of other lines one paragraph.
+  type Group = { kind: "p" | "ul" | "ol"; rows: string[] };
+  const groups: Group[] = [];
+  for (const line of text.split("\n")) {
+    const kind = /^\s*[-*] /.test(line) ? "ul" : /^\s*\d+\. /.test(line) ? "ol" : "p";
+    const last = groups[groups.length - 1];
+    if (!line.trim()) {
+      if (last && last.kind === "p") groups.push({ kind: "p", rows: [] });
+      continue;
+    }
+    if (last && last.kind === kind) {
+      last.rows.push(line);
+    } else {
+      groups.push({ kind, rows: [line] });
+    }
+  }
+  const shown = groups.filter((g) => g.rows.length);
   return (
     <div className="space-y-2.5">
-      {blocks.map((block, i) => {
-        const rows = block.split("\n");
-        if (rows.every((r) => /^\s*[-*] /.test(r))) {
+      {shown.map((g, i) => {
+        if (g.kind === "ul") {
           return (
             <ul key={i} className="list-disc space-y-1 pl-5">
-              {rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*[-*] /, "")} /></li>)}
+              {g.rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*[-*] /, "")} /></li>)}
             </ul>
           );
         }
-        if (rows.every((r) => /^\s*\d+\. /.test(r))) {
+        if (g.kind === "ol") {
           return (
             <ol key={i} className="list-decimal space-y-1 pl-5">
-              {rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*\d+\. /, "")} /></li>)}
+              {g.rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*\d+\. /, "")} /></li>)}
             </ol>
           );
         }
-        return <p key={i} className="whitespace-pre-wrap"><Inline text={block} /></p>;
+        return <p key={i} className="whitespace-pre-wrap"><Inline text={g.rows.join("\n")} /></p>;
       })}
     </div>
   );

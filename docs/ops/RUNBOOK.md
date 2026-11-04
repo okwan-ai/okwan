@@ -212,11 +212,16 @@ That refusal is deliberate: do not work around it.
 
 ### Signup answers 503
 
-"signup is not open yet". The API has no mailer: `RESEND_API_KEY` or
-`OKWAN_MAIL_FROM` is missing on the Render `okwan` service. Restore both
-and redeploy. If they are set and mail still does not arrive, Resend →
-*Domains*: the sending domain must be verified (SPF and DKIM) with click
-and open tracking off.
+"signup is not open yet". Either is the cause, on the Render `okwan`
+service:
+
+- `OKWAN_SIGNUP_OPEN` is not `true`. That is deliberate until the privacy
+  policy and terms are published; opening signup is the owner's call.
+- The API has no mailer: `RESEND_API_KEY` or `OKWAN_MAIL_FROM` is missing.
+
+If both are set and mail still does not arrive, Resend → *Domains*: the
+sending domain (`mail.okwan.ai`) must be verified, with click and open
+tracking off and TLS enforced.
 
 ### A customer's connection test fails *(Tier 1)*
 
@@ -285,7 +290,8 @@ bottom right) and at `POST /v1/support/messages`.
   everything else; nothing waits on the assistant.
 - **Escalations do not arrive.** `OKWAN_SUPPORT_ESCALATION_TO` or the
   mailer (`RESEND_API_KEY`, `OKWAN_MAIL_FROM`) is missing, or Resend
-  refused the send (the log names the status). Nothing is lost: the
+  refused the send (the log says which, under `support escalation`).
+  The customer is told the same either way. Nothing is lost: the
   ticket is stored, so `python -m okwan_vault support list` shows it with
   `NOT MAILED`. Answer the customer from there.
 - **A customer says the assistant gave a wrong answer.** Treat it like any
@@ -294,6 +300,9 @@ bottom right) and at `POST /v1/support/messages`.
   `SYSTEM`), Tier 3.
 - **To switch it off at once:** remove `ANTHROPIC_API_KEY` from the Render
   service and redeploy. The panel then says it is not switched on.
+- **Plan usage:** a message does not count against the customer's plan,
+  but a connection test the assistant runs does, as one request, exactly
+  like pressing Test in the dashboard.
 - **Cost:** each message is one model call plus at most six tool rounds;
   the spend limit in the Anthropic console is the ceiling. The route is
   rate limited to 40 messages an hour per account and 60 per address.

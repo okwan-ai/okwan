@@ -435,3 +435,23 @@ def test_an_empty_windowed_read_says_which_window(client, outbox, monkeypatch):
     assert r["status"] == "empty"
     assert r["span"]["start"].startswith("2026-09-02")
     assert "2026-09-02" in r["detail"] and "2026-10-02" in r["detail"]
+
+
+@pytest.mark.parametrize("flag,status", [(None, 503), ("", 503), ("false", 503), ("true", 202)])
+def test_outside_dev_signup_opens_only_when_the_operator_says_so(store, outbox, monkeypatch, flag, status):
+    """Mail working is not enough: the escalation mailer must be able to run
+    while signup stays closed until the privacy policy and terms exist."""
+    from okwan_api.auth import set_store
+    from okwan_api.main import app
+
+    set_store(store)
+    monkeypatch.setenv("OKWAN_ENV", "production")
+    if flag is None:
+        monkeypatch.delenv("OKWAN_SIGNUP_OPEN", raising=False)
+    else:
+        monkeypatch.setenv("OKWAN_SIGNUP_OPEN", flag)
+    r = TestClient(app).post("/v1/signup", json={"email": "open@b.test", "password": PASSWORD})
+    assert r.status_code == status, r.text
+    if status == 503:
+        assert r.json()["detail"] == "signup is not open yet"
+        assert store._signups == {} and outbox.sent == []
