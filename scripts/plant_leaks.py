@@ -56,7 +56,8 @@ Edit = tuple[str, str, str]
 NO_SCOPE: Edit = (PG, "    ids = list(tenant_ids)\n    if any(", "    return\n    ids = list(tenant_ids)\n    if any(")
 CREDS_NO_WHERE: Edit = (PG, '"WHERE tenant_id = $1 AND connector = ANY($2::text[])"',
                         '"WHERE $1::text IS NOT NULL AND connector = ANY($2::text[])"')
-RUN_NO_WHERE: Edit = (PG, "WHERE tenant_id = $1 AND id = $2", "WHERE $1::text IS NOT NULL AND id = $2")
+RUN_NO_WHERE: Edit = (PG, "FROM reconciliation_runs WHERE tenant_id = $1 AND id = $2",
+                      "FROM reconciliation_runs WHERE $1::text IS NOT NULL AND id = $2")
 LIST_NO_WHERE: Edit = (PG, '"WHERE tenant_id = $1 AND ($2::text IS NULL OR name = $2) "',
                        '"WHERE $1::text IS NOT NULL AND ($2::text IS NULL OR name = $2) "')
 LATEST_NO_WHERE: Edit = (PG, '"WHERE tenant_id = ANY($1::text[]) AND kind = $2 AND name = $3 "',
