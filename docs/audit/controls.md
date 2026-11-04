@@ -50,6 +50,7 @@ doors around it.
 | C33 | Everything an operator does is logged, reads included, and the database refuses to change or delete the log | `apps/api/okwan_api/ops.py` (`_log`), `packages/vault/okwan_vault/schema.sql` (`operator_actions_append_only`) | `tests/test_ops.py::test_a_ticket_shows_its_brief_and_conversation_and_the_view_is_logged`, `tests/test_ops.py::test_the_log_cannot_be_changed_in_postgres` |
 | C34 | A reply goes only to the ticket's own account, as escaped text with no links, and one that looks like it carries a secret is refused | `apps/api/okwan_api/ops.py` (`reply_message`) | `tests/test_ops.py::test_a_reply_reaches_the_customer_and_answers_the_ticket`, `tests/test_ops.py::test_a_reply_with_a_secret_is_refused` |
 | C35 | The accounts view never shows a credential value or a key: connections by field name, keys by prefix | `apps/api/okwan_api/ops.py` (`_account_row`) | `tests/test_ops.py::test_the_console_never_shows_a_credential_value_or_a_key_hash`, `tests/test_ops.py::test_an_account_shows_merchants_keys_runs_and_tickets` |
+| C36 | Health says whether each setting is on, never its value | `apps/api/okwan_api/ops.py` (`_switches`) | `tests/test_ops.py::test_health_names_switches_but_never_their_values` |
 
 ## Secrets and credentials
 
