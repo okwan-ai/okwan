@@ -29,7 +29,7 @@ from pathlib import Path
 
 import asyncpg
 
-from . import apikey
+from . import accounts, apikey
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
@@ -645,11 +645,20 @@ class PostgresStore:
         )
 
     async def tenant_for_session(self, token_hash: str) -> Tenant | None:
+        """The session's tenant while it is live: before its absolute expiry
+        and used within SESSION_IDLE. Using it moves the idle clock, written
+        at most once per SESSION_TOUCH, in the same statement."""
         row = await self.pool.fetchrow(
+            "WITH live AS ("
+            "  SELECT tenant_id FROM sessions WHERE token_hash = $1"
+            "  AND expires_at > now() AND last_seen_at > now() - $2::interval"
+            "), touch AS ("
+            "  UPDATE sessions SET last_seen_at = now() WHERE token_hash = $1"
+            "  AND last_seen_at < now() - $3::interval AND EXISTS (SELECT 1 FROM live)"
+            ") "
             "SELECT t.id, t.name, t.parent_id, t.created_at "
-            "FROM sessions s JOIN tenants t ON t.id = s.tenant_id "
-            "WHERE s.token_hash = $1 AND s.expires_at > now()",
-            token_hash,
+            "FROM live JOIN tenants t ON t.id = live.tenant_id",
+            token_hash, accounts.SESSION_IDLE, accounts.SESSION_TOUCH,
         )
         return None if row is None else _tenant(row)
 

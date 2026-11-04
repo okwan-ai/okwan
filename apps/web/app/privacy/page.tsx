@@ -101,9 +101,9 @@ const parts: Part[] = [
     body: (
       <ul>
         <li>
-          <strong>Dashboard.</strong> One cookie, <code>okwan_session</code>, keeps you signed in for up to 7 days.
-          It is necessary for the dashboard to work, cannot be read by scripts on the page, and is removed when you
-          sign out. Your browser also remembers which setup steps you have ticked; that stays on your device.
+          <strong>Dashboard.</strong> One cookie, <code>okwan_session</code>, keeps you signed in. It ends after 30
+          minutes without activity and 12 hours after you sign in, whichever comes first. It is necessary for the
+          dashboard to work, cannot be read by scripts on the page, and is removed when you sign out. Your browser also remembers which setup steps you have ticked; that stays on your device.
         </li>
         <li><strong>Website.</strong> okwan.ai sets no cookies.</li>
         <li>
@@ -207,7 +207,7 @@ const parts: Part[] = [
           rows={[
             ["Account, merchants, saved credentials and API keys", "Until you remove them or delete your account"],
             ["A signup that is never confirmed", "The link expires after 24 hours; the request is removed when you ask, or with your account"],
-            ["Sign-in sessions", "7 days, or until you sign out"],
+            ["Sign-in sessions", "30 minutes without activity, 12 hours at most, or until you sign out"],
             ["Reconciliation results", "The newest 50 of each check, until your account is deleted"],
             ["Usage counts", "As long as your account exists"],
             ["Support conversations", "30 days after the last message"],

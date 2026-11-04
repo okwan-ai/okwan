@@ -8,9 +8,14 @@ export async function generateMetadata({ searchParams }: { searchParams: Promise
 export default async function SignupPage({
   searchParams,
 }: {
-  searchParams: Promise<{ mode?: string }>;
+  searchParams: Promise<{ mode?: string; idle?: string; ended?: string }>;
 }) {
-  const mode = (await searchParams).mode === "signin" ? "signin" : "signup";
+  const params = await searchParams;
+  const mode = params.mode === "signin" ? "signin" : "signup";
+  const notice = mode !== "signin" ? null
+    : params.idle === "1" ? "You were signed out after 30 minutes without activity, to keep your account safe. Sign in to continue."
+      : params.ended === "1" ? "Your session ended: sign-ins last 12 hours at most. Sign in to continue."
+        : null;
   return (
     <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
       <div className="mx-auto w-full max-w-md lg:mx-0">
@@ -22,6 +27,9 @@ export default async function SignupPage({
             ? "One account, one workspace. Connect a system, prove it with a live read, and take an API key for your agents."
             : "Sign in to manage connections and keys."}
         </p>
+        {notice && (
+          <p role="status" className="mb-6 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-soft">{notice}</p>
+        )}
         <AuthForm mode={mode} />
       </div>
       <SignedOutAside />

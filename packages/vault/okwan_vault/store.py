@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from . import apikey
+from . import accounts, apikey
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
@@ -131,6 +131,8 @@ class MemoryStore:
         self._accounts: dict[str, tuple[str, str]] = {}
         # token_hash → (tenant_id, expires_at)
         self._sessions: dict[str, tuple[str, datetime]] = {}
+        #: When each session was last used, for the idle limit.
+        self._session_seen: dict[str, datetime] = {}
         self._runs: dict[str, RunRecord] = {}
         self._conversations: dict[str, SupportConversation] = {}
         self._tickets: dict[str, SupportTicket] = {}
@@ -425,15 +427,23 @@ class MemoryStore:
         self, tenant_id: str, token_hash: str, expires_at: datetime
     ) -> None:
         self._sessions[token_hash] = (tenant_id, expires_at)
+        self._session_seen[token_hash] = datetime.now(UTC)
 
     async def tenant_for_session(self, token_hash: str) -> Tenant | None:
+        """Live before its absolute expiry and while used within SESSION_IDLE;
+        using it moves the idle clock (at most once per SESSION_TOUCH)."""
         found = self._sessions.get(token_hash)
-        if found is None or found[1] <= datetime.now(UTC):
+        now = datetime.now(UTC)
+        seen = self._session_seen.get(token_hash, now)
+        if found is None or found[1] <= now or seen <= now - accounts.SESSION_IDLE:
             return None
+        if seen < now - accounts.SESSION_TOUCH:
+            self._session_seen[token_hash] = now
         return self._tenants.get(found[0])
 
     async def delete_session(self, token_hash: str) -> None:
         self._sessions.pop(token_hash, None)
+        self._session_seen.pop(token_hash, None)
 
 
     # ── support ─────────────────────────────────────────────────────

@@ -51,6 +51,7 @@ doors around it.
 | C34 | A reply goes only to the ticket's own account, as escaped text with no links, and one that looks like it carries a secret is refused | `apps/api/okwan_api/ops.py` (`reply_message`) | `tests/test_ops.py::test_a_reply_reaches_the_customer_and_answers_the_ticket`, `tests/test_ops.py::test_a_reply_with_a_secret_is_refused` |
 | C35 | The accounts view never shows a credential value or a key: connections by field name, keys by prefix | `apps/api/okwan_api/ops.py` (`_account_row`) | `tests/test_ops.py::test_the_console_never_shows_a_credential_value_or_a_key_hash`, `tests/test_ops.py::test_an_account_shows_merchants_keys_runs_and_tickets` |
 | C36 | Health says whether each setting is on, never its value | `apps/api/okwan_api/ops.py` (`_switches`) | `tests/test_ops.py::test_health_names_switches_but_never_their_values` |
+| C37 | A dashboard session ends after 30 minutes without use and 12 hours after sign-in, on the server; an open page signs itself out and says why | `packages/vault/okwan_vault/postgres.py` (`tenant_for_session`), `packages/vault/okwan_vault/accounts.py` (`SESSION_IDLE`) | `tests/test_session_timeout.py::test_thirty_minutes_without_use_signs_out`, `tests/test_session_timeout.py::test_twelve_hours_after_sign_in_it_ends_even_in_use`, `tests/test_session_timeout.py::test_an_idle_session_cannot_reach_the_admin_routes` |
 
 ## Secrets and credentials
 

@@ -6,6 +6,7 @@ import { connectors } from "@/lib/merchants";
 import { operatorMe } from "@/lib/ops";
 import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
+import { IdleGuard } from "./_components/idle-guard";
 import { SupportPanel } from "./_components/support-panel";
 import { Wordmark } from "./_components/ui/mark";
 import "./globals.css";
@@ -65,6 +66,7 @@ export default async function RootLayout({
               <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 sm:py-10 xl:px-12">{children}</div>
             </main>
             <SupportPanel />
+            <IdleGuard />
           </div>
         ) : (
           <SignedOut>{children}</SignedOut>
