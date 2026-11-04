@@ -51,3 +51,17 @@ export async function ticket(id: string) {
 }
 
 export const TICKET_ID = /^tkt_[0-9a-f]{16}$/;
+
+/**
+ * A ticket's issue as a title. The assistant writes one sentence now, but
+ * tickets from before briefs carry a paragraph: those are cut to their
+ * first sentence, or at a word, and the page shows the full text below.
+ */
+export function headline(issue: string, max = 120): string {
+  const text = issue.trim();
+  if (text.length <= max) return text;
+  const first = /^(.+?[.!?])\s/.exec(text)?.[1];
+  if (first && first.length <= max) return first;
+  const cut = text.slice(0, max - 1);
+  return `${cut.slice(0, cut.lastIndexOf(" ") > 60 ? cut.lastIndexOf(" ") : cut.length)}…`;
+}

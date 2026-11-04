@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ago } from "@/lib/finding";
-import { STATUS_FILTERS, type StatusFilter, type TicketRow, tickets } from "@/lib/ops";
+import { headline, STATUS_FILTERS, type StatusFilter, type TicketRow, tickets } from "@/lib/ops";
 import { CONSOLE_DESCRIPTION, CONSOLE_TITLE, ConsoleGate, until } from "../_components/ops/console-gate";
 import { Badge, type Tone } from "../_components/ui/badge";
 import { PageHeader } from "../_components/ui/page-header";
@@ -70,7 +70,7 @@ async function Inbox({ status }: { status: StatusFilter }) {
                     <Badge tone={SEVERITY[t.severity].tone}>{SEVERITY[t.severity].label}</Badge>
                     <Badge tone={STATUS[t.status].tone} symbol={STATUS[t.status].symbol}>{STATUS[t.status].label}</Badge>
                   </span>
-                  <span className="mt-2 block font-medium">{t.issue}</span>
+                  <span className="mt-2 block font-medium">{headline(t.issue)}</span>
                   <span className="mt-1 block text-xs text-ink-soft">
                     {t.account} · {t.category_label} · <span suppressHydrationWarning>{ago(Date.parse(t.created_at))}</span>
                   </span>
@@ -95,7 +95,7 @@ async function Inbox({ status }: { status: StatusFilter }) {
                   <tr key={t.id} className="hover:bg-canvas/60">
                     <Td><Badge tone={SEVERITY[t.severity].tone}>{SEVERITY[t.severity].label}</Badge></Td>
                     <Td className="max-w-md">
-                      <Link href={`/ops/tickets/${t.id}`} className="font-medium hover:underline">{t.issue}</Link>
+                      <Link href={`/ops/tickets/${t.id}`} className="font-medium hover:underline">{headline(t.issue)}</Link>
                       {!t.notified && <span className="block text-xs text-danger">The email to you didn&apos;t go out</span>}
                     </Td>
                     <Td>

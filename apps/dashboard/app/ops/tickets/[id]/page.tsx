@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import { ago } from "@/lib/finding";
-import { TICKET_ID, ticket, type Line, type TicketDetail } from "@/lib/ops";
+import { headline, TICKET_ID, ticket, type Line, type TicketDetail } from "@/lib/ops";
 import { ReplyEditor } from "../../../_components/ops/console-actions";
 import { ConsoleGate, until } from "../../../_components/ops/console-gate";
 import { Badge } from "../../../_components/ui/badge";
 import { PageHeader } from "../../../_components/ui/page-header";
+import { Rich } from "../../../_components/ui/rich-text";
 
 export const metadata = { title: "Ticket · Console" };
 
@@ -28,7 +29,10 @@ async function TicketBody({ id, unlockedUntil }: { id: string; unlockedUntil: st
 const STATUS_LABEL = { open: "Open", answered: "Answered", resolved: "Resolved" } as const;
 
 function Ticket({ t, unlockedUntil }: { t: TicketDetail; unlockedUntil: string }) {
+  const title = headline(t.issue);
   const sections: [string, string | undefined][] = [
+    // The title was cut: the full text, as the assistant wrote it.
+    ["The request", title === t.issue ? undefined : t.issue],
     ["What it checked", t.brief.findings],
     ["Likely cause", t.brief.likely_cause],
     ["How to resolve it", t.brief.resolution],
@@ -37,7 +41,7 @@ function Ticket({ t, unlockedUntil }: { t: TicketDetail; unlockedUntil: string }
     <>
       <PageHeader
         breadcrumb={[{ href: "/ops", label: "Console" }]}
-        title={t.issue}
+        title={title}
         meta={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <Badge tone={t.severity === "sev1" ? "danger" : t.severity === "sev2" ? "warn" : "neutral"}>{t.severity.toUpperCase()}</Badge>
@@ -56,7 +60,10 @@ function Ticket({ t, unlockedUntil }: { t: TicketDetail; unlockedUntil: string }
         <div className="min-w-0 space-y-6">
           <section aria-labelledby="brief-title" className="rounded-xl border border-line bg-surface p-5 sm:p-6">
             <h2 id="brief-title" className="text-base font-semibold">The assistant&apos;s brief</h2>
-            {sections.some(([, v]) => v) ? (
+            {!t.brief.findings && (
+              <p className="mt-2 text-sm text-ink-soft">This ticket was raised before briefs existed. Read the conversation for the rest.</p>
+            )}
+            {sections.some(([, v]) => v) && (
               <dl className="mt-4 space-y-5">
                 {sections.filter(([, v]) => v).map(([label, value]) => (
                   <div key={label}>
@@ -65,8 +72,6 @@ function Ticket({ t, unlockedUntil }: { t: TicketDetail; unlockedUntil: string }
                   </div>
                 ))}
               </dl>
-            ) : (
-              <p className="mt-2 text-sm text-ink-soft">This ticket was raised before briefs existed. Read the conversation below.</p>
             )}
           </section>
           <ReplyEditor ticketId={t.id} draft={t.brief.draft_reply ?? ""} contact={t.contact} status={t.status} />
@@ -112,10 +117,17 @@ function Conversation({ lines }: { lines: Line[] }) {
               <li key={i} className="text-xs text-ink-soft italic">{l.text}</li>
             ) : (
               <li key={i} className={l.from === "customer" ? "flex justify-end" : "flex"}>
-                <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${l.from === "customer" ? "bg-ink text-canvas" : "bg-canvas text-ink"}`}>
-                  <span className="sr-only">{l.from === "customer" ? "Customer: " : "Assistant: "}</span>
-                  {l.text}
-                </div>
+                {l.from === "customer" ? (
+                  <p className="max-w-[85%] rounded-2xl rounded-br-md bg-ink px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap text-white">
+                    <span className="sr-only">Customer: </span>
+                    {l.text}
+                  </p>
+                ) : (
+                  <div className="max-w-[90%] rounded-2xl rounded-bl-md border border-line bg-surface px-3.5 py-2.5 text-sm leading-relaxed text-ink">
+                    <span className="sr-only">Assistant: </span>
+                    <Rich text={l.text} />
+                  </div>
+                )}
               </li>
             ),
           )}
