@@ -25,7 +25,7 @@ export const metadata = { title: "Overview" };
 const ATTENTION_LIMIT = 6;
 
 export default async function OverviewPage() {
-  await requireTenant();
+  const me = await requireTenant();
   return (
     <>
       <PageHeader
@@ -34,7 +34,7 @@ export default async function OverviewPage() {
         actions={<Suspense><RunAllReady /></Suspense>}
       />
       <Suspense fallback={<OverviewSkeleton />}>
-        <OverviewBody />
+        <OverviewBody account={me.id} />
       </Suspense>
     </>
   );
@@ -50,7 +50,7 @@ async function RunAllReady() {
   return <RunAll merchants={ready} variant="secondary" />;
 }
 
-async function OverviewBody() {
+async function OverviewBody({ account }: { account: string }) {
   const [runs, usage] = await Promise.all([storedRuns(), myUsage(30)]);
   if (!runs) {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
@@ -71,7 +71,7 @@ async function OverviewBody() {
     return (
       <>
         {strip}
-        <SetupChecklist steps={steps} prominent />
+        <SetupChecklist account={account} steps={steps} prominent />
         {needYou.length > 0 && (
           <Section title="Needs you">
             <MerchantList mode="needs-you" rows={merchants} />
@@ -87,7 +87,7 @@ async function OverviewBody() {
     <>
       {strip}
       <WorkspaceVerdict runs={runs} />
-      <div className="mt-6 empty:hidden"><SetupChecklist steps={steps} /></div>
+      <div className="mt-6 empty:hidden"><SetupChecklist account={account} steps={steps} /></div>
 
       <Section
         title="Needs attention"

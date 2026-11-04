@@ -12,11 +12,13 @@ import { IconCheck, IconChevron } from "./ui/icons";
  *  a tick so a quiet month doesn't reopen it. */
 export type Step = { id: string; label: string; hint?: string; href: string; done: boolean | null; sticky?: boolean };
 
-const STORAGE = "okwan.setup.ticked";
+/** Per account: two accounts signed in from one browser keep their own
+ *  ticks. The old browser-wide key is no longer read. */
+const storageKey = (account: string) => `okwan.setup.ticked:${account}`;
 
-function readTicked(): string[] {
+function readTicked(key: string): string[] {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE) ?? "[]");
+    return JSON.parse(localStorage.getItem(key) ?? "[]");
   } catch {
     return [];
   }
@@ -28,23 +30,24 @@ function readTicked(): string[] {
  * progress and the next step, with the full list behind a disclosure.
  * Hidden once all steps are done.
  */
-export function SetupChecklist({ steps, prominent = false }: { steps: Step[]; prominent?: boolean }) {
+export function SetupChecklist({ account, steps, prominent = false }: { account: string; steps: Step[]; prominent?: boolean }) {
+  const key = storageKey(account);
   // Rendered after mount: the ticks live in this browser, and a list that
   // flashed and vanished on hydration would be worse than one that appears.
   const [ticked, setTicked] = useState<string[] | null>(null);
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    const seen = readTicked();
+    const seen = readTicked(key);
     const confirmed = steps.filter((s) => s.sticky && s.done === true && !seen.includes(s.id)).map((s) => s.id);
     if (confirmed.length) {
       try {
-        localStorage.setItem(STORAGE, JSON.stringify([...seen, ...confirmed]));
+        localStorage.setItem(key, JSON.stringify([...seen, ...confirmed]));
       } catch {
         // Storage blocked: the confirmation lasts as long as the evidence.
       }
     }
     setTicked([...seen, ...confirmed]);
-  }, [steps]);
+  }, [steps, key]);
   if (ticked === null) return null;
 
   const isDone = (s: Step) => s.done ?? ticked.includes(s.id);
@@ -56,7 +59,7 @@ export function SetupChecklist({ steps, prominent = false }: { steps: Step[]; pr
     const nextTicked = [...new Set([...(ticked ?? []), id])];
     setTicked(nextTicked);
     try {
-      localStorage.setItem(STORAGE, JSON.stringify(nextTicked));
+      localStorage.setItem(key, JSON.stringify(nextTicked));
     } catch {
       // Storage blocked: the tick lasts for this view only.
     }
