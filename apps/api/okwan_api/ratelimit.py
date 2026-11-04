@@ -49,6 +49,9 @@ SIGNIN_IP = Rule("signin:ip", 20, 900)
 SIGNIN_ADDRESS = Rule("signin:address", 10, 900)
 TEST_IP = Rule("test:ip", 30, 600)
 TEST_TENANT = Rule("test:tenant", 20, 600)
+#: The support assistant: each message is a model call that costs money.
+SUPPORT_IP = Rule("support:ip", 60, 3600)
+SUPPORT_TENANT = Rule("support:tenant", 40, 3600)
 
 
 class Limiter:

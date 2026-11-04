@@ -31,6 +31,11 @@ needs_db = pytest.mark.skipif(not DSN, reason="no vault database configured")
 IDENTITY_TABLES = {"api_keys", "sessions", "accounts"}
 NO_TENANT_COLUMN = {"tenants", "signups"}
 
+#: Store methods that read tenant data across every tenant, on purpose, as
+#: the login role. Each is reached only by the operator CLI, never by a
+#: route: `support list` shows the operator every escalation.
+OPERATOR_READS = {"list_tickets"}
+
 
 # ── static: every query over tenant data enters a scope ────────────────
 
@@ -71,7 +76,8 @@ def _enters_scope(fn) -> bool:
 def test_every_store_method_over_tenant_data_runs_scoped():
     touching = {fn.name: fn for fn in _methods() if any(_DATA_SQL.search(s) for s in _sql_in(fn))}
     assert len(touching) >= 10, f"the check found too few methods to mean anything: {sorted(touching)}"
-    unscoped = sorted(name for name, fn in touching.items() if not _enters_scope(fn))
+    unscoped = sorted(name for name, fn in touching.items()
+                      if not _enters_scope(fn) and name not in OPERATOR_READS)
     assert not unscoped, (
         f"PostgresStore methods that read or write {TENANT_TABLES} as the login role, "
         f"outside row-level security: {unscoped}. Use `async with self._scoped(tenant_id)`."
@@ -133,6 +139,9 @@ async def two(store):
         await store.set_plan(t.id, "pro")
         await store.add_run(t.id, kind="across", name="rails", surface="rest", status="ok",
                             started_at=now, finished_at=now, summary={}, rows=[], error=None)
+        cid = await store.save_conversation(t.id, None, [{"role": "user", "content": "hi"}], 1)
+        await store.add_ticket(t.id, conversation_id=cid, severity="sev3", category="other",
+                               summary=f"{name} asked for help", notified=False)
         out.append(t)
     return out
 
@@ -250,6 +259,11 @@ def _insert(table: str, tenant_id: str) -> tuple:
         "reconciliation_runs": (("INSERT INTO reconciliation_runs (id, tenant_id, kind, name, surface, "
                                 "status, started_at, finished_at) VALUES ('run_rls_probe', $1, "
                                 "'across', 'rails', 'rest', 'ok', $2, $2)"), tenant_id, now),
+        "support_conversations": (("INSERT INTO support_conversations (id, tenant_id, messages) "
+                                   "VALUES ('sup_rls_probe', $1, '[]')"), tenant_id),
+        "support_tickets": (("INSERT INTO support_tickets (id, tenant_id, severity, category, "
+                             "summary) VALUES ('tkt_rls_probe', $1, 'sev3', 'other', 'probe')"),
+                            tenant_id),
     }[table]
 
 

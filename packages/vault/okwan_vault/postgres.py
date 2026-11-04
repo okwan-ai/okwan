@@ -33,7 +33,16 @@ from . import apikey
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
-from .models import RUNS_KEPT, ApiKey, RunRecord, SealedCredential, Tenant
+from .models import (
+    RUNS_KEPT,
+    SUPPORT_KEPT_DAYS,
+    ApiKey,
+    RunRecord,
+    SealedCredential,
+    SupportConversation,
+    SupportTicket,
+    Tenant,
+)
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
@@ -46,7 +55,10 @@ TENANT_ROLE = "okwan_tenant"
 #: Tables holding a tenant's own data. Each has row-level security with one
 #: policy: a row is visible, and may be written, only while its tenant_id
 #: is in the transaction's scope.
-TENANT_TABLES = ("credentials", "usage", "plans", "reconciliation_runs")
+TENANT_TABLES = (
+    "credentials", "usage", "plans", "reconciliation_runs",
+    "support_conversations", "support_tickets",
+)
 
 
 class IsolationUnavailable(RuntimeError):
@@ -628,6 +640,85 @@ class PostgresStore:
         )
 
 
+    # ── support ─────────────────────────────────────────────────────
+
+    async def keys_for(self, tenant_id: str) -> list[ApiKey]:
+        """A tenant's keys, newest first, as the login role: api_keys is an
+        identity table. The hash is never selected."""
+        rows = await self.pool.fetch(
+            "SELECT id, tenant_id, prefix, created_at, revoked_at FROM api_keys "
+            "WHERE tenant_id = $1 ORDER BY created_at DESC",
+            tenant_id,
+        )
+        return [ApiKey(id=r["id"], tenant_id=r["tenant_id"], prefix=r["prefix"], hash_hex="",
+                       created_at=r["created_at"], revoked_at=r["revoked_at"]) for r in rows]
+
+    async def get_conversation(
+        self, tenant_id: str, conversation_id: str
+    ) -> SupportConversation | None:
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                "SELECT id, tenant_id, messages, turns, created_at, updated_at "
+                "FROM support_conversations WHERE tenant_id = $1 AND id = $2",
+                tenant_id, conversation_id,
+            )
+        return None if row is None else _conversation(row)
+
+    async def save_conversation(
+        self, tenant_id: str, conversation_id: str | None, messages: list, turns: int
+    ) -> str:
+        """Insert or replace one conversation, then drop the tenant's
+        conversations untouched for SUPPORT_KEPT_DAYS, in one transaction."""
+        cid = conversation_id or f"sup_{uuid.uuid4().hex[:16]}"
+        try:
+            async with self._scoped(tenant_id) as con:
+                updated = await con.execute(
+                    "INSERT INTO support_conversations (id, tenant_id, messages, turns) "
+                    "VALUES ($1, $2, $3::jsonb, $4) "
+                    "ON CONFLICT (id) DO UPDATE SET messages = EXCLUDED.messages, "
+                    "turns = EXCLUDED.turns, updated_at = now() "
+                    "WHERE support_conversations.tenant_id = EXCLUDED.tenant_id",
+                    cid, tenant_id, _dumps(messages), turns,
+                )
+                if updated.endswith(" 0"):
+                    raise KeyError(f"unknown conversation {conversation_id!r}")
+                await con.execute(
+                    "DELETE FROM support_conversations WHERE tenant_id = $1 "
+                    "AND updated_at < now() - make_interval(days => $2)",
+                    tenant_id, SUPPORT_KEPT_DAYS,
+                )
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+        return cid
+
+    async def add_ticket(
+        self, tenant_id: str, *, conversation_id: str | None, severity: str,
+        category: str, summary: str, notified: bool,
+    ) -> SupportTicket:
+        try:
+            async with self._scoped(tenant_id) as con:
+                row = await con.fetchrow(
+                    "INSERT INTO support_tickets (id, tenant_id, conversation_id, severity, "
+                    "category, summary, notified) VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                    "RETURNING id, tenant_id, conversation_id, severity, category, summary, "
+                    "notified, created_at",
+                    f"tkt_{uuid.uuid4().hex[:16]}", tenant_id, conversation_id, severity,
+                    category, summary, notified,
+                )
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+        return _ticket(row)
+
+    async def list_tickets(self, limit: int = 50) -> list[SupportTicket]:
+        """Every tenant's tickets, newest first: for the operator only, as
+        the login role. No API route reaches this."""
+        rows = await self.pool.fetch(
+            "SELECT id, tenant_id, conversation_id, severity, category, summary, notified, "
+            "created_at FROM support_tickets ORDER BY created_at DESC LIMIT $1",
+            limit,
+        )
+        return [_ticket(r) for r in rows]
+
 async def _subtree(con, root_id: str) -> list[str]:
     """A tenant and everything below it. Recursive rather than a join on
     parent_id: the hierarchy is two levels today but this should not be
@@ -644,6 +735,23 @@ async def _subtree(con, root_id: str) -> list[str]:
         root_id,
     )
     return [r["id"] for r in rows]
+
+
+# ── support: row shapes ─────────────────────────────────────────────
+
+def _conversation(row) -> SupportConversation:
+    return SupportConversation(
+        id=row["id"], tenant_id=row["tenant_id"], messages=_loads(row["messages"]) or [],
+        turns=row["turns"], created_at=row["created_at"], updated_at=row["updated_at"],
+    )
+
+
+def _ticket(row) -> SupportTicket:
+    return SupportTicket(
+        id=row["id"], tenant_id=row["tenant_id"], conversation_id=row["conversation_id"],
+        severity=row["severity"], category=row["category"], summary=row["summary"],
+        notified=row["notified"], created_at=row["created_at"],
+    )
 
 
 # ── reconciliation runs: row shapes ─────────────────────────────────

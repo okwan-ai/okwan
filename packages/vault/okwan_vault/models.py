@@ -73,6 +73,43 @@ class RunRecord:
 #: Runs kept per (tenant, kind, name); older ones are pruned on insert.
 RUNS_KEPT = 50
 
+#: A support conversation is kept this long after its last message.
+SUPPORT_KEPT_DAYS = 30
+
+
+@dataclass(frozen=True, slots=True)
+class SupportConversation:
+    """One customer's conversation with the support assistant.
+
+    `messages` is the transcript exactly as sent to and returned by the
+    model, so it can be replayed unchanged: customer text after secret
+    redaction, the assistant's content blocks, and the read-only tools'
+    results. It is the tenant's own data and lives under row-level security.
+    """
+
+    id: str
+    tenant_id: str
+    messages: list
+    turns: int
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+
+
+@dataclass(frozen=True, slots=True)
+class SupportTicket:
+    """A conversation the assistant handed to a person."""
+
+    id: str
+    tenant_id: str
+    conversation_id: str | None
+    #: sev1 | sev2 | sev3
+    severity: str
+    category: str
+    summary: str
+    #: Whether the escalation mail was accepted for delivery.
+    notified: bool
+    created_at: datetime = field(default_factory=_now)
+
 
 @dataclass(frozen=True, slots=True)
 class SealedCredential:
