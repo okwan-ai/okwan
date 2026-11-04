@@ -94,6 +94,7 @@ class Store(Protocol):
     async def add_ticket(
         self, tenant_id: str, *, conversation_id: str | None, severity: str,
         category: str, summary: str, notified: bool, ticket_id: str | None = None,
+        brief: dict | None = None,
     ) -> SupportTicket: ...
     async def list_tickets(self, limit: int = 50) -> list[SupportTicket]: ...
     async def account_email(self, tenant_id: str) -> str | None: ...
@@ -434,13 +435,14 @@ class MemoryStore:
     async def add_ticket(
         self, tenant_id: str, *, conversation_id: str | None, severity: str,
         category: str, summary: str, notified: bool, ticket_id: str | None = None,
+        brief: dict | None = None,
     ) -> SupportTicket:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         t = SupportTicket(
             id=ticket_id or f"tkt_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id,
             conversation_id=conversation_id, severity=severity, category=category,
-            summary=summary, notified=notified,
+            summary=summary, notified=notified, brief=dict(brief) if brief else None,
         )
         self._tickets[t.id] = t
         return t

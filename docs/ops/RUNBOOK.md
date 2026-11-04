@@ -288,6 +288,12 @@ bottom right) and at `POST /v1/support/messages`.
   log says so: replace it), Anthropic is rate limiting (wait), or
   Anthropic is down (its status page). Customers can still use
   everything else; nothing waits on the assistant.
+- **Answering an escalation.** The mail's subject is the specific issue.
+  It carries the assistant's brief (what it checked, the likely cause, the
+  steps to resolve) and a draft reply to the customer. *Reply with this
+  draft* opens your email to the account's sign-in address with the draft
+  filled in: check it against the account, edit, then send. Nothing goes
+  to a customer without a person sending it.
 - **Escalations do not arrive.** `OKWAN_SUPPORT_ESCALATION_TO` or the
   mailer (`RESEND_API_KEY`, `OKWAN_MAIL_FROM`) is missing, or Resend
   refused the send (the log says which, under `support escalation`).

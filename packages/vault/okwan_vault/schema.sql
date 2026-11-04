@@ -161,6 +161,20 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     created_at       timestamptz NOT NULL DEFAULT now()
 );
 
+-- The assistant's brief for the engineer: findings, likely cause, steps,
+-- and a draft reply to the customer. Checked first, like parent_id above:
+-- ALTER TABLE would lock the table on every start.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'support_tickets'
+          AND column_name = 'brief'
+    ) THEN
+        ALTER TABLE support_tickets ADD COLUMN brief jsonb;
+    END IF;
+END $$;
+
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
 -- stored runs, support conversations and tickets) runs as okwan_tenant, inside one transaction that names

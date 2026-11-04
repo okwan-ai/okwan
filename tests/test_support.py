@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -371,11 +372,25 @@ async def test_a_secret_inside_a_tool_result_is_removed(client, world, model):
 
 # ── escalation ─────────────────────────────────────────────────────────
 
+def brief(severity: str = "sev3", category: str = "other", **over) -> dict:
+    """A complete escalate input, as the model fills it."""
+    return {"severity": severity, "category": category,
+            "issue": "Stripe connection test fails for Acme Shop One",
+            "findings": "connection_status: secret_key saved. test_connection: Stripe answered 401.",
+            "likely_cause": "The Stripe key was rolled or restricted at Stripe.",
+            "resolution": "Confirm with the customer, then have them save a new restricted key.",
+            "draft_reply": "Hi,\n\nStripe is rejecting the key saved for Acme Shop One. Please create "
+                           "a restricted key that can read Charges and save it in Settings.\n\n"
+                           "Okwan Support", **over}
+
+
 async def test_an_escalation_is_recorded_and_mailed_to_the_owner(client, world, store, model, outbox):
     secret = "sk_live_51HxQ2bL0ngSecretValue"
-    m = model(turn(use("escalate", {"severity": "sev1", "category": "data_exposure",
-                                    "summary": f"Customer reports seeing orders that are not theirs; "
-                                               f"also pasted {secret}"})),
+    m = model(turn(use("escalate", brief(
+                  "sev1", "data_exposure",
+                  issue="Customer sees orders that are not theirs",
+                  findings=f"Customer reports another shop's orders; also pasted {secret}",
+                  draft_reply="Hi,\n\nThank you for telling us. We are looking into it now.\n\nOkwan Support"))),
               turn(text("I've passed this to a person at Okwan.")))
     r = await ask(client, world, f"I can see another shop's orders! key {secret}")
     body = r.json()
@@ -385,10 +400,12 @@ async def test_an_escalation_is_recorded_and_mailed_to_the_owner(client, world, 
     assert (mine.tenant_id, mine.severity, mine.category, mine.notified) == (
         world.a.id, "sev1", "data_exposure", True)
     assert mine.conversation_id == body["conversation_id"]
-    assert secret not in mine.summary
+    assert secret not in mine.summary and mine.summary == "Customer sees orders that are not theirs"
+    assert set(mine.brief) == {"findings", "likely_cause", "resolution", "draft_reply"}
+    assert secret not in json.dumps(mine.brief)
     to, subject, text_body, html_body = outbox.sent[0]
     assert to == "owner@okwan.test"
-    assert subject == "SEV1 · Support request from acme@okwan.test: Data exposure"
+    assert subject == "SEV1 · acme@okwan.test: Customer sees orders that are not theirs"
     for part in (text_body, html_body):
         assert body["ticket"] in part, "the mail carries the ticket id support list shows"
         assert world.a.id in part and world.contact in part
@@ -402,8 +419,8 @@ async def test_an_escalation_is_recorded_and_mailed_to_the_owner(client, world, 
 async def test_the_escalation_email_escapes_what_the_customer_wrote(client, world, model, outbox):
     """A customer's text goes into the operator's inbox: it must stay text."""
     hostile = "<script>alert(1)</script> <a href='https://evil.test/login'>verify here</a>"
-    model(turn(use("escalate", {"severity": "sev2", "category": "bug",
-                                "summary": f"customer pasted {hostile}"})), turn(text("ok")))
+    model(turn(use("escalate", brief("sev2", "bug", issue=f"customer pasted {hostile}",
+                                     findings=hostile, draft_reply=hostile))), turn(text("ok")))
     await ask(client, world, hostile)
     html_body = outbox.sent[0][3]
     assert "<script>" not in html_body and "&lt;script&gt;" in html_body
@@ -421,8 +438,8 @@ async def test_a_merchants_contact_is_its_accounts_sign_in(world, store):
 async def test_without_mail_an_escalation_is_still_recorded(client, world, store, model, monkeypatch,
                                                          caplog):
     monkeypatch.delenv("OKWAN_SUPPORT_ESCALATION_TO", raising=False)
-    model(turn(use("escalate", {"severity": "sev3", "category": "billing",
-                                "summary": "wants the pro plan"})), turn(text("Recorded.")))
+    model(turn(use("escalate", brief("sev3", "billing", issue="Wants the pro plan"))),
+          turn(text("Recorded.")))
     with caplog.at_level("WARNING", logger="okwan_api.support"):
         ticket = (await ask(client, world, "upgrade me")).json()["ticket"]
     found = next(t for t in await store.list_tickets() if t.id == ticket)
@@ -437,8 +454,7 @@ async def test_without_a_mailer_the_log_says_so(client, world, model, monkeypatc
     monkeypatch.setenv("OKWAN_SUPPORT_ESCALATION_TO", "owner@okwan.test")
     mail.set_mailer(None)
     try:
-        model(turn(use("escalate", {"severity": "sev2", "category": "bug", "summary": "x"})),
-              turn(text("Recorded.")))
+        model(turn(use("escalate", brief("sev2", "bug"))), turn(text("Recorded.")))
         with caplog.at_level("WARNING", logger="okwan_api.support"):
             await ask(client, world, "it broke")
     finally:
@@ -454,8 +470,7 @@ async def test_the_customer_hears_the_same_whether_or_not_mail_went_out(
     escalation changes with it, so the customer is never told about it."""
     if not mailed:
         monkeypatch.delenv("OKWAN_SUPPORT_ESCALATION_TO", raising=False)
-    m = model(turn(use("escalate", {"severity": "sev3", "category": "other", "summary": "x"})),
-              turn(text("A person has it.")))
+    m = model(turn(use("escalate", brief())), turn(text("A person has it.")))
     await ask(client, world, "please pass this to a person")
     result = json.loads(m.tool_results(1)[0]["content"])
     assert set(result) == {"ticket", "next"}
@@ -464,11 +479,53 @@ async def test_the_customer_hears_the_same_whether_or_not_mail_went_out(
 
 
 async def test_an_escalation_with_an_unknown_severity_is_refused(client, world, store, model, outbox):
-    m = model(turn(use("escalate", {"severity": "urgent!!", "category": "other",
-                                    "summary": "x"})), turn(text("ok")))
+    m = model(turn(use("escalate", brief("urgent!!"))), turn(text("ok")))
     await ask(client, world, "help")
     assert m.tool_results(1)[0]["is_error"] is True
     assert outbox.sent == []
+
+
+@pytest.mark.parametrize("field", ["issue", "findings", "draft_reply"])
+async def test_an_escalation_without_its_brief_is_refused(client, world, model, outbox, field):
+    m = model(turn(use("escalate", brief(**{field: "  "}))), turn(text("ok")))
+    await ask(client, world, "help")
+    result = m.tool_results(1)[0]
+    assert result["is_error"] is True and field in result["content"]
+    assert outbox.sent == []
+
+
+async def test_the_brief_arrives_with_a_draft_reply_ready_to_send(client, world, model, outbox):
+    """The issue is the subject; the Reply button opens the draft, ready to edit."""
+    from urllib.parse import parse_qs, unquote, urlsplit
+
+    b = brief("sev2", "bug")
+    model(turn(use("escalate", b)), turn(text("A person has it.")))
+    await ask(client, world, "my stripe test fails")
+    _, subject, text_body, html_body = outbox.sent[0]
+    assert subject == "SEV2 · acme@okwan.test: Stripe connection test fails for Acme Shop One"
+    for title in ("What the assistant checked", "Likely cause", "How to resolve",
+                  "Draft reply to the customer"):
+        assert title in text_body and title in html_body
+    href = re.search(r'href="(mailto:[^"]+)"', html_body).group(1)
+    parts = urlsplit(href.replace("&amp;", "&"))
+    assert unquote(parts.path) == world.contact
+    query = parse_qs(parts.query)
+    assert query["body"] == [b["draft_reply"]]
+    assert query["subject"][0].startswith("Re: your Okwan support request (tkt_")
+
+
+async def test_a_long_draft_stays_in_the_mail_not_in_the_button(client, world, model, outbox):
+    long_reply = "Hi,\n\n" + "We checked every connection on your account. " * 80 + "\n\nOkwan Support"
+    model(turn(use("escalate", brief(draft_reply=long_reply))), turn(text("ok")))
+    await ask(client, world, "help")
+    html_body = outbox.sent[0][3]
+    href = re.search(r'href="(mailto:[^"]+)"', html_body).group(1)
+    assert "body=" not in href
+    assert "We checked every connection" in html_body
+
+
+def test_the_prompt_asks_what_the_customer_needs_before_escalating():
+    assert "ask them in one short question what they need" in support.SYSTEM
 
 
 # ── limits ─────────────────────────────────────────────────────────────
