@@ -1,5 +1,5 @@
 # OKWAN AI — Master Project File
-**Version 1.28 · November 4, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
+**Version 1.29 · November 4, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
 
 > Single source of truth for the Okwan AI platform. Every strategic, technical, brand, and immigration-related decision lives here. Update the version and changelog with every major decision.
 
@@ -449,6 +449,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 ---
 
 *Changelog:*
+*v1.29 — The support escalation mail is a proper ticket: severity and category, the ticket id `support list` shows (minted before the mail), the account's sign-in address to reply to, the assistant's findings and the customer's words, in HTML with a plain-text part. Every customer or model value is escaped as text; the one link is a mailto to the verified address.*
 *v1.28 — Signup has its own switch, `OKWAN_SIGNUP_OPEN` (§9 2026-11-04), so mail can be on for escalations while signup stays closed for item 27. `mail.okwan.ai` verified in Resend (§10 item 1). The assistant tells the customer the same whether or not an escalation mailed and logs why one did not; lists under a heading render as lists; its connection test is stated to count as one request.*
 *v1.27 — Support assistant (§9 2026-11-04, §10 item 30): *Ask Okwan* in the dashboard and `POST /v1/support/messages`, Claude Opus 5.5 over read-only tools that run as the caller, secrets redacted before the model or the database, transcripts and tickets under row-level security, escalations mailed and listed by `python -m okwan_vault support list`. Off until `ANTHROPIC_API_KEY` is set. Runbook Tier 1 is the assistant; audit pack controls C25–C29, threat-model rows T16–T18, gaps G13–G15.*
 *v1.26 — The query hole was never used (§10 item 29, §11): no query request in production's usage counters, checked after the fix deployed. The monitor is live with a signed-in check (item 32), and `main` requires a pull request that passes CI (item 31, §9 2026-11-04). The runbook and the audit pack (controls C23, C24) say how both are set up.*

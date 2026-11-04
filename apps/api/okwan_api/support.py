@@ -33,11 +33,14 @@ that category instead of leaving the customer without an answer.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
 import re
 import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import anthropic
@@ -364,46 +367,167 @@ async def escalate(actor, conversation_id: str | None, tool_input: dict[str, Any
     if severity not in SEVERITIES or category not in CATEGORIES:
         raise _ToolError("severity and category must be from the listed values")
     summary, _ = redact(str(tool_input.get("summary") or "")[:2000])
-    notified = await _notify(actor, conversation_id, severity, category, summary, recent)
-    ticket = await get_store().add_ticket(
+    store = get_store()
+    # The id first, so the mail can carry it and match `support list`.
+    ticket_id = f"tkt_{uuid.uuid4().hex[:16]}"
+    ticket = Escalation(
+        ticket_id=ticket_id, severity=severity, category=category,
+        tenant_id=actor.id, account=actor.name, contact=await store.account_email(actor.id),
+        conversation_id=conversation_id, summary=summary,
+        customer=[redact(m)[0][:1000] for m in recent[-3:]],
+        at=datetime.now(UTC),
+    )
+    notified = await _notify(ticket)
+    await store.add_ticket(
         actor.id, conversation_id=conversation_id, severity=severity, category=category,
-        summary=summary, notified=notified)
+        summary=summary, notified=notified, ticket_id=ticket_id)
     # Whether the mail went out is the operator's concern, not the
     # customer's: the model hears the same thing either way.
-    return {"ticket": ticket.id,
+    return {"ticket": ticket_id,
             "next": "A person at Okwan has this conversation and will follow up."}
 
 
-async def _notify(actor, conversation_id, severity, category, summary, recent) -> bool:
+@dataclass(frozen=True)
+class Escalation:
+    ticket_id: str
+    severity: str
+    category: str
+    tenant_id: str
+    account: str
+    contact: str | None
+    conversation_id: str | None
+    summary: str
+    customer: list[str]
+    at: datetime
+
+
+CATEGORY_LABELS = {
+    "security": "Security", "data_exposure": "Data exposure", "billing": "Billing",
+    "outage": "Outage", "bug": "Bug", "account": "Account", "other": "Other",
+}
+#: Severity pill: (text, background). SEV1 is the danger red; the rest stay quiet.
+_PILL = {"sev1": ("#a1231c", "#f8e6e3"), "sev2": ("#ffffff", "#0a0a0a"),
+         "sev3": ("#4b4b4b", "#efefef")}
+_EMAIL = re.compile(r"^[^@\s<>\"']+@[^@\s<>\"']+\.[^@\s<>\"']+$")
+
+
+def escalation_message(e: Escalation) -> tuple[str, str, str]:
+    """Subject, plain text and HTML for one escalation to the operator.
+
+    Every value that came from a customer or a model is escaped and never
+    made into a link, so nothing a customer types can put markup or a
+    link into the operator's inbox. The one link is a mailto to the
+    account's verified sign-in address.
+    """
+    sev = e.severity.upper()
+    category = CATEGORY_LABELS.get(e.category, e.category)
+    subject = f"{sev} · Support request from {e.account}: {category}"
+    when = e.at.strftime("%Y-%m-%d %H:%M UTC")
+    contact = e.contact if e.contact and _EMAIL.match(e.contact) else None
+    rows = [
+        ("Ticket", e.ticket_id),
+        ("Account", e.account),
+        ("Contact", contact or "no sign-in address on this account"),
+        ("Tenant", e.tenant_id),
+        ("Conversation", e.conversation_id or "none"),
+        ("Received", when),
+    ]
+
+    text = "\n".join([
+        f"Okwan support · {sev} · {category}",
+        "",
+        *[f"{k:<13} {v}" for k, v in rows],
+        "",
+        "What the assistant found",
+        e.summary or "(no summary)",
+        "",
+        "What the customer wrote (secrets removed)",
+        *[f"> {line}" for m in e.customer for line in (m.splitlines() or [""])],
+        "",
+        (f"Reply to the customer at {contact}." if contact else
+         "This account has no sign-in address; reach the account that provisioned it."),
+        "Every ticket: python -m okwan_vault support list",
+        "",
+        ("Sent by Okwan's support assistant. Anything secret-looking was removed "
+        "before it was stored or sent."),
+    ])
+
+    esc = html.escape
+    fg, bg = _PILL.get(e.severity, _PILL["sev3"])
+    font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+    detail_rows = "".join(
+        f'<tr><td style="padding:6px 0;color:#6b6b6b;width:120px;vertical-align:top">{esc(k)}</td>'
+        f'<td style="padding:6px 0;color:#0a0a0a;font-family:{"ui-monospace,Menlo,monospace" if k in ("Ticket", "Tenant", "Conversation") else font};'
+        f'font-size:{"13px" if k in ("Ticket", "Tenant", "Conversation") else "14px"}">{esc(v)}</td></tr>'
+        for k, v in rows
+    )
+    quotes = "".join(
+        f'<div style="margin:0 0 8px;padding:10px 14px;background:#f5f5f5;border-left:3px solid #d4d4d4;'
+        f'border-radius:4px;color:#0a0a0a;white-space:pre-wrap">{esc(m)}</div>'
+        for m in e.customer
+    ) or '<p style="margin:0;color:#6b6b6b">No message.</p>'
+    reply = (
+        f'<a href="mailto:{esc(contact, quote=True)}?subject={esc("Re: your Okwan support request " + e.ticket_id, quote=True)}" '
+        'style="display:inline-block;background:#0a0a0a;color:#ffffff;text-decoration:none;'
+        'font-weight:600;font-size:14px;padding:11px 18px;border-radius:8px">Reply to the customer</a>'
+        if contact else
+        '<p style="margin:0;color:#4b4b4b">This account has no sign-in address; reach the account '
+        "that provisioned it.</p>"
+    )
+    body = f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#f5f5f5">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:24px 12px">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;font-family:{font};font-size:14px;line-height:1.55;color:#0a0a0a">
+<tr><td style="background:#0b0b0c;border-radius:12px 12px 0 0;padding:18px 24px">
+<span style="color:#ffffff;font-size:18px;font-weight:600;letter-spacing:-0.02em">okwan</span><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ffd400;margin-left:6px;vertical-align:middle"></span>
+<span style="color:#a3a3a3;font-size:13px;margin-left:10px">Support</span>
+</td></tr>
+<tr><td style="padding:24px 24px 8px">
+<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:{bg};color:{fg};font-size:12px;font-weight:600;letter-spacing:0.04em">{esc(sev)}</span>
+<span style="color:#4b4b4b;font-size:13px;margin-left:8px">{esc(category)}</span>
+<h1 style="margin:12px 0 0;font-size:20px;line-height:1.3;font-weight:600">Support request from {esc(e.account)}</h1>
+</td></tr>
+<tr><td style="padding:8px 24px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e5e5e5;border-bottom:1px solid #e5e5e5">{detail_rows}</table></td></tr>
+<tr><td style="padding:20px 24px 0">
+<p style="margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6b6b6b">What the assistant found</p>
+<p style="margin:0;white-space:pre-wrap">{esc(e.summary) or "(no summary)"}</p>
+</td></tr>
+<tr><td style="padding:20px 24px 0">
+<p style="margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6b6b6b">What the customer wrote</p>
+{quotes}
+</td></tr>
+<tr><td style="padding:16px 24px 24px">{reply}</td></tr>
+<tr><td style="padding:14px 24px;border-top:1px solid #e5e5e5;color:#6b6b6b;font-size:12px">
+Every ticket: <span style="font-family:ui-monospace,Menlo,monospace">python -m okwan_vault support list</span><br>
+Sent by Okwan's support assistant. Anything secret-looking was removed before it was stored or sent.
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>
+"""
+    return subject, text, body
+
+
+async def _notify(e: Escalation) -> bool:
     to = os.environ.get("OKWAN_SUPPORT_ESCALATION_TO", "").strip()
     mailer = get_mailer()
     if not to:
-        logger.warning("support escalation for %s not mailed: OKWAN_SUPPORT_ESCALATION_TO "
-                       "is not set", actor.id)
+        logger.warning("support escalation %s for %s not mailed: OKWAN_SUPPORT_ESCALATION_TO "
+                       "is not set", e.ticket_id, e.tenant_id)
         return False
     if mailer is None:
-        logger.warning("support escalation for %s not mailed: no mailer (RESEND_API_KEY "
-                       "and OKWAN_MAIL_FROM)", actor.id)
+        logger.warning("support escalation %s for %s not mailed: no mailer (RESEND_API_KEY "
+                       "and OKWAN_MAIL_FROM)", e.ticket_id, e.tenant_id)
         return False
-    lines = [
-        f"Severity: {severity}   Category: {category}",
-        f"Tenant: {actor.id} ({actor.name})",
-        f"Conversation: {conversation_id or 'new'}",
-        "",
-        "Summary from the assistant:",
-        summary,
-        "",
-        "The customer's latest messages (secrets removed):",
-        *[f"> {m[:1000]}" for m in recent[-3:]],
-    ]
+    subject, text, body = escalation_message(e)
     try:
-        await mailer.send_notice(to, f"[Okwan support {severity}] {category}: {actor.name}",
-                                 "\n".join(lines))
+        await mailer.send_notice(to, subject, text, html=body)
         return True
-    except MailNotSent as e:
-        logger.error("support escalation mail not sent: %s", e)
-    except Exception as e:  # noqa: BLE001 — never fail the customer's reply on mail
-        logger.error("support escalation mail not sent: %s", type(e).__name__)
+    except MailNotSent as exc:
+        logger.error("support escalation %s mail not sent: %s", e.ticket_id, exc)
+    except Exception as exc:  # noqa: BLE001 — never fail the customer's reply on mail
+        logger.error("support escalation %s mail not sent: %s", e.ticket_id, type(exc).__name__)
     return False
 
 

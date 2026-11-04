@@ -86,8 +86,8 @@ class Outbox:
     async def send_verification(self, email, link):  # pragma: no cover - not used here
         raise AssertionError("support never sends verification mail")
 
-    async def send_notice(self, to, subject, body):
-        self.sent.append((to, subject, body))
+    async def send_notice(self, to, subject, body, html=None):
+        self.sent.append((to, subject, body, html))
 
 
 @pytest.fixture
@@ -131,8 +131,12 @@ async def store(request):
 
 @pytest.fixture
 async def world(store):
+    from okwan_vault import accounts
+
     a = await store.create_tenant("acme@okwan.test")
     a1 = await store.create_tenant("Acme Shop One", parent_id=a.id)
+    contact = f"founder-{os.urandom(4).hex()}@acme.test"
+    await store.add_account(a.id, contact, accounts.hash_password("correct horse battery"))
     b = await store.create_tenant("rival@okwan.test")
     await store.put_credential(a.id, "stripe", "secret_key", "sk_test_ACMEsecretvalue123")
     await store.put_credential(b.id, "stripe", "secret_key", "sk_test_RIVALsecretvalue99")
@@ -148,7 +152,7 @@ async def world(store):
         full, token_hash = new_token(SESSION_PREFIX)
         await store.create_session(t.id, token_hash, NOW + timedelta(hours=1))
         sessions[key] = full
-    return SimpleNamespace(store=store, a=a, a1=a1, b=b, sessions=sessions)
+    return SimpleNamespace(store=store, a=a, a1=a1, b=b, sessions=sessions, contact=contact)
 
 
 @pytest.fixture
@@ -382,11 +386,36 @@ async def test_an_escalation_is_recorded_and_mailed_to_the_owner(client, world, 
         world.a.id, "sev1", "data_exposure", True)
     assert mine.conversation_id == body["conversation_id"]
     assert secret not in mine.summary
-    to, subject, mail_body = outbox.sent[0]
-    assert to == "owner@okwan.test" and "sev1" in subject
-    assert world.a.id in mail_body and "another shop's orders" in mail_body
-    assert secret not in mail_body and secret not in subject
+    to, subject, text_body, html_body = outbox.sent[0]
+    assert to == "owner@okwan.test"
+    assert subject == "SEV1 · Support request from acme@okwan.test: Data exposure"
+    for part in (text_body, html_body):
+        assert body["ticket"] in part, "the mail carries the ticket id support list shows"
+        assert world.a.id in part and world.contact in part
+        assert "another shop" in part and "orders" in part
+        assert secret not in part
+    assert secret not in subject
+    assert f'href="mailto:{world.contact}?' in html_body
     assert "is_error" not in m.tool_results(1)[0]
+
+
+async def test_the_escalation_email_escapes_what_the_customer_wrote(client, world, model, outbox):
+    """A customer's text goes into the operator's inbox: it must stay text."""
+    hostile = "<script>alert(1)</script> <a href='https://evil.test/login'>verify here</a>"
+    model(turn(use("escalate", {"severity": "sev2", "category": "bug",
+                                "summary": f"customer pasted {hostile}"})), turn(text("ok")))
+    await ask(client, world, hostile)
+    html_body = outbox.sent[0][3]
+    assert "<script>" not in html_body and "&lt;script&gt;" in html_body
+    assert "href='https://evil.test" not in html_body and 'href="https://evil.test' not in html_body
+    assert "&lt;a href=&#x27;https://evil.test/login&#x27;&gt;" in html_body, "shown as text"
+    assert html_body.count("<a ") == 1, "the only link is the mailto to the verified contact"
+
+
+async def test_a_merchants_contact_is_its_accounts_sign_in(world, store):
+    assert await store.account_email(world.a1.id) == world.contact
+    assert await store.account_email(world.a.id) == world.contact
+    assert await store.account_email(world.b.id) is None
 
 
 async def test_without_mail_an_escalation_is_still_recorded(client, world, store, model, monkeypatch,

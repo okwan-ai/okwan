@@ -693,7 +693,7 @@ class PostgresStore:
 
     async def add_ticket(
         self, tenant_id: str, *, conversation_id: str | None, severity: str,
-        category: str, summary: str, notified: bool,
+        category: str, summary: str, notified: bool, ticket_id: str | None = None,
     ) -> SupportTicket:
         try:
             async with self._scoped(tenant_id) as con:
@@ -702,7 +702,7 @@ class PostgresStore:
                     "category, summary, notified) VALUES ($1, $2, $3, $4, $5, $6, $7) "
                     "RETURNING id, tenant_id, conversation_id, severity, category, summary, "
                     "notified, created_at",
-                    f"tkt_{uuid.uuid4().hex[:16]}", tenant_id, conversation_id, severity,
+                    ticket_id or f"tkt_{uuid.uuid4().hex[:16]}", tenant_id, conversation_id, severity,
                     category, summary, notified,
                 )
         except asyncpg.ForeignKeyViolationError:
@@ -718,6 +718,23 @@ class PostgresStore:
             limit,
         )
         return [_ticket(r) for r in rows]
+
+    async def account_email(self, tenant_id: str) -> str | None:
+        """The sign-in address of the tenant's login, or of the nearest
+        ancestor's: a merchant has no login, its account does. Identity
+        tables, so the login role."""
+        return await self.pool.fetchval(
+            """
+            WITH RECURSIVE up AS (
+                SELECT id, parent_id, 0 AS depth FROM tenants WHERE id = $1
+                UNION ALL
+                SELECT t.id, t.parent_id, up.depth + 1 FROM tenants t JOIN up ON t.id = up.parent_id
+            )
+            SELECT a.email FROM up JOIN accounts a ON a.tenant_id = up.id
+            ORDER BY up.depth LIMIT 1
+            """,
+            tenant_id,
+        )
 
 async def _subtree(con, root_id: str) -> list[str]:
     """A tenant and everything below it. Recursive rather than a join on

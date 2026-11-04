@@ -43,7 +43,7 @@ SEND_TIMEOUT = 10.0
 
 class Mailer(Protocol):
     async def send_verification(self, email: str, link: str) -> None: ...
-    async def send_notice(self, to: str, subject: str, text: str) -> None: ...
+    async def send_notice(self, to: str, subject: str, text: str, html: str | None = None) -> None: ...
 
 
 class MailNotSent(Exception):
@@ -133,10 +133,14 @@ class ResendMailer:
                 f"resend answered {response.status_code} {_error_name(response)}"
             )
 
-    async def send_notice(self, to: str, subject: str, text: str) -> None:
-        """Plain text to an operator, such as a support escalation. Carries
-        no link that needs tracking off; the domain has it off anyway."""
+    async def send_notice(
+        self, to: str, subject: str, text: str, html: str | None = None
+    ) -> None:
+        """A message to the operator, such as a support escalation: plain
+        text, and HTML when given. Tracking is off on the domain."""
         payload = {"from": self._sender, "to": [to], "subject": subject, "text": text}
+        if html is not None:
+            payload["html"] = html
         try:
             async with httpx.AsyncClient(
                 transport=self._transport, timeout=SEND_TIMEOUT
@@ -160,7 +164,9 @@ class DevLogMailer:
     async def send_verification(self, email: str, link: str) -> None:
         logger.warning("dev mailer — verify %s at %s", email, link)
 
-    async def send_notice(self, to: str, subject: str, text: str) -> None:
+    async def send_notice(
+        self, to: str, subject: str, text: str, html: str | None = None
+    ) -> None:
         logger.warning("dev mailer — notice to %s: %s", to, subject)
 
 

@@ -38,7 +38,7 @@ request bodies, customer email addresses or names from the rails.
 | Recipient | What | Why |
 |---|---|---|
 | The rails | The tenant's own credentials, as each rail's API requires | To read that tenant's records |
-| Resend | Recipient address and the verification link; support escalations (tenant id and name, the assistant's summary, the customer's last three messages, secrets removed) to `OKWAN_SUPPORT_ESCALATION_TO` | To deliver them; tracking must be off for the sending domain |
+| Resend | Recipient address and the verification link; support escalations (ticket id, tenant id and name, the account's sign-in address, the assistant's summary, the customer's last three messages, secrets removed and every customer value escaped as text) to `OKWAN_SUPPORT_ESCALATION_TO` | To deliver them; tracking must be off for the sending domain |
 | Anthropic | A support conversation: the customer's messages and the tools' results, secrets removed, plus Okwan's own documentation | To answer it (Claude Opus 5.5). Anthropic becomes a subprocessor: [owner-and-legal.md](owner-and-legal.md) |
 | Render logs | Warnings naming a tenant id when usage or a run could not be recorded; startup errors | Operations. No credential, token, link or query text is logged |
 | GitHub | Monitor results: which public check failed and why | Incident issues |
