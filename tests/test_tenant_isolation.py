@@ -300,7 +300,7 @@ OPERATOR = {
     ("GET", "/v1/ops/me"), ("POST", "/v1/ops/unlock"), ("POST", "/v1/ops/lock"),
     ("GET", "/v1/ops/tickets"), ("GET", "/v1/ops/tickets/{ticket_id}"),
     ("POST", "/v1/ops/tickets/{ticket_id}/reply"), ("POST", "/v1/ops/tickets/{ticket_id}/status"),
-    ("GET", "/v1/ops/log"),
+    ("GET", "/v1/ops/log"), ("GET", "/v1/ops/accounts"), ("GET", "/v1/ops/accounts/{tenant_id}"),
 }
 #: Mounted apps. /mcp is the hosted MCP server; its tools are listed next.
 MOUNTS = {("MOUNT", "/mcp")}

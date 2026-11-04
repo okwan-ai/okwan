@@ -14,6 +14,8 @@ Never for a customer, and built to be the hardest door in the product:
   check each dashboard page makes to draw the sidebar, is not.
 * **No secret values.** Tickets, briefs and conversations are already
   redacted; a reply that looks like it carries a secret is refused.
+  Accounts show which connections are saved by field name and keys by
+  prefix: never a credential value or a key hash.
 
 Customer data here is read across tenants on purpose. Writes still go
 through each tenant's own scope: a ticket's status and replies are written
@@ -29,6 +31,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from okwan_vault import accounts, totp
+from okwan_vault.usage import month_start, quota
 from pydantic import BaseModel, Field
 
 from .auth import get_store
@@ -154,6 +157,50 @@ Reply to this email to continue. Your request: <span style="font-family:ui-monos
     return subject, text, page
 
 
+# ── accounts ───────────────────────────────────────────────────────────
+
+def _run(r) -> dict[str, Any]:
+    return {"id": r.id, "kind": r.kind, "name": r.name, "surface": r.surface,
+            "status": r.status, "finished_at": r.finished_at.isoformat(), "error": r.error}
+
+
+async def _members(tenant) -> list:
+    """The account and its merchants: what one plan and one login cover."""
+    return [tenant, *await get_store().children_of(tenant.id)]
+
+
+async def _latest_run(members: list):
+    store = get_store()
+    runs = [r for m in members for r in await store.list_runs(m.id, None, 1)]
+    return max(runs, key=lambda r: r.finished_at, default=None)
+
+
+async def _account_row(tenant, open_tickets: dict[str, int]) -> dict[str, Any]:
+    store = get_store()
+    members = await _members(tenant)
+    q = await quota(store, tenant.id)
+    connections = sorted({c for m in members for c in await store.connectors_configured(m.id)})
+    keys = [k for m in members for k in await store.keys_for(m.id)]
+    last = await _latest_run(members)
+    return {
+        "id": tenant.id, "name": tenant.name, "created_at": tenant.created_at.isoformat(),
+        "contact": await store.account_email(tenant.id),
+        "plan": {"name": q.plan, "limit": q.limit, "used": q.used, "unmetered": q.unmetered},
+        "merchants": len(members) - 1,
+        "connections": connections,
+        "active_keys": sum(k.is_active for k in keys),
+        "last_run": _run(last) if last else None,
+        "open_tickets": open_tickets.get(tenant.id, 0),
+    }
+
+
+async def _open_tickets() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for t in await get_store().list_tickets(500, "open"):
+        counts[t.tenant_id] = counts.get(t.tenant_id, 0) + 1
+    return counts
+
+
 class UnlockIn(BaseModel):
     code: str = Field(min_length=6, max_length=12)
 
@@ -267,6 +314,57 @@ def build_router() -> APIRouter:
         await store.set_ticket_status(t.tenant_id, t.id, body.status)
         await _log(op, "set_status", t.id, tenant_id=t.tenant_id, status=body.status)
         return {"status": body.status}
+
+    @router.get("/accounts")
+    async def accounts_list(op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
+        store = get_store()
+        roots = sorted((t for t in await store.list_tenants() if t.parent_id is None),
+                       key=lambda t: t.created_at, reverse=True)[:500]
+        open_tickets = await _open_tickets()
+        rows = [await _account_row(t, open_tickets) for t in roots]
+        await _log(op, "list_accounts", count=len(rows))
+        return {"data": rows}
+
+    @router.get("/accounts/{tenant_id}")
+    async def account(tenant_id: str, op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
+        store = get_store()
+        tenant = await store.get_tenant(tenant_id)
+        # Accounts are root tenants; a merchant is shown on its account's page.
+        if tenant is None or tenant.parent_id is not None:
+            raise HTTPException(404, f"no such account: {tenant_id}")
+        members = await _members(tenant)
+        by_surface: dict[str, int] = {}
+        for _, _, surface, count in await store.usage_buckets(tenant.id, month_start()):
+            by_surface[surface] = by_surface.get(surface, 0) + count
+        merchants = []
+        for m in members:
+            last = await _latest_run([m])
+            merchants.append({
+                "id": m.id, "name": m.name, "is_account": m.id == tenant.id,
+                "created_at": m.created_at.isoformat(),
+                # Field names only: which parts of a credential are saved.
+                "connections": await store.connectors_configured(m.id),
+                "last_run": _run(last) if last else None,
+            })
+        keys = [{"id": k.id, "tenant_id": k.tenant_id, "prefix": k.prefix,
+                 "issued": k.created_at.isoformat(),
+                 "revoked": k.revoked_at.isoformat() if k.revoked_at else None}
+                for m in members for k in await store.keys_for(m.id)]
+        runs = sorted([r for m in members for r in await store.list_runs(m.id, None, 10)],
+                      key=lambda r: r.finished_at, reverse=True)[:15]
+        ids = {m.id for m in members}
+        tickets = [await _ticket_row(t) for t in await store.list_tickets(500, None)
+                   if t.tenant_id in ids][:50]
+        await _log(op, "view_account", tenant.id)
+        return {
+            **await _account_row(tenant, await _open_tickets()),
+            "usage_by_surface": dict(sorted(by_surface.items())),
+            "month_start": month_start().isoformat(),
+            "members": merchants,
+            "keys": sorted(keys, key=lambda k: k["issued"], reverse=True),
+            "runs": [{**_run(r), "tenant_id": r.tenant_id} for r in runs],
+            "tickets": tickets,
+        }
 
     @router.get("/log")
     async def log(limit: int = Query(100, ge=1, le=500),

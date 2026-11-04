@@ -31,7 +31,11 @@ ROUTES = [
     ("POST", "/v1/ops/tickets/{t}/reply", {"body": "hello"}),
     ("POST", "/v1/ops/tickets/{t}/status", {"status": "resolved"}),
     ("GET", "/v1/ops/log", None),
+    ("GET", "/v1/ops/accounts", None),
+    ("GET", "/v1/ops/accounts/{a}", None),
 ]
+#: A saved credential's value: it must never leave the vault through the console.
+STRIPE_VALUE = "sk_test_51ConsoleMustNeverShowThisValue"
 
 
 @pytest.fixture(params=["memory", "postgres"])
@@ -105,6 +109,12 @@ async def world(store, monkeypatch):
     a = await store.create_tenant("Acme ISV")
     contact = f"founder-{os.urandom(3).hex()}@acme.test"
     await store.add_account(a.id, contact, pw)
+    shop = await store.create_tenant("Kofi's Store", parent_id=a.id)
+    await store.put_credential(shop.id, "stripe", "secret_key", STRIPE_VALUE)
+    _, shop_key = await store.issue_key(shop.id)
+    await store.add_run(shop.id, kind="across", name="rails", surface="dashboard", status="failed",
+                        started_at=NOW, finished_at=NOW, summary=None, rows=None,
+                        error="stripe answered 401")
     b = await store.create_tenant("Rival ISV")
     conv = await store.save_conversation(a.id, None, [
         {"role": "user", "content": [{"type": "text", "text": "My Stripe test fails"}]},
@@ -124,7 +134,8 @@ async def world(store, monkeypatch):
         summary="Wants the pro plan", notified=False)
     key, _ = await store.issue_key(hq.id)
     return SimpleNamespace(
-        store=store, hq=hq, a=a, b=b, contact=contact, ticket_a=ticket_a, ticket_b=ticket_b,
+        store=store, hq=hq, a=a, b=b, shop=shop, shop_key=shop_key, contact=contact,
+        ticket_a=ticket_a, ticket_b=ticket_b,
         ops=await _session(store, hq.id), customer=await _session(store, a.id), ops_key=key)
 
 
@@ -149,7 +160,7 @@ async def _unlock(client, world, token: str | None = None) -> httpx.Response:
 
 
 async def _call(client, world, method, path, body, token):
-    return await client.request(method, path.format(t=world.ticket_a.id), json=body,
+    return await client.request(method, path.format(t=world.ticket_a.id, a=world.a.id), json=body,
                                 headers=_auth(token))
 
 
@@ -359,6 +370,50 @@ async def test_the_log_cannot_be_changed_in_postgres(world, store):
                 "DELETE FROM operator_actions", "TRUNCATE operator_actions"):
         with pytest.raises(Exception, match="append-only"):
             await store.pool.execute(sql)
+
+
+# ── accounts ───────────────────────────────────────────────────────────
+
+async def test_the_accounts_list_shows_every_account_with_its_merchants(client, world):
+    await _unlock(client, world)
+    rows = {r["id"]: r for r in (await client.get("/v1/ops/accounts",
+                                                  headers=_auth(world.ops))).json()["data"]}
+    assert {world.a.id, world.b.id, world.hq.id} <= set(rows)
+    assert world.shop.id not in rows  # a merchant is listed under its account
+    a = rows[world.a.id]
+    assert (a["name"], a["contact"], a["merchants"], a["connections"], a["open_tickets"]) == (
+        "Acme ISV", world.contact, 1, ["stripe"], 1)
+    assert a["active_keys"] == 1 and a["last_run"]["status"] == "failed"
+    assert a["plan"]["name"] and "used" in a["plan"]
+
+
+async def test_an_account_shows_merchants_keys_runs_and_tickets(client, world, store):
+    await _unlock(client, world)
+    r = await client.get(f"/v1/ops/accounts/{world.a.id}", headers=_auth(world.ops))
+    assert r.status_code == 200
+    acct = r.json()
+    shop = next(m for m in acct["members"] if m["id"] == world.shop.id)
+    assert shop["connections"] == {"stripe": ["secret_key"]}
+    assert shop["last_run"]["error"] == "stripe answered 401"
+    assert [k["prefix"] for k in acct["keys"]] == [world.shop_key.prefix]
+    assert [t["id"] for t in acct["tickets"]] == [world.ticket_a.id]
+    assert [x["tenant_id"] for x in acct["runs"]] == [world.shop.id]
+    entry = (await store.operator_log())[0]
+    assert (entry["action"], entry["target"]) == ("view_account", world.a.id)
+
+
+async def test_the_console_never_shows_a_credential_value_or_a_key_hash(client, world):
+    await _unlock(client, world)
+    for path in ("/v1/ops/accounts", f"/v1/ops/accounts/{world.a.id}"):
+        body = (await client.get(path, headers=_auth(world.ops))).text
+        assert STRIPE_VALUE not in body and world.shop_key.hash_hex not in body
+
+
+async def test_a_merchant_or_unknown_id_is_not_an_account(client, world):
+    await _unlock(client, world)
+    for tenant_id in (world.shop.id, "ten_0000000000000000"):
+        r = await client.get(f"/v1/ops/accounts/{tenant_id}", headers=_auth(world.ops))
+        assert r.status_code == 404
 
 
 def test_the_setup_file_carries_the_key_for_an_authenticator_app():
