@@ -62,3 +62,9 @@ export const IconGear = ({ className }: P) => (
 export const IconLock = ({ className }: P) => (
   <svg {...base} className={className}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
 );
+export const IconHelp = ({ className }: P) => (
+  <svg {...base} className={className}><path d="M4 5h16v11H9l-5 4z" /><path d="M9.5 9a2.5 2.5 0 0 1 4.9.7c0 1.6-2.4 1.8-2.4 3.3" /><path d="M12 15.5h.01" /></svg>
+);
+export const IconSend = ({ className }: P) => (
+  <svg {...base} className={className}><path d="M4 12 20 4l-6 16-3-7z" /><path d="m11 13 9-9" /></svg>
+);

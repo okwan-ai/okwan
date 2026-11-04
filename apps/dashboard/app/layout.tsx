@@ -5,6 +5,7 @@ import { digest, seenFindings, storedRuns } from "@/lib/runs";
 import { connectors } from "@/lib/merchants";
 import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
+import { SupportPanel } from "./_components/support-panel";
 import { Wordmark } from "./_components/ui/mark";
 import "./globals.css";
 
@@ -59,6 +60,7 @@ export default async function RootLayout({
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
               <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 sm:py-10 xl:px-12">{children}</div>
             </main>
+            <SupportPanel />
           </div>
         ) : (
           <SignedOut>{children}</SignedOut>

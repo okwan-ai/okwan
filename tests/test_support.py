@@ -349,6 +349,7 @@ async def test_a_pasted_secret_never_reaches_the_model_or_the_database(client, w
     r = await ask(client, world, f"my stripe key {secret} doesn't work")
     body = r.json()
     assert body["removed"] == ["a Stripe or Paystack secret key"]
+    assert body["message"] == "my stripe key [removed: a Stripe or Paystack secret key] doesn't work"
     sent = json.dumps(m.calls[0])
     assert secret not in sent and "[removed: a Stripe or Paystack secret key]" in sent
     notes = [x for x in m.calls[0]["messages"] if x["role"] == "system"]

@@ -543,7 +543,9 @@ def build_router() -> APIRouter:
 
         saved = await store.save_conversation(
             actor.id, conversation_id, messages, (conversation.turns if conversation else 0) + 1)
+        # `message` is what was kept, so the panel can show the customer their
+        # own text without the secret they pasted still on screen.
         return {"conversation_id": saved, "reply": reply, "ticket": ticket,
-                "removed": removed}
+                "removed": removed, "message": text}
 
     return router
