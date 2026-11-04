@@ -21,13 +21,17 @@ to check, and what to do, in that order.
 
 | Tier | Who | Does | Needs access to |
 |---|---|---|---|
-| 1. First response | **Not yet named** (see [Owner decisions](#owner-decisions)) | Acknowledges the customer, checks the [status of the parts](#where-things-run), follows this runbook's sections marked *Tier 1* | GitHub (triage), Render (viewer), status pages |
+| 1. First response | **Okwan Support**, the assistant in the dashboard ([Support assistant](#support-assistant)) | Answers in real time from the docs and a read-only look at the customer's own account: connections, tests, runs, keys, plan. Escalates by email anything it cannot settle, and anything about security or money at once | The customer's own account, read-only, through the API's guard |
 | 2. On call | Felix Marwuko (`@Marwuko`) until a second engineer is named | Every section here: restarts, rollbacks, operator commands | Render (deploy), Neon (console), Vercel, the Okwan Codespace |
 | 3. Owner | Felix Marwuko | Code changes, security incidents, master key, anything this runbook does not cover | Everything |
 
 The monitor assigns each incident issue to the GitHub user in the
 repository variable `OKWAN_ONCALL` (default `Marwuko`). Change that
-variable when the rota changes; nothing else has to change.
+variable when the rota changes; nothing else has to change. Support
+escalations go to `OKWAN_SUPPORT_ESCALATION_TO` on the Render `okwan`
+service, and every one is listed by `python -m okwan_vault support list`
+whether or not the mail went out. Read that list daily: a line marked
+`NOT MAILED` is a customer still waiting.
 
 **Severity and proposed response targets.** These are proposals. They
 are not in any contract until the owner signs one that states them.
@@ -267,6 +271,33 @@ A customer says they saw data that is not theirs. SEV1. Tier 3 at once.
 4. Notifying affected customers and any regulator is a legal decision,
    not an engineering one: the owner, with counsel.
 
+### Support assistant
+
+The assistant answers on every signed-in dashboard page (*Ask Okwan*,
+bottom right) and at `POST /v1/support/messages`.
+
+- **It answers 503 "not switched on yet".** `ANTHROPIC_API_KEY` is not set
+  on the Render `okwan` service. Set it (an Anthropic API key with a
+  monthly spend limit set in the Anthropic console) and redeploy.
+- **It answers 503 "unavailable" or "busy".** The key was refused (the
+  log says so: replace it), Anthropic is rate limiting (wait), or
+  Anthropic is down (its status page). Customers can still use
+  everything else; nothing waits on the assistant.
+- **Escalations do not arrive.** `OKWAN_SUPPORT_ESCALATION_TO` or the
+  mailer (`RESEND_API_KEY`, `OKWAN_MAIL_FROM`) is missing, or Resend
+  refused the send (the log names the status). Nothing is lost: the
+  ticket is stored, so `python -m okwan_vault support list` shows it with
+  `NOT MAILED`. Answer the customer from there.
+- **A customer says the assistant gave a wrong answer.** Treat it like any
+  report: the conversation is stored for 30 days. Fixing its knowledge is
+  a code change (`apps/api/okwan_api/support.py`, `knowledge()` and
+  `SYSTEM`), Tier 3.
+- **To switch it off at once:** remove `ANTHROPIC_API_KEY` from the Render
+  service and redeploy. The panel then says it is not switched on.
+- **Cost:** each message is one model call plus at most six tool rounds;
+  the spend limit in the Anthropic console is the ceiling. The route is
+  rate limited to 40 messages an hour per account and 60 per address.
+
 ### Roll back a deploy
 
 Render → service → *Events*: pick the last deploy that was live and
@@ -341,7 +372,8 @@ issue.
 
 Open, and not this runbook's to make:
 
-- Who is Tier 1 and the second on-call engineer, and their access.
+- A second on-call engineer, and their access. Tier 1 is the support
+  assistant; everything after it is one person today.
 - A support address customers write to (for example `support@okwan.ai`,
   which needs a mailbox: Resend only sends).
 - The response targets above, before any contract states them.

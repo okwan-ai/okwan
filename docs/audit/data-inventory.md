@@ -15,6 +15,8 @@ and what it holds only for the length of a request.
 | `credentials` | A tenant's rail credentials | AES-256-GCM per value with its own data key; data key wrapped by the master key; AAD binds tenant, connector and field; row-level security | Until replaced or deleted |
 | `usage` | Hourly request counts per tenant and surface | Row-level security | Not purged |
 | `plans` | A root tenant's plan and limit | Row-level security | As the tenant |
+| `support_conversations` | The support assistant's transcripts: customer text after secret redaction, the assistant's turns, the read-only tools' results (plan and usage, which connections are saved, test results, run summaries and errors, key prefixes) | Row-level security; secrets removed before storage | 30 days after the last message; the save prunes older ones |
+| `support_tickets` | What the assistant handed to a person: severity, category, its summary (secrets removed), whether the mail went out | Row-level security | Not purged |
 | `reconciliation_runs` | Each run's summary and trimmed per-order verdicts (outcome, order reference, currency, totals, per-rail amounts, reason); a scrubbed error, at most 300 characters | Row-level security; no raw rail record is written (`okwan_recon` trims rows) | Newest 50 per tenant, kind and name; the insert prunes the rest |
 
 **Not stored anywhere:** card numbers (no rail returns one and no table
@@ -36,7 +38,8 @@ request bodies, customer email addresses or names from the rails.
 | Recipient | What | Why |
 |---|---|---|
 | The rails | The tenant's own credentials, as each rail's API requires | To read that tenant's records |
-| Resend | Recipient address and the verification link | To deliver it; tracking must be off for the sending domain |
+| Resend | Recipient address and the verification link; support escalations (tenant id and name, the assistant's summary, the customer's last three messages, secrets removed) to `OKWAN_SUPPORT_ESCALATION_TO` | To deliver them; tracking must be off for the sending domain |
+| Anthropic | A support conversation: the customer's messages and the tools' results, secrets removed, plus Okwan's own documentation | To answer it (Claude Opus 5.5). Anthropic becomes a subprocessor: [owner-and-legal.md](owner-and-legal.md) |
 | Render logs | Warnings naming a tenant id when usage or a run could not be recorded; startup errors | Operations. No credential, token, link or query text is logged |
 | GitHub | Monitor results: which public check failed and why | Incident issues |
 
@@ -44,6 +47,6 @@ request bodies, customer email addresses or names from the rails.
 
 Set on the Render services, never in the repository:
 `OKWAN_VAULT_MASTER_KEY`, `OKWAN_VAULT_DATABASE_URL`, `RESEND_API_KEY`,
-`OKWAN_DASHBOARD_SECRET`. The master key opens every stored credential;
+`OKWAN_DASHBOARD_SECRET`, `ANTHROPIC_API_KEY`. The master key opens every stored credential;
 see [known-gaps.md](known-gaps.md), "Master key in an environment
 variable".

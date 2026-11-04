@@ -27,6 +27,16 @@ table cannot point at something that no longer exists.
 | C12 | The statement guard refuses every known escape and anything but a single read | `packages/query/okwan_query/guard.py` | `tests/test_tenant_isolation.py::test_the_statement_guard_refuses_every_escape` |
 | C13 | No escape works over REST or hosted MCP | Both of the above | `tests/test_tenant_isolation.py::test_no_escape_works_over_rest`, `tests/test_tenant_isolation.py::test_no_escape_works_over_hosted_mcp` |
 
+## The support assistant
+
+| # | Claim | Enforced in | Proven by |
+|---|---|---|---|
+| C25 | The assistant can only read the caller's own account and its merchants | `apps/api/okwan_api/support.py` (`_target`, `run_tool`) | `tests/test_support.py::test_another_accounts_tenant_is_not_in_this_account`, `tests/test_support.py::test_the_overview_is_the_callers_account_only`, `tests/test_support.py::test_another_accounts_conversation_is_404` |
+| C26 | No secret reaches the model, the transcript or an escalation | `apps/api/okwan_api/support.py` (`redact`) | `tests/test_support.py::test_a_pasted_secret_never_reaches_the_model_or_the_database`, `tests/test_support.py::test_a_secret_inside_a_tool_result_is_removed`, `tests/test_support.py::test_an_escalation_is_recorded_and_mailed_to_the_owner` |
+| C27 | Every tool reads; the only write is a support ticket | `apps/api/okwan_api/support.py` (`TOOLS`, `READ_ONLY_TOOLS`) | `tests/test_support.py::test_every_tool_reads_except_escalate` |
+| C28 | The transcript is kept server-side and replayed exactly as produced | `apps/api/okwan_api/support.py` (`answer`), `packages/vault/okwan_vault/postgres.py` (`save_conversation`) | `tests/test_support.py::test_the_history_replays_exactly_as_produced` |
+| C29 | An escalation is never lost, mailed or not | `packages/vault/okwan_vault/cli.py` (`support list`) | `tests/test_support.py::test_without_mail_an_escalation_is_still_recorded` |
+
 ## Secrets and credentials
 
 | # | Claim | Enforced in | Proven by |

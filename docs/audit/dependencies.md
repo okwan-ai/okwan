@@ -18,6 +18,7 @@ come from these; see "Full inventory" for how to list them.
 | asyncpg | >=0.29 | 0.32.0 | Vault database |
 | duckdb | >=1.1 | 2.0.0 | SQL over connector rows, sandboxed |
 | cryptography | >=43.0 | 50.0.2 | AES-GCM envelope encryption |
+| anthropic | >=2.4,<3 | 2.4.0 | The support assistant's model calls |
 
 Development only: pytest 9.2.0, pytest-asyncio 1.4.1.post1, ruff 0.17.3
 (pinned `>=0.17,<0.18`).
@@ -53,7 +54,8 @@ tag, not commit: known gap G9.
 ## Services
 
 Render (API, dashboard), Neon (vault database), Vercel (site, DNS for
-okwan.ai), Resend (verification mail), GitHub (code, CI, monitoring).
+okwan.ai), Resend (verification and escalation mail), Anthropic (the
+support assistant's model), GitHub (code, CI, monitoring).
 Which of these are subprocessors of customer data is an owner and counsel
 question: [owner-and-legal.md](owner-and-legal.md).
 

@@ -9,6 +9,7 @@
 | Public site | `apps/web` (Next.js 15, static export) | Vercel | Nothing at run time |
 | Vault database | `packages/vault/okwan_vault/schema.sql` | Neon Postgres | — |
 | Verification mail | `apps/api/okwan_api/mail.py` | Resend (sending only) | — |
+| Support assistant | `apps/api/okwan_api/support.py` | Inside the API | Anthropic's API (Claude Opus 5.5); the caller's own account through the same guard as the dashboard; Resend for escalations |
 | Monitor and CI | `.github/workflows/` | GitHub Actions | The public hosts; a throwaway Postgres in CI |
 
 Okwan is **read-only towards every payment rail**: no connector a
@@ -78,6 +79,12 @@ digest of the client id, secret and token URL.
 7. **Dashboard → API.** Server to server. The dashboard forwards the
    browser's IP for rate limits only alongside a shared secret
    (`OKWAN_DASHBOARD_SECRET`).
-8. **Operator → vault.** Full access by design: the master key and the
+8. **Customer → support assistant → model.** The customer's text and the
+   read-only tools' results go to Anthropic's API, after `redact` removes
+   anything secret-looking. The tools run as the caller through the subtree
+   guard, so the model can only be shown the caller's own account; none of
+   them changes anything. The transcript is kept server-side and replayed
+   exactly, so a browser cannot forge an earlier turn or a tool result.
+9. **Operator → vault.** Full access by design: the master key and the
    database owner role. See [known-gaps.md](known-gaps.md) on the master
    key and on an action log.
