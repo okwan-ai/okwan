@@ -175,6 +175,84 @@ BEGIN
     END IF;
 END $$;
 
+-- Ticket status for the operator console: open, answered, resolved.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'support_tickets'
+          AND column_name = 'status'
+    ) THEN
+        ALTER TABLE support_tickets
+            ADD COLUMN status text NOT NULL DEFAULT 'open',
+            ADD COLUMN resolved_at timestamptz;
+    END IF;
+END $$;
+
+-- A person's replies to a ticket, sent from the operator console.
+CREATE TABLE IF NOT EXISTS support_replies (
+    id          text PRIMARY KEY,
+    tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    ticket_id   text NOT NULL,
+    operator    text NOT NULL,
+    body        text NOT NULL,
+    sent        boolean NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── operators ───────────────────────────────────────────────────────
+-- The operator console sees every customer, so it takes more than a
+-- password: an allowlisted login (OKWAN_OPERATOR_EMAILS), an authenticator
+-- code that unlocks one session for 30 minutes, and a permanent log.
+-- The authenticator secret is sealed like a rail credential.
+CREATE TABLE IF NOT EXISTS operator_factors (
+    email        text PRIMARY KEY,
+    ciphertext   bytea NOT NULL,
+    wrapped_key  bytea NOT NULL,
+    key_id       text NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'sessions'
+          AND column_name = 'operator_until'
+    ) THEN
+        ALTER TABLE sessions ADD COLUMN operator_until timestamptz;
+    END IF;
+END $$;
+
+-- Every operator action, append-only: the database refuses to change or
+-- remove a row, so the log cannot be quietly edited by the application.
+CREATE TABLE IF NOT EXISTS operator_actions (
+    id        bigserial PRIMARY KEY,
+    at        timestamptz NOT NULL DEFAULT now(),
+    operator  text NOT NULL,
+    action    text NOT NULL,
+    target    text,
+    detail    jsonb
+);
+
+CREATE OR REPLACE FUNCTION operator_actions_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'operator_actions is append-only';
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'operator_actions_no_change') THEN
+        CREATE TRIGGER operator_actions_no_change BEFORE UPDATE OR DELETE ON operator_actions
+            FOR EACH ROW EXECUTE FUNCTION operator_actions_append_only();
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'operator_actions_no_truncate') THEN
+        CREATE TRIGGER operator_actions_no_truncate BEFORE TRUNCATE ON operator_actions
+            FOR EACH STATEMENT EXECUTE FUNCTION operator_actions_append_only();
+    END IF;
+END $$;
+
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
 -- stored runs, support conversations and tickets) runs as okwan_tenant, inside one transaction that names
@@ -223,7 +301,7 @@ DECLARE
         $s$tenant_id = ANY (string_to_array(current_setting('okwan.tenant_ids', true), ','))$s$;
 BEGIN
     FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs',
-                             'support_conversations', 'support_tickets'] LOOP
+                             'support_conversations', 'support_tickets', 'support_replies'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')
@@ -242,7 +320,8 @@ BEGIN
         END IF;
     END LOOP;
     -- The identity tables: nothing for okwan_tenant, whatever was granted before.
-    FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups'] LOOP
+    FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups',
+                             'operator_factors', 'operator_actions'] LOOP
         IF has_table_privilege('okwan_tenant', t,
                                'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
             EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);

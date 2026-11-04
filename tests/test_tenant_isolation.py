@@ -293,6 +293,15 @@ ADMIN_OTHER = {
     # account's conversation id, are tested in tests/test_support.py.
     ("POST", "/v1/support/messages"),
 }
+#: The operator console: Okwan's own staff, across accounts by design. Every
+#: route answers a plain 404 to anyone but an allowlisted operator whose
+#: session is unlocked with an authenticator code: tests/test_ops.py.
+OPERATOR = {
+    ("GET", "/v1/ops/me"), ("POST", "/v1/ops/unlock"), ("POST", "/v1/ops/lock"),
+    ("GET", "/v1/ops/tickets"), ("GET", "/v1/ops/tickets/{ticket_id}"),
+    ("POST", "/v1/ops/tickets/{ticket_id}/reply"), ("POST", "/v1/ops/tickets/{ticket_id}/status"),
+    ("GET", "/v1/ops/log"),
+}
 #: Mounted apps. /mcp is the hosted MCP server; its tools are listed next.
 MOUNTS = {("MOUNT", "/mcp")}
 #: The hosted MCP server's tools, each run as every tenant in layer 3.
@@ -321,7 +330,8 @@ def _routes() -> set[tuple[str, str]]:
 
 
 def test_every_route_is_classified():
-    classified = PUBLIC | KEY_DATA | set(ADMIN_BY_TENANT) | ADMIN_OTHER | MOUNTS | _connector_routes()
+    classified = (PUBLIC | KEY_DATA | set(ADMIN_BY_TENANT) | ADMIN_OTHER | OPERATOR | MOUNTS
+                  | _connector_routes())
     unclassified = sorted(_routes() - classified)
     assert not unclassified, (
         f"routes no isolation test covers: {unclassified}. Classify each in "
@@ -330,7 +340,8 @@ def test_every_route_is_classified():
 
 
 def test_the_inventory_has_no_stale_entries():
-    stale = sorted((PUBLIC | KEY_DATA | set(ADMIN_BY_TENANT) | ADMIN_OTHER | MOUNTS | _connector_routes()) - _routes())
+    stale = sorted((PUBLIC | KEY_DATA | set(ADMIN_BY_TENANT) | ADMIN_OTHER | OPERATOR | MOUNTS
+                    | _connector_routes()) - _routes())
     assert not stale, f"classified routes that no longer exist: {stale}"
 
 

@@ -109,11 +109,14 @@ def test_every_route_that_can_read_a_rail_requires_a_key():
     Public routes are named explicitly, so adding one is a decision."""
     from okwan_api.auth import admin_actor, check_quota, current_tenant
     from okwan_api.main import app
+    from okwan_api.ops import operator
 
     public = {"/healthz", "/v1/connectors", "/v1/signup", "/v1/signup/verify",
               "/v1/sessions", "/openapi.json", "/docs", "/docs/oauth2-redirect",
               "/redoc"}
-    gates = {current_tenant, check_quota, admin_actor}
+    # The operator console's gate: a dashboard session whose login is on the
+    # allowlist (tests/test_ops.py), which reaches no rail.
+    gates = {current_tenant, check_quota, admin_actor, operator}
 
     def gated(dependant) -> bool:
         return any(d.call in gates or gated(d) for d in dependant.dependencies)

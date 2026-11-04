@@ -29,12 +29,12 @@ needs_db = pytest.mark.skipif(not DSN, reason="no vault database configured")
 #: a key hash, a session hash or an address to a tenant, which has to work
 #: before any tenant is known. The login role reads them; okwan_tenant cannot.
 IDENTITY_TABLES = {"api_keys", "sessions", "accounts"}
-NO_TENANT_COLUMN = {"tenants", "signups"}
+NO_TENANT_COLUMN = {"tenants", "signups", "operator_factors", "operator_actions"}
 
 #: Store methods that read tenant data across every tenant, on purpose, as
 #: the login role. Each is reached only by the operator CLI, never by a
 #: route: `support list` shows the operator every escalation.
-OPERATOR_READS = {"list_tickets"}
+OPERATOR_READS = {"list_tickets", "get_ticket"}
 
 
 # ── static: every query over tenant data enters a scope ────────────────
@@ -140,8 +140,9 @@ async def two(store):
         await store.add_run(t.id, kind="across", name="rails", surface="rest", status="ok",
                             started_at=now, finished_at=now, summary={}, rows=[], error=None)
         cid = await store.save_conversation(t.id, None, [{"role": "user", "content": "hi"}], 1)
-        await store.add_ticket(t.id, conversation_id=cid, severity="sev3", category="other",
-                               summary=f"{name} asked for help", notified=False)
+        ticket = await store.add_ticket(t.id, conversation_id=cid, severity="sev3", category="other",
+                                        summary=f"{name} asked for help", notified=False)
+        await store.add_reply(t.id, ticket.id, "owner@okwan.test", "We're on it.", True)
         out.append(t)
     return out
 
@@ -264,11 +265,14 @@ def _insert(table: str, tenant_id: str) -> tuple:
         "support_tickets": (("INSERT INTO support_tickets (id, tenant_id, severity, category, "
                              "summary) VALUES ('tkt_rls_probe', $1, 'sev3', 'other', 'probe')"),
                             tenant_id),
+        "support_replies": (("INSERT INTO support_replies (id, tenant_id, ticket_id, operator, body, "
+                             "sent) VALUES ('rpl_rls_probe', $1, 't', 'o', 'b', true)"), tenant_id),
     }[table]
 
 
 @needs_db
-@pytest.mark.parametrize("table", ["tenants", "api_keys", "sessions", "accounts", "signups"])
+@pytest.mark.parametrize("table", ["tenants", "api_keys", "sessions", "accounts", "signups",
+                                   "operator_factors", "operator_actions"])
 async def test_the_role_cannot_read_the_identity_tables(store, table):
     async with store.pool.acquire() as con:
         with pytest.raises(Exception, match="permission denied"):

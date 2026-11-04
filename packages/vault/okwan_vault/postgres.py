@@ -57,7 +57,7 @@ TENANT_ROLE = "okwan_tenant"
 #: is in the transaction's scope.
 TENANT_TABLES = (
     "credentials", "usage", "plans", "reconciliation_runs",
-    "support_conversations", "support_tickets",
+    "support_conversations", "support_tickets", "support_replies",
 )
 
 
@@ -702,8 +702,7 @@ class PostgresStore:
                     "INSERT INTO support_tickets (id, tenant_id, conversation_id, severity, "
                     "category, summary, notified, brief) "
                     "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) "
-                    "RETURNING id, tenant_id, conversation_id, severity, category, summary, "
-                    "notified, created_at, brief",
+                    f"RETURNING {_TICKET_COLS}",
                     ticket_id or f"tkt_{uuid.uuid4().hex[:16]}", tenant_id, conversation_id, severity,
                     category, summary, notified, _dumps(brief),
                 )
@@ -711,15 +710,104 @@ class PostgresStore:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
         return _ticket(row)
 
-    async def list_tickets(self, limit: int = 50) -> list[SupportTicket]:
+    async def list_tickets(self, limit: int = 50, status: str | None = None) -> list[SupportTicket]:
         """Every tenant's tickets, newest first: for the operator only, as
-        the login role. No API route reaches this."""
+        the login role. Reached only by the operator CLI and the operator
+        console, never by a customer route."""
         rows = await self.pool.fetch(
-            "SELECT id, tenant_id, conversation_id, severity, category, summary, notified, "
-            "created_at, brief FROM support_tickets ORDER BY created_at DESC LIMIT $1",
-            limit,
+            f"SELECT {_TICKET_COLS} FROM support_tickets "
+            "WHERE ($2::text IS NULL OR status = $2) ORDER BY created_at DESC LIMIT $1",
+            limit, status,
         )
         return [_ticket(r) for r in rows]
+
+    async def get_ticket(self, ticket_id: str) -> SupportTicket | None:
+        """One ticket from any tenant: for the operator only, as the login role."""
+        row = await self.pool.fetchrow(
+            f"SELECT {_TICKET_COLS} FROM support_tickets WHERE id = $1", ticket_id)
+        return None if row is None else _ticket(row)
+
+    async def set_ticket_status(self, tenant_id: str, ticket_id: str, status: str) -> None:
+        async with self._scoped(tenant_id) as con:
+            done = await con.execute(
+                "UPDATE support_tickets SET status = $3, "
+                "resolved_at = CASE WHEN $3 = 'resolved' THEN now() ELSE NULL END "
+                "WHERE tenant_id = $1 AND id = $2",
+                tenant_id, ticket_id, status,
+            )
+        if done.endswith(" 0"):
+            raise KeyError(f"unknown ticket {ticket_id!r}")
+
+    async def add_reply(
+        self, tenant_id: str, ticket_id: str, operator: str, body: str, sent: bool
+    ) -> dict:
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                "INSERT INTO support_replies (id, tenant_id, ticket_id, operator, body, sent) "
+                "VALUES ($1, $2, $3, $4, $5, $6) "
+                "RETURNING id, tenant_id, ticket_id, operator, body, sent, created_at",
+                f"rpl_{uuid.uuid4().hex[:16]}", tenant_id, ticket_id, operator, body, sent,
+            )
+        return dict(row)
+
+    async def replies_for(self, tenant_id: str, ticket_id: str) -> list[dict]:
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                "SELECT id, tenant_id, ticket_id, operator, body, sent, created_at "
+                "FROM support_replies WHERE tenant_id = $1 AND ticket_id = $2 "
+                "ORDER BY created_at",
+                tenant_id, ticket_id,
+            )
+        return [dict(r) for r in rows]
+
+    async def put_operator_factor(self, email: str, secret: str) -> None:
+        data_key = new_key()
+        record = SealedCredential(tenant_id="operator", connector="totp", field_name=email,
+                                  ciphertext=b"", wrapped_key=b"", key_id=self._master.key_id)
+        await self.pool.execute(
+            "INSERT INTO operator_factors (email, ciphertext, wrapped_key, key_id) "
+            "VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET "
+            "ciphertext = EXCLUDED.ciphertext, wrapped_key = EXCLUDED.wrapped_key, "
+            "key_id = EXCLUDED.key_id, created_at = now()",
+            email, seal(data_key, secret.encode(), aad=record.aad),
+            self._master.wrap(data_key), self._master.key_id,
+        )
+
+    async def operator_factor(self, email: str) -> str | None:
+        row = await self.pool.fetchrow(
+            "SELECT ciphertext, wrapped_key, key_id FROM operator_factors WHERE email = $1", email)
+        if row is None:
+            return None
+        record = SealedCredential(tenant_id="operator", connector="totp", field_name=email,
+                                  ciphertext=bytes(row["ciphertext"]),
+                                  wrapped_key=bytes(row["wrapped_key"]), key_id=row["key_id"])
+        data_key = self._master.unwrap(record.wrapped_key)
+        return open_sealed(data_key, record.ciphertext, aad=record.aad).decode()
+
+    async def set_session_operator(self, token_hash: str, until: datetime | None) -> None:
+        await self.pool.execute(
+            "UPDATE sessions SET operator_until = $2 WHERE token_hash = $1", token_hash, until)
+
+    async def session_operator_until(self, token_hash: str) -> datetime | None:
+        return await self.pool.fetchval(
+            "SELECT operator_until FROM sessions WHERE token_hash = $1 AND expires_at > now()",
+            token_hash,
+        )
+
+    async def log_operator(
+        self, operator: str, action: str, target: str | None, detail: dict | None
+    ) -> None:
+        await self.pool.execute(
+            "INSERT INTO operator_actions (operator, action, target, detail) "
+            "VALUES ($1, $2, $3, $4::jsonb)",
+            operator, action, target, _dumps(detail),
+        )
+
+    async def operator_log(self, limit: int = 100) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT at, operator, action, target, detail FROM operator_actions "
+            "ORDER BY id DESC LIMIT $1", limit)
+        return [{**dict(r), "detail": _loads(r["detail"])} for r in rows]
 
     async def account_email(self, tenant_id: str) -> str | None:
         """The sign-in address of the tenant's login, or of the nearest
@@ -770,7 +858,12 @@ def _ticket(row) -> SupportTicket:
         id=row["id"], tenant_id=row["tenant_id"], conversation_id=row["conversation_id"],
         severity=row["severity"], category=row["category"], summary=row["summary"],
         notified=row["notified"], created_at=row["created_at"], brief=_loads(row["brief"]),
+        status=row["status"], resolved_at=row["resolved_at"],
     )
+
+
+_TICKET_COLS = ("id, tenant_id, conversation_id, severity, category, summary, notified, "
+                "created_at, brief, status, resolved_at")
 
 
 # ── reconciliation runs: row shapes ─────────────────────────────────

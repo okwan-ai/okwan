@@ -96,8 +96,22 @@ class Store(Protocol):
         category: str, summary: str, notified: bool, ticket_id: str | None = None,
         brief: dict | None = None,
     ) -> SupportTicket: ...
-    async def list_tickets(self, limit: int = 50) -> list[SupportTicket]: ...
+    async def list_tickets(self, limit: int = 50, status: str | None = None) -> list[SupportTicket]: ...
     async def account_email(self, tenant_id: str) -> str | None: ...
+    async def get_ticket(self, ticket_id: str) -> SupportTicket | None: ...
+    async def set_ticket_status(self, tenant_id: str, ticket_id: str, status: str) -> None: ...
+    async def add_reply(
+        self, tenant_id: str, ticket_id: str, operator: str, body: str, sent: bool
+    ) -> dict: ...
+    async def replies_for(self, tenant_id: str, ticket_id: str) -> list[dict]: ...
+    async def put_operator_factor(self, email: str, secret: str) -> None: ...
+    async def operator_factor(self, email: str) -> str | None: ...
+    async def set_session_operator(self, token_hash: str, until: datetime | None) -> None: ...
+    async def session_operator_until(self, token_hash: str) -> datetime | None: ...
+    async def log_operator(
+        self, operator: str, action: str, target: str | None, detail: dict | None
+    ) -> None: ...
+    async def operator_log(self, limit: int = 100) -> list[dict]: ...
 
 
 class MemoryStore:
@@ -119,6 +133,10 @@ class MemoryStore:
         self._runs: dict[str, RunRecord] = {}
         self._conversations: dict[str, SupportConversation] = {}
         self._tickets: dict[str, SupportTicket] = {}
+        self._replies: list[dict] = []
+        self._factors: dict[str, SealedCredential] = {}
+        self._operator_until: dict[str, datetime] = {}
+        self._operator_log: list[dict] = []
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -447,9 +465,71 @@ class MemoryStore:
         self._tickets[t.id] = t
         return t
 
-    async def list_tickets(self, limit: int = 50) -> list[SupportTicket]:
+    async def list_tickets(self, limit: int = 50, status: str | None = None) -> list[SupportTicket]:
         """Every tenant's tickets, newest first: for the operator only."""
-        return sorted(self._tickets.values(), key=lambda t: t.created_at, reverse=True)[:limit]
+        found = [t for t in self._tickets.values() if status is None or t.status == status]
+        return sorted(found, key=lambda t: t.created_at, reverse=True)[:limit]
+
+    async def get_ticket(self, ticket_id: str) -> SupportTicket | None:
+        """One ticket from any tenant: for the operator only."""
+        return self._tickets.get(ticket_id)
+
+    async def set_ticket_status(self, tenant_id: str, ticket_id: str, status: str) -> None:
+        t = self._tickets.get(ticket_id)
+        if t is None or t.tenant_id != tenant_id:
+            raise KeyError(f"unknown ticket {ticket_id!r}")
+        resolved = datetime.now(UTC) if status == "resolved" else None
+        self._tickets[ticket_id] = replace(t, status=status, resolved_at=resolved)
+
+    async def add_reply(
+        self, tenant_id: str, ticket_id: str, operator: str, body: str, sent: bool
+    ) -> dict:
+        reply = {"id": f"rpl_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id,
+                 "ticket_id": ticket_id, "operator": operator, "body": body, "sent": sent,
+                 "created_at": datetime.now(UTC)}
+        self._replies.append(reply)
+        return dict(reply)
+
+    async def replies_for(self, tenant_id: str, ticket_id: str) -> list[dict]:
+        return [dict(r) for r in self._replies
+                if r["tenant_id"] == tenant_id and r["ticket_id"] == ticket_id]
+
+    async def put_operator_factor(self, email: str, secret: str) -> None:
+        data_key = new_key()
+        record = SealedCredential(tenant_id="operator", connector="totp", field_name=email,
+                                  ciphertext=b"", wrapped_key=b"", key_id=self._master.key_id)
+        self._factors[email] = SealedCredential(
+            tenant_id="operator", connector="totp", field_name=email,
+            ciphertext=seal(data_key, secret.encode(), aad=record.aad),
+            wrapped_key=self._master.wrap(data_key), key_id=self._master.key_id,
+        )
+
+    async def operator_factor(self, email: str) -> str | None:
+        record = self._factors.get(email)
+        if record is None:
+            return None
+        data_key = self._master.unwrap(record.wrapped_key)
+        return open_sealed(data_key, record.ciphertext, aad=record.aad).decode()
+
+    async def set_session_operator(self, token_hash: str, until: datetime | None) -> None:
+        if until is None:
+            self._operator_until.pop(token_hash, None)
+        elif token_hash in self._sessions:
+            self._operator_until[token_hash] = until
+
+    async def session_operator_until(self, token_hash: str) -> datetime | None:
+        if token_hash not in self._sessions:
+            return None
+        return self._operator_until.get(token_hash)
+
+    async def log_operator(
+        self, operator: str, action: str, target: str | None, detail: dict | None
+    ) -> None:
+        self._operator_log.append({"at": datetime.now(UTC), "operator": operator,
+                                   "action": action, "target": target, "detail": detail})
+
+    async def operator_log(self, limit: int = 100) -> list[dict]:
+        return [dict(e) for e in reversed(self._operator_log)][:limit]
 
     async def account_email(self, tenant_id: str) -> str | None:
         """The sign-in address of the tenant's login, or of the nearest

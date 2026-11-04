@@ -7,7 +7,7 @@ import { type RunDigest, type SeenFinding, verdictOf } from "@/lib/finding";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
-import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
+import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconLock, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
 import { PlanMeter } from "./usage/plan-meter";
 import { Wordmark } from "./ui/mark";
 
@@ -16,7 +16,7 @@ export type MerchantLink = { id: string; name: string };
 /** `tenant` is the workspace name. A self-serve workspace is named by its
  * verified address, so for most accounts this line is the email; the API
  * exposes no other. */
-export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts, findings }: {
+export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts, findings, operator = false }: {
   tenant: string;
   merchants: MerchantLink[];
   /** Every connector, for the palette's Integrations group. */
@@ -27,6 +27,9 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
   verdicts: Record<string, RunDigest>;
   /** Open findings across merchants, for the palette's order search. */
   findings: SeenFinding[];
+  /** Okwan staff on the operator allowlist: show the console link. The API
+   *  decides; for everyone else the link does not exist. */
+  operator?: boolean;
 }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
@@ -101,6 +104,12 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
         <span aria-hidden className="text-xs">↗</span>
         <span className="sr-only">(opens in a new tab)</span>
       </a>
+      {operator && (
+        <>
+          <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Run Okwan</p>
+          <Item href="/ops" path={path} icon={<IconLock />}>Console</Item>
+        </>
+      )}
     </nav>
   );
 

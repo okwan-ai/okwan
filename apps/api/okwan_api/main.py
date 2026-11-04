@@ -37,6 +37,7 @@ import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.admin import build_router as build_admin_router
 from okwan_api.signup import build_router as build_signup_router
+from okwan_api.ops import build_router as build_ops_router
 from okwan_api.support import build_router as build_support_router
 from okwan_api.auth import (
     check_quota, close_store, load_credentials, meter, open_store,
@@ -205,6 +206,7 @@ app.include_router(build_query_router())
 app.include_router(build_admin_router())
 app.include_router(build_signup_router())
 app.include_router(build_support_router())
+app.include_router(build_ops_router())
 
 
 @app.exception_handler(RequestValidationError)

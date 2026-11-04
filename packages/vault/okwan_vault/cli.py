@@ -29,6 +29,7 @@ import os
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from . import accounts
 from .crypto import new_key
@@ -238,6 +239,61 @@ async def support_list() -> None:
     print("\n".join(ticket_lines(tickets)))
 
 
+def setup_text(email: str, secret: str) -> str:
+    """What `operator enroll` writes for the operator's authenticator app."""
+    from . import totp
+
+    return (
+        f"Okwan operator console: authenticator setup for {email}\n\n"
+        "In your authenticator app (Google Authenticator, Microsoft Authenticator,\n"
+        "1Password, Authy): Add account -> Enter a setup key.\n\n"
+        "  Account:  Okwan\n"
+        f"  Key:      {totp.grouped(secret)}\n"
+        "  Type:     Time based\n\n"
+        "Or, if your app opens otpauth links:\n"
+        f"  {totp.setup_uri(secret, email)}\n\n"
+        "Then delete this file. Anyone with the key can make your codes.\n"
+    )
+
+
+async def operator_enroll(email: str) -> None:
+    """Give an operator login an authenticator secret, replacing any old one.
+
+    The key is written to a file only the operator can read, never to the
+    terminal, so it is not on screen for a screenshot or in scrollback.
+    """
+    from . import totp
+
+    email = accounts.normalize_email(email)
+    store = await _store()
+    try:
+        if await store.account_login(email) is None:
+            sys.exit(f"no login for {email}: operators sign in to the dashboard first")
+        secret = totp.new_secret()
+        await store.put_operator_factor(email, secret)
+        await store.log_operator(email, "enroll", email, {"by": "cli"})
+    finally:
+        await store.close()
+    path = Path.home() / "okwan-operator-setup.txt"
+    path.write_text(setup_text(email, secret))
+    path.chmod(0o600)
+    print(f"wrote {path}: open it, add the key to your authenticator app, then delete it.")
+    print(f"The console also needs {email} in OKWAN_OPERATOR_EMAILS on the Render service.")
+
+
+async def operator_log() -> None:
+    store = await _store()
+    try:
+        entries = await store.operator_log(100)
+    finally:
+        await store.close()
+    if not entries:
+        print("no operator actions yet")
+    for e in entries:
+        target = e["target"] or ""
+        print(f"{e['at']:%Y-%m-%d %H:%M:%S}  {e['operator']}  {e['action']:<14}  {target}")
+
+
 async def account_reset_password(email: str) -> None:
     """A forgotten password, replaced by the operator.
 
@@ -319,6 +375,8 @@ USAGE = """usage:
   python -m okwan_vault plan set <tenant_id> <plan>
   python -m okwan_vault plan show <tenant_id>
   python -m okwan_vault support list
+  python -m okwan_vault operator enroll <email>
+  python -m okwan_vault operator log
   python -m okwan_vault key issue <tenant_id>
   python -m okwan_vault key revoke <key_id>
   python -m okwan_vault cred set <tenant_id> <connector> <field>
@@ -348,6 +406,8 @@ def main(argv: list[str]) -> None:
         ("plan", "set"): (plan_set, 2),
         ("plan", "show"): (plan_show, 1),
         ("support", "list"): (support_list, 0),
+        ("operator", "enroll"): (operator_enroll, 1),
+        ("operator", "log"): (operator_log, 0),
         ("key", "issue"): (key_issue, 1),
         ("key", "revoke"): (key_revoke, 1),
         ("cred", "set"): (cred_set, 3),

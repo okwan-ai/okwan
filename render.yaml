@@ -61,6 +61,11 @@ services:
       # either way: python -m okwan_vault support list.
       - key: OKWAN_SUPPORT_ESCALATION_TO
         sync: false
+      # Sign-in addresses of the people who run Okwan (comma-separated).
+      # Only they see the console at /ops, after an authenticator code.
+      # Unset, the console does not exist for anyone.
+      - key: OKWAN_OPERATOR_EMAILS
+        sync: false
       # Postgres DSNs may only reach public addresses. Name deliberate
       # exceptions here (hostnames or CIDRs, comma-separated).
       - key: OKWAN_EGRESS_ALLOW

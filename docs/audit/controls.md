@@ -38,6 +38,18 @@ table cannot point at something that no longer exists.
 | C29 | An escalation is never lost, mailed or not | `packages/vault/okwan_vault/cli.py` (`support list`) | `tests/test_support.py::test_without_mail_an_escalation_is_still_recorded` |
 | C30 | Strangers cannot sign up until the operator opens signup, even with mail working | `apps/api/okwan_api/signup.py` (`signup_open`) | `tests/test_signup.py::test_outside_dev_signup_opens_only_when_the_operator_says_so` |
 
+## The operator console
+
+Okwan's own staff read across accounts here, on purpose. These are the
+doors around it.
+
+| # | Claim | Enforced in | Proven by |
+|---|---|---|---|
+| C31 | Only a dashboard session whose sign-in is on `OKWAN_OPERATOR_EMAILS` reaches the console; anyone else, an API key included, gets the 404 an unknown route gets, and the console is not in the API reference | `apps/api/okwan_api/ops.py` (`operator`) | `tests/test_ops.py::test_anyone_but_an_operator_meets_a_plain_404`, `tests/test_ops.py::test_the_console_is_not_in_the_public_api_reference` |
+| C32 | Nothing opens without an authenticator code: a code works once, wrong codes are rate limited, and an unlock lasts 30 minutes for that one session | `apps/api/okwan_api/ops.py` (`unlocked_operator`), `packages/vault/okwan_vault/totp.py` | `tests/test_ops.py::test_a_locked_operator_sees_nothing`, `tests/test_ops.py::test_a_code_works_once`, `tests/test_ops.py::test_a_wrong_code_is_refused_logged_and_rate_limited`, `tests/test_ops.py::test_unlocking_one_session_leaves_the_others_locked`, `tests/test_ops.py::test_an_expired_unlock_locks_again` |
+| C33 | Everything an operator does is logged, reads included, and the database refuses to change or delete the log | `apps/api/okwan_api/ops.py` (`_log`), `packages/vault/okwan_vault/schema.sql` (`operator_actions_append_only`) | `tests/test_ops.py::test_a_ticket_shows_its_brief_and_conversation_and_the_view_is_logged`, `tests/test_ops.py::test_the_log_cannot_be_changed_in_postgres` |
+| C34 | A reply goes only to the ticket's own account, as escaped text with no links, and one that looks like it carries a secret is refused | `apps/api/okwan_api/ops.py` (`reply_message`) | `tests/test_ops.py::test_a_reply_reaches_the_customer_and_answers_the_ticket`, `tests/test_ops.py::test_a_reply_with_a_secret_is_refused` |
+
 ## Secrets and credentials
 
 | # | Claim | Enforced in | Proven by |
