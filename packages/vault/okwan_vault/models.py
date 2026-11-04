@@ -109,6 +109,8 @@ class SupportTicket:
     #: Whether the escalation mail was accepted for delivery.
     notified: bool
     created_at: datetime = field(default_factory=_now)
+    #: The assistant's brief: findings, likely_cause, resolution, draft_reply.
+    brief: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)

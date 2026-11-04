@@ -16,7 +16,7 @@ and what it holds only for the length of a request.
 | `usage` | Hourly request counts per tenant and surface | Row-level security | Not purged |
 | `plans` | A root tenant's plan and limit | Row-level security | As the tenant |
 | `support_conversations` | The support assistant's transcripts: customer text after secret redaction, the assistant's turns, the read-only tools' results (plan and usage, which connections are saved, test results, run summaries and errors, key prefixes) | Row-level security; secrets removed before storage | 30 days after the last message; the save prunes older ones |
-| `support_tickets` | What the assistant handed to a person: severity, category, its summary (secrets removed), whether the mail went out | Row-level security | Not purged |
+| `support_tickets` | What the assistant handed to a person: severity, category, the issue, its brief (findings, likely cause, steps, a draft reply to the customer), secrets removed, and whether the mail went out | Row-level security | Not purged |
 | `reconciliation_runs` | Each run's summary and trimmed per-order verdicts (outcome, order reference, currency, totals, per-rail amounts, reason); a scrubbed error, at most 300 characters | Row-level security; no raw rail record is written (`okwan_recon` trims rows) | Newest 50 per tenant, kind and name; the insert prunes the rest |
 
 **Not stored anywhere:** card numbers (no rail returns one and no table

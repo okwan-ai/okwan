@@ -694,16 +694,18 @@ class PostgresStore:
     async def add_ticket(
         self, tenant_id: str, *, conversation_id: str | None, severity: str,
         category: str, summary: str, notified: bool, ticket_id: str | None = None,
+        brief: dict | None = None,
     ) -> SupportTicket:
         try:
             async with self._scoped(tenant_id) as con:
                 row = await con.fetchrow(
                     "INSERT INTO support_tickets (id, tenant_id, conversation_id, severity, "
-                    "category, summary, notified) VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                    "category, summary, notified, brief) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) "
                     "RETURNING id, tenant_id, conversation_id, severity, category, summary, "
-                    "notified, created_at",
+                    "notified, created_at, brief",
                     ticket_id or f"tkt_{uuid.uuid4().hex[:16]}", tenant_id, conversation_id, severity,
-                    category, summary, notified,
+                    category, summary, notified, _dumps(brief),
                 )
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
@@ -714,7 +716,7 @@ class PostgresStore:
         the login role. No API route reaches this."""
         rows = await self.pool.fetch(
             "SELECT id, tenant_id, conversation_id, severity, category, summary, notified, "
-            "created_at FROM support_tickets ORDER BY created_at DESC LIMIT $1",
+            "created_at, brief FROM support_tickets ORDER BY created_at DESC LIMIT $1",
             limit,
         )
         return [_ticket(r) for r in rows]
@@ -767,7 +769,7 @@ def _ticket(row) -> SupportTicket:
     return SupportTicket(
         id=row["id"], tenant_id=row["tenant_id"], conversation_id=row["conversation_id"],
         severity=row["severity"], category=row["category"], summary=row["summary"],
-        notified=row["notified"], created_at=row["created_at"],
+        notified=row["notified"], created_at=row["created_at"], brief=_loads(row["brief"]),
     )
 
 
