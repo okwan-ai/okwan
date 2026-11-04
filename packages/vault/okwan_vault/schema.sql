@@ -9,9 +9,19 @@ CREATE TABLE IF NOT EXISTS tenants (
 
 -- CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so on a
 -- database created before hierarchy the column arrives here instead.
--- Anything referencing it must come after this line.
-ALTER TABLE tenants ADD COLUMN IF NOT EXISTS parent_id text
-    REFERENCES tenants(id) ON DELETE CASCADE;
+-- Anything referencing it must come after this line. Checked first:
+-- ALTER TABLE takes the table's strongest lock even with nothing to add,
+-- and this file runs on every start.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'tenants'
+          AND column_name = 'parent_id'
+    ) THEN
+        ALTER TABLE tenants ADD COLUMN parent_id text REFERENCES tenants(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS tenants_parent_idx ON tenants (parent_id)
     WHERE parent_id IS NOT NULL;
@@ -156,10 +166,10 @@ EXCEPTION WHEN insufficient_privilege THEN
                             'GRANT okwan_tenant TO %I;', current_user);
 END $$;
 
-REVOKE ALL ON tenants, api_keys, sessions, accounts, signups FROM okwan_tenant;
-GRANT SELECT, INSERT, UPDATE, DELETE ON credentials, usage, plans, reconciliation_runs
-    TO okwan_tenant;
-
+-- Every step checks before it acts. This runs on every start, and ALTER
+-- TABLE and GRANT take locks that a running instance's queries, or
+-- autovacuum, would wait for or deadlock against; once the database is
+-- current, a start takes none of them.
 DO $$
 DECLARE
     t text;
@@ -167,13 +177,28 @@ DECLARE
         $s$tenant_id = ANY (string_to_array(current_setting('okwan.tenant_ids', true), ','))$s$;
 BEGIN
     FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs'] LOOP
-        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
+                AND has_table_privilege('okwan_tenant', t, 'INSERT')
+                AND has_table_privilege('okwan_tenant', t, 'UPDATE')
+                AND has_table_privilege('okwan_tenant', t, 'DELETE')) THEN
+            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO okwan_tenant', t);
+        END IF;
+        IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass(quote_ident(t))) THEN
+            EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        END IF;
         IF NOT EXISTS (
             SELECT 1 FROM pg_policies
             WHERE schemaname = current_schema() AND tablename = t AND policyname = 'tenant_scope'
         ) THEN
             EXECUTE format('CREATE POLICY tenant_scope ON %I TO okwan_tenant USING (%s) WITH CHECK (%s)',
                            t, scope, scope);
+        END IF;
+    END LOOP;
+    -- The identity tables: nothing for okwan_tenant, whatever was granted before.
+    FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups'] LOOP
+        IF has_table_privilege('okwan_tenant', t,
+                               'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+            EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);
         END IF;
     END LOOP;
 END $$;

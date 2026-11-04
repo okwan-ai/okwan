@@ -36,7 +36,7 @@ jobs:
           POSTGRES_DB: okwan_vault_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U okwan"
+          --health-cmd "pg_isready -U okwan -d okwan_vault_test"
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       OKWAN_VAULT_DATABASE_URL: postgresql://okwan:okwan_ci@localhost:5432/okwan_vault_test

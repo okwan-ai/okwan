@@ -80,10 +80,23 @@ def test_every_store_method_over_tenant_data_runs_scoped():
 
 def test_the_schema_lists_the_same_tenant_tables_as_the_store():
     schema = Path(pg.__file__).with_name("schema.sql").read_text()
-    listed = re.search(r"FOREACH t IN ARRAY ARRAY\[([^\]]+)\]", schema).group(1)
-    assert tuple(re.findall(r"'(\w+)'", listed)) == TENANT_TABLES
-    granted = re.search(r"GRANT SELECT, INSERT, UPDATE, DELETE ON ([\w ,\n]+?)\s+TO okwan_tenant", schema)
-    assert tuple(t.strip() for t in granted.group(1).split(",")) == TENANT_TABLES
+    tenant, identity = (tuple(re.findall(r"'(\w+)'", group))
+                        for group in re.findall(r"FOREACH t IN ARRAY ARRAY\[([^\]]+)\]", schema))
+    assert tenant == TENANT_TABLES
+    assert set(identity) == IDENTITY_TABLES | NO_TENANT_COLUMN
+
+
+@needs_db
+async def test_a_start_against_a_current_database_takes_no_exclusive_lock(store):
+    """The migration runs on every start, while another instance may be
+    serving: once the schema is current it must not block anyone."""
+    async with store.pool.acquire() as con, con.transaction():
+        await con.execute(pg.SCHEMA)
+        held = await con.fetch(
+            "SELECT c.relname, l.mode FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+            "WHERE l.pid = pg_backend_pid() AND c.relkind = 'r' "
+            "AND l.mode IN ('AccessExclusiveLock', 'ExclusiveLock', 'ShareRowExclusiveLock')")
+    assert not held, f"a start locks tables: {[(r['relname'], r['mode']) for r in held]}"
 
 
 # ── the database ───────────────────────────────────────────────────────

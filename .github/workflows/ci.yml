@@ -30,7 +30,7 @@ jobs:
           POSTGRES_DB: okwan_vault_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U okwan"
+          --health-cmd "pg_isready -U okwan -d okwan_vault_test"
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       # A throwaway database in this job's container, not a secret.

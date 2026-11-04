@@ -19,6 +19,7 @@ other is broken.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator, Iterable
@@ -92,10 +93,28 @@ class PostgresStore:
     async def connect(self, migrate: bool = True) -> PostgresStore:
         self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
         if migrate:
-            async with self._pool.acquire() as con:
-                await con.execute(SCHEMA)
+            await self._migrate()
         await self._check_isolation()
         return self
+
+    async def _migrate(self) -> None:
+        """Run schema.sql, retrying a deadlock.
+
+        Every step in it checks before it changes anything, so against a
+        current database a start takes no exclusive table lock. The first
+        start after a schema change does, and can meet autovacuum or an
+        instance still serving during a deploy; Postgres then aborts one
+        side, and here that side tries again.
+        """
+        for attempt in range(1, 4):
+            try:
+                async with self.pool.acquire() as con:
+                    await con.execute(SCHEMA)
+                return
+            except asyncpg.DeadlockDetectedError:
+                if attempt == 3:
+                    raise
+                await asyncio.sleep(0.5 * attempt)
 
     async def _check_isolation(self) -> None:
         """Fail closed: never serve while the database could not keep
