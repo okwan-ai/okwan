@@ -87,7 +87,7 @@ class Outbox:
     async def send_verification(self, email, link):  # pragma: no cover - not used here
         raise AssertionError("support never sends verification mail")
 
-    async def send_notice(self, to, subject, body, html=None):
+    async def send_notice(self, to, subject, body, html=None, reply_to=None):
         self.sent.append((to, subject, body, html))
 
 

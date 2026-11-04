@@ -3,6 +3,7 @@ import { apiUrl, tenantTree } from "@/lib/api";
 import { railLabel, type RunDigest } from "@/lib/finding";
 import { digest, seenFindings, storedRuns } from "@/lib/runs";
 import { connectors } from "@/lib/merchants";
+import { operatorMe } from "@/lib/ops";
 import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import { SupportPanel } from "./_components/support-panel";
@@ -23,7 +24,9 @@ export default async function RootLayout({
   // The meter, the verdicts and the connector names in the sidebar:
   // unmetered reads per render (the pages share them through React's
   // cache), never a run.
-  const [usage, runs, catalog] = tree ? await Promise.all([myUsage(30), storedRuns(), connectors()]) : [null, null, null];
+  const [usage, runs, catalog, op] = tree
+    ? await Promise.all([myUsage(30), storedRuns(), connectors(), operatorMe()])
+    : [null, null, null, null];
   const verdicts: Record<string, RunDigest> = {};
   for (const r of runs ?? []) {
     const d = digest(r);
@@ -56,6 +59,7 @@ export default async function RootLayout({
               apiBase={apiUrl()}
               verdicts={verdicts}
               findings={runs ? seenFindings(runs) : []}
+              operator={op !== null}
             />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
               <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 sm:py-10 xl:px-12">{children}</div>

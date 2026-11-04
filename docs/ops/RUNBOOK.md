@@ -313,6 +313,37 @@ bottom right) and at `POST /v1/support/messages`.
   the spend limit in the Anthropic console is the ceiling. The route is
   rate limited to 40 messages an hour per account and 60 per address.
 
+### Operator console
+
+The console at `/ops` in the dashboard is for the people who run Okwan:
+every account's support requests, the assistant's brief, the
+conversation, and a reply box. Customers never see it: for anyone else
+it is a 404.
+
+- **Turn it on.** Set `OKWAN_OPERATOR_EMAILS` on the Render `okwan`
+  service to your dashboard sign-in address and redeploy. Then, in the
+  Codespace, run `python -m okwan_vault operator enroll <that address>`.
+  It writes `~/okwan-operator-setup.txt`: open it, add the key to an
+  authenticator app (Google Authenticator, 1Password, Authy), then delete
+  the file. The key is never printed.
+- **Open it.** Sign in to the dashboard, choose *Console* in the sidebar,
+  and enter the 6-digit code from the app. It stays open for 30 minutes,
+  for that browser only. *Lock now* closes it sooner.
+- **Answer a ticket.** Open it from the inbox. The reply box holds the
+  assistant's draft: check it against the brief, edit, then *Send reply*
+  (or *Send and resolve*). It is emailed from Okwan Support to the
+  account's sign-in address, and the customer's answer comes to
+  `OKWAN_SUPPORT_ESCALATION_TO`. *Resolve without replying* closes a
+  ticket that needs no answer.
+- **Wrong code, or "too many attempts".** Codes change every 30 seconds
+  and each works once; check the phone's clock is set automatically.
+  Five unlock attempts in 15 minutes is the limit; after that, wait.
+- **Lost the phone.** Run `operator enroll` again: the new key replaces
+  the old one at once.
+- **Who did what.** `python -m okwan_vault operator log` prints every
+  console action, newest first. The database refuses to change or delete
+  it.
+
 ### Roll back a deploy
 
 Render → service → *Events*: pick the last deploy that was live and

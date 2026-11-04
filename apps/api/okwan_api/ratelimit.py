@@ -52,6 +52,9 @@ TEST_TENANT = Rule("test:tenant", 20, 600)
 #: The support assistant: each message is a model call that costs money.
 SUPPORT_IP = Rule("support:ip", 60, 3600)
 SUPPORT_TENANT = Rule("support:tenant", 40, 3600)
+#: Operator console unlock: a wrong authenticator code is a guess.
+OPS_UNLOCK = Rule("ops:unlock", 5, 900)
+OPS_UNLOCK_IP = Rule("ops:unlock:ip", 10, 900)
 
 
 class Limiter:

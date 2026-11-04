@@ -19,6 +19,10 @@ reports what happens. Three kinds of break:
   are tests/test_tenant_rls.py.
 * **both walls**: both broken at once. The isolation suite must fail.
 
+The operator console reads across tenants on purpose, so its doors are
+broken here too: a console that admits any signed-in session, or opens
+without the authenticator code, must fail tests/test_ops.py.
+
 Every file is restored after each run, also on Ctrl-C. The script refuses
 to start while any file it would touch has uncommitted changes, so a
 restore can never overwrite someone's work. Exit status 0 only when every
@@ -34,6 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ISOLATION = "tests/test_tenant_isolation.py"
+OPS_SUITE = "tests/test_ops.py"
 #: Each wall tested alone: (test file, -k filter).
 WHERE_WALL = (ISOLATION, "postgres_where_only")
 DB_WALL = ("tests/test_tenant_rls.py", "")
@@ -49,6 +54,7 @@ PG = "packages/vault/okwan_vault/postgres.py"
 PAYPAL = "packages/connectors/paypal/okwan_paypal/auth.py"
 SESSION = "packages/query/okwan_query/session.py"
 GUARD = "packages/query/okwan_query/guard.py"
+OPS = "apps/api/okwan_api/ops.py"
 
 #: (file, exact text, replacement)
 Edit = tuple[str, str, str]
@@ -75,6 +81,8 @@ class Break:
     edits: tuple[Edit, ...]
     #: For "held": the tests of the wall that was broken.
     wall: tuple[str, str] | None = None
+    #: For "caught": the suite that must fail.
+    suite: str = ISOLATION
 
 
 BREAKS = [
@@ -114,6 +122,12 @@ BREAKS = [
     Break("no restricted role, and the credential read drops WHERE", "both walls",
           (NO_SCOPE, CREDS_NO_WHERE)),
     Break("no restricted role, and list_runs drops WHERE", "both walls", (NO_SCOPE, LIST_NO_WHERE)),
+    Break("the console admits any signed-in session", "caught", ((OPS,
+          "    if not email or accounts.normalize_email(email) not in allowed:\n        raise _not_found()\n",
+          "    email = email or \"anyone@okwan.test\"\n"),), suite=OPS_SUITE),
+    Break("the console opens without the authenticator code", "caught", ((OPS,
+          "    if not op.unlocked:\n        raise HTTPException(403,",
+          "    if False:\n        raise HTTPException(403,"),), suite=OPS_SUITE),
 ]
 
 
@@ -147,7 +161,7 @@ def main() -> int:
     if subprocess.run(["git", "diff", "--quiet", "--", *touched], check=False, cwd=ROOT).returncode != 0:
         print(f"uncommitted changes in {touched}; commit or stash them first")
         return 2
-    if not (_passes(ISOLATION) and _passes(*DB_WALL)):
+    if not (_passes(ISOLATION) and _passes(*DB_WALL) and _passes(OPS_SUITE)):
         print("the suites fail before anything is broken; fix that first")
         return 2
 
@@ -161,7 +175,7 @@ def main() -> int:
                 isolation = _passes(ISOLATION, BOTH_WALLS + own)
                 wall = _passes(*b.wall)
             else:
-                isolation, wall = _passes(ISOLATION), None
+                isolation, wall = _passes(b.suite), None
         finally:
             for path, text in originals.items():
                 path.write_text(text)
@@ -172,7 +186,8 @@ def main() -> int:
                 else "; the broken wall's own tests did NOT notice")
         else:
             good = not isolation
-            seen = "isolation suite failed" if not isolation else "isolation suite PASSED: leak missed"
+            name = "isolation suite" if b.suite == ISOLATION else b.suite
+            seen = f"{name} failed" if not isolation else f"{name} PASSED: leak missed"
         ok += good
         print(f"{'ok  ' if good else 'FAIL'}  [{b.expect:>10}]  {b.label}: {seen}")
     print(f"\n{ok}/{len(BREAKS)} breaks behaved as expected")

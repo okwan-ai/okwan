@@ -111,6 +111,9 @@ class SupportTicket:
     created_at: datetime = field(default_factory=_now)
     #: The assistant's brief: findings, likely_cause, resolution, draft_reply.
     brief: dict | None = None
+    #: open | answered | resolved
+    status: str = "open"
+    resolved_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
