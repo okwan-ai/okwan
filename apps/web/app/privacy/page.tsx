@@ -88,6 +88,12 @@ const parts: Part[] = [
             tokens, passwords, links from our emails, or query text.
           </li>
           <li>
+            <strong>Payments.</strong> If you pay for Pro, you enter your card on Stripe&rsquo;s own page; your card
+            details go to Stripe and never reach Okwan. We keep the Stripe customer and subscription ids for your
+            account and the subscription&rsquo;s state (active, cancelled, the renewal date), so your plan follows
+            your payments.
+          </li>
+          <li>
             <strong>Email.</strong> The messages we send you (a verification link when you sign up, and replies to
             support requests) and your replies to them.
           </li>
@@ -169,6 +175,7 @@ const parts: Part[] = [
             ["Vercel", "Runs the website okwan.ai and its DNS", "Global network"],
             ["Resend", "Sends our email: your address and the message", "United States (Virginia)"],
             ["Anthropic", "The support assistant: support conversations, secrets removed", "United States"],
+            ["Stripe", "Takes payment for Pro: your card, name, email and billing address, entered on Stripe's page", "United States"],
             ["Google Fonts", "Fonts on the website and dashboard: IP address and browser details", "Global network"],
           ]}
         />
@@ -208,6 +215,7 @@ const parts: Part[] = [
             ["Account, merchants, saved credentials and API keys", "Until you remove them or delete your account"],
             ["A signup that is never confirmed", "The link expires after 24 hours; the request is removed when you ask, or with your account"],
             ["Sign-in sessions", "30 minutes without activity, 12 hours at most, or until you sign out"],
+            ["Your Stripe ids and subscription state", "As long as your account exists. Stripe keeps its own payment records as the law requires"],
             ["Reconciliation results", "The newest 50 of each check, until your account is deleted"],
             ["Usage counts", "As long as your account exists"],
             ["Support conversations", "30 days after the last message"],

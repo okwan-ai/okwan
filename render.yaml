@@ -66,6 +66,16 @@ services:
       # Unset, the console does not exist for anyone.
       - key: OKWAN_OPERATOR_EMAILS
         sync: false
+      # Card payments for the Pro plan, in Okwan's own Stripe account (not a
+      # connector). All three, or the dashboard offers a call instead.
+      # The secret key is a restricted key: Checkout Sessions and Customer
+      # portal write, nothing else.
+      - key: OKWAN_BILLING_STRIPE_SECRET_KEY
+        sync: false
+      - key: OKWAN_BILLING_STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: OKWAN_BILLING_PRO_PRICE_ID
+        sync: false
       # Postgres DSNs may only reach public addresses. Name deliberate
       # exceptions here (hostnames or CIDRs, comma-separated).
       - key: OKWAN_EGRESS_ALLOW

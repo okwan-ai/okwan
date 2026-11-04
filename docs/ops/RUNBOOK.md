@@ -358,6 +358,28 @@ it is a 404.
   console action, newest first. The database refuses to change or delete
   it.
 
+### Billing (Pro by card)
+
+Pro is $99 a month, paid by card through Stripe Checkout in Okwan's own
+Stripe account. The plan follows Stripe's signed webhook: Pro while the
+subscription is active, trialing or retrying a failed payment; Free once
+it is cancelled at period end, unpaid or expired.
+
+- **Turn it on** (once): see "Owner decisions" for the Stripe setup. Until
+  all three `OKWAN_BILLING_*` variables are set on the `okwan` service,
+  the Plan tab offers "Talk to us about Pro" instead of a button, and
+  Health shows *Card payments (Stripe): off*.
+- **A customer paid but is still on Free.** The webhook did not arrive or
+  failed its signature. In Stripe: Developers → Webhooks → the endpoint →
+  the event, and *Resend*. A signature failure means
+  `OKWAN_BILLING_STRIPE_WEBHOOK_SECRET` does not match the endpoint's
+  signing secret. As a stopgap, `python -m okwan_vault plan set <tenant_id> pro`.
+- **Refunds and invoices** are done in the Stripe dashboard. Refunding
+  does not cancel: cancel the subscription there too, and the webhook
+  returns the account to Free.
+- **Larger plans** (Team, Enterprise) stay agreed in writing and set with
+  `plan set`; they do not go through Checkout.
+
 ### Delete an account on request
 
 The Privacy Policy (`okwan.ai/privacy`) promises deletion within 30 days
@@ -462,3 +484,27 @@ Open, and not this runbook's to make:
 - A support address customers write to (for example `support@okwan.ai`,
   which needs a mailbox: Resend only sends).
 - The response targets above, before any contract states them.
+
+### Switching on card payments (once)
+
+In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
+
+1. **Product:** Product catalogue → Add product "Okwan Pro", recurring,
+   $99.00 USD monthly. Copy its **price id** (`price_...`).
+2. **Customer portal:** Settings → Billing → Customer portal: allow
+   cancelling (at the end of the billing period) and updating the payment
+   method. Save.
+3. **Webhook:** Developers → Webhooks → Add endpoint
+   `https://api.okwan.ai/v1/billing/webhook`, with events
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`.
+   Copy its **signing secret** (`whsec_...`).
+4. **Key:** Developers → API keys → Create restricted key, with write on
+   *Checkout Sessions* and *Customer portal*, nothing else. Copy it
+   (`rk_live_...`). Shown once.
+5. On the Render `okwan` service, set `OKWAN_BILLING_PRO_PRICE_ID`,
+   `OKWAN_BILLING_STRIPE_WEBHOOK_SECRET` and
+   `OKWAN_BILLING_STRIPE_SECRET_KEY` to those three values, and redeploy.
+   Health then shows *Card payments (Stripe): on*.
+
+Keys go only into Render, never into chat, code or a screenshot.

@@ -157,6 +157,15 @@ nothing in Okwan moves money.
   activity and 12 hours after signing in; the sign-in page says which. A forgotten password
   is reset by Okwan's operator: escalate as `account`.
 
+## Plans and paying
+- Free: 5,000 requests a month. Pro: 100,000 a month for $99/month, by card
+  through Stripe, from Settings -> Plan & usage -> Upgrade ({app}/settings?tab=plan).
+  Merchants share their account's allowance.
+- Cancel or change the card from Manage billing on the same page; Pro stays on
+  to the end of the paid month. A failed payment is retried by Stripe.
+- Okwan never sees card details. Larger plans, invoices or refunds: escalate
+  as `billing`.
+
 ## Privacy and account deletion
 - The Privacy Policy is https://okwan.ai/privacy and the Terms are
   https://okwan.ai/terms. Answer privacy questions from what they say; do not

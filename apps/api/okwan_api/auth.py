@@ -12,14 +12,18 @@ never travel again.
 """
 from __future__ import annotations
 
-import inspect
 import logging
 import os
 
 from fastapi import Depends, Header, HTTPException
-
 from okwan_vault import (
-    EnvMasterKey, MemoryStore, PostgresStore, Store, accounts, from_env, new_key,
+    EnvMasterKey,
+    MemoryStore,
+    PostgresStore,
+    Store,
+    accounts,
+    from_env,
+    new_key,
     resolver_for,
 )
 from okwan_vault.models import Tenant
@@ -150,7 +154,8 @@ async def check_quota(tenant: Tenant = Depends(current_tenant)) -> Tenant:
         raise HTTPException(
             402,
             f"monthly request limit reached — {quota.used}/{quota.limit} "
-            f"on the {quota.plan} plan",
+            f"on the {quota.plan} plan. Upgrade in the dashboard under "
+            "Settings → Plan & usage, or wait for the 1st of the month",
         )
     return tenant
 
@@ -163,7 +168,7 @@ async def meter(tenant: Tenant, surface: str) -> None:
     """
     try:
         await get_store().record_request(tenant.id, surface)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("usage not recorded for %s", tenant.id, exc_info=True)
 
 

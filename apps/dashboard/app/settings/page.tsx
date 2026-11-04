@@ -4,9 +4,11 @@ import { tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors } from "@/lib/merchants";
 import { SETTINGS_TABS, settingsTabOf } from "@/lib/settings-tabs";
+import { billing } from "@/lib/billing";
 import { myUsage, usageFor } from "@/lib/usage";
 import { ConnectionsGrid } from "../_components/connections-grid";
 import { KeyIssuer } from "../_components/issue-key";
+import { BillingCard } from "../_components/settings/billing-card";
 import { PlanUsage } from "../_components/settings/plan-usage";
 import { RevokeKey } from "../_components/settings/revoke-key";
 import { UsageScope } from "../_components/settings/usage-scope";
@@ -20,15 +22,15 @@ import { Tabs } from "../_components/ui/tabs";
 export const metadata = { title: "Settings" };
 
 /** What the API holds about the workspace, and nothing it doesn't: there
- *  is no profile, no team, no self-serve plan change. The one home for the
+ *  is no profile and no team; the plan changes through Stripe (Plan tab). The one home for the
  *  workspace's own connections, the plan (per merchant too), every key in
  *  the subtree, and how Okwan handles data (§9 2026-10-05). /key and
  *  /connections redirect here. */
 export default async function SettingsPage({ searchParams }: {
-  searchParams: Promise<{ tab?: string; days?: string; merchant?: string }>;
+  searchParams: Promise<{ tab?: string; days?: string; merchant?: string; upgraded?: string }>;
 }) {
   await requireTenant();
-  const [{ tab, days: daysParam, merchant }, tree] = await Promise.all([searchParams, tenantTree()]);
+  const [{ tab, days: daysParam, merchant, upgraded }, tree] = await Promise.all([searchParams, tenantTree()]);
   const days = [7, 30, 90].includes(Number(daysParam)) ? Number(daysParam) : 30;
   const active = settingsTabOf(tab);
   if (!tree) return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
@@ -76,7 +78,7 @@ export default async function SettingsPage({ searchParams }: {
           </>
         )}
 
-        {active === "plan" && <PlanTab merchants={merchants} selfId={tree.self.id} merchant={merchant ?? null} days={days} />}
+        {active === "plan" && <PlanTab merchants={merchants} selfId={tree.self.id} merchant={merchant ?? null} days={days} upgraded={upgraded === "1"} />}
 
         {active === "keys" && (
           <div className="space-y-6">
@@ -133,11 +135,12 @@ async function OwnConnections({ selfId }: { selfId: string }) {
   );
 }
 
-async function PlanTab({ merchants, selfId, merchant, days }: {
+async function PlanTab({ merchants, selfId, merchant, days, upgraded }: {
   merchants: { id: string; name: string }[];
   selfId: string;
   merchant: string | null;
   days: number;
+  upgraded: boolean;
 }) {
   const names = Object.fromEntries(merchants.map((m) => [m.id, m.name]));
   const withDays = (q: string) => (days === 30 ? q : `${q}&days=${days}`);
@@ -177,9 +180,21 @@ async function PlanTab({ merchants, selfId, merchant, days }: {
     );
   }
 
-  const usage = await myUsage(days);
+  const [usage, bill] = await Promise.all([myUsage(days), billing()]);
   return (
     <>
+      {bill && (
+        <BillingCard
+          enabled={bill.enabled}
+          plan={bill.plan}
+          price={bill.pro_price_usd}
+          canManage={bill.can_manage}
+          periodEnd={bill.subscription?.current_period_end ?? null}
+          cancelling={bill.subscription?.cancel_at_period_end ?? false}
+          pastDue={bill.subscription?.status === "past_due"}
+          upgraded={upgraded}
+        />
+      )}
       {scope}
       {usage ? (
         <PlanUsage

@@ -68,6 +68,12 @@ class Store(Protocol):
     async def reset_password(self, email: str, password_hash: str) -> str: ...
     async def list_tenants(self) -> list[Tenant]: ...
     async def delete_tenant(self, tenant_id: str) -> list[str]: ...
+    async def save_billing(
+        self, tenant_id: str, *, customer_id: str, subscription_id: str, status: str,
+        cancel_at_period_end: bool, current_period_end: datetime | None,
+    ) -> None: ...
+    async def billing_for(self, tenant_id: str) -> dict | None: ...
+    async def tenant_for_billing_customer(self, customer_id: str) -> str | None: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
     ) -> None: ...
@@ -133,6 +139,7 @@ class MemoryStore:
         self._sessions: dict[str, tuple[str, datetime]] = {}
         #: When each session was last used, for the idle limit.
         self._session_seen: dict[str, datetime] = {}
+        self._billing: dict[str, dict] = {}
         self._runs: dict[str, RunRecord] = {}
         self._conversations: dict[str, SupportConversation] = {}
         self._tickets: dict[str, SupportTicket] = {}
@@ -178,7 +185,32 @@ class MemoryStore:
         self._conversations = {k: v for k, v in self._conversations.items() if v.tenant_id not in gone}
         self._tickets = {k: v for k, v in self._tickets.items() if v.tenant_id not in gone}
         self._replies = [r for r in self._replies if r["tenant_id"] not in gone]
+        self._billing = {k: v for k, v in self._billing.items() if k not in gone}
         return sorted(gone)
+
+    async def save_billing(
+        self, tenant_id: str, *, customer_id: str, subscription_id: str, status: str,
+        cancel_at_period_end: bool, current_period_end: datetime | None,
+    ) -> None:
+        """Record or update a paying account's Stripe link; an empty id keeps
+        the one already known."""
+        if tenant_id not in self._tenants:
+            raise ValueError(f"no such tenant: {tenant_id}")
+        old = self._billing.get(tenant_id, {})
+        self._billing[tenant_id] = {
+            "tenant_id": tenant_id, "customer_id": customer_id or old.get("customer_id") or None,
+            "subscription_id": subscription_id or old.get("subscription_id") or None,
+            "status": status, "cancel_at_period_end": cancel_at_period_end,
+            "current_period_end": current_period_end or old.get("current_period_end"),
+            "updated_at": datetime.now(UTC),
+        }
+
+    async def billing_for(self, tenant_id: str) -> dict | None:
+        found = self._billing.get(tenant_id)
+        return dict(found) if found else None
+
+    async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
+        return next((t for t, b in self._billing.items() if b["customer_id"] == customer_id), None)
 
     async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
         if tenant_id not in self._tenants:

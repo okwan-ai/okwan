@@ -211,6 +211,7 @@ async def _open_tickets() -> dict[str, int]:
 def _switches() -> list[dict[str, Any]]:
     """Which of the service's switches are on. Whether a variable is set,
     never its value."""
+    from .billing import enabled as billing_enabled
     from .mail import DevLogMailer
     from .signup import signup_open
     from .support import enabled as assistant_enabled
@@ -234,6 +235,9 @@ def _switches() -> list[dict[str, Any]]:
          "ok": has("OKWAN_ALLOWED_HOSTS"), "needs": "OKWAN_ALLOWED_HOSTS"},
         {"name": "Dashboard client addresses", "state": "on" if has("OKWAN_DASHBOARD_SECRET") else "off",
          "ok": has("OKWAN_DASHBOARD_SECRET"), "needs": "OKWAN_DASHBOARD_SECRET"},
+        {"name": "Card payments (Stripe)", "state": "on" if billing_enabled() else "off",
+         "ok": billing_enabled(),
+         "needs": "OKWAN_BILLING_STRIPE_SECRET_KEY, OKWAN_BILLING_STRIPE_WEBHOOK_SECRET and OKWAN_BILLING_PRO_PRICE_ID"},
     ]
 
 
