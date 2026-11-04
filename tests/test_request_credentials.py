@@ -111,7 +111,8 @@ def test_every_route_that_can_read_a_rail_requires_a_key():
     from okwan_api.main import app
     from okwan_api.ops import operator
 
-    public = {"/healthz", "/v1/connectors", "/v1/signup", "/v1/signup/verify",
+    # The billing webhook carries Stripe's signature instead of a key.
+    public = {"/healthz", "/v1/connectors", "/v1/signup", "/v1/signup/verify", "/v1/billing/webhook",
               "/v1/sessions", "/openapi.json", "/docs", "/docs/oauth2-redirect",
               "/redoc"}
     # The operator console's gate: a dashboard session whose login is on the

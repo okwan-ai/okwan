@@ -302,6 +302,21 @@ EXCEPTION WHEN insufficient_privilege THEN
                             'GRANT okwan_tenant TO %I;', current_user);
 END $$;
 
+-- ── billing ──────────────────────────────────────────────────────────
+-- A paying account's link to Okwan's own Stripe account: the Stripe ids and
+-- the subscription's state, never card details (those stay with Stripe).
+-- An identity table: the signed webhook finds the tenant from the customer
+-- before any tenant is known, as a key or session lookup does.
+CREATE TABLE IF NOT EXISTS billing (
+    tenant_id            text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    customer_id          text UNIQUE,
+    subscription_id      text,
+    status               text NOT NULL,
+    cancel_at_period_end boolean NOT NULL DEFAULT false,
+    current_period_end   timestamptz,
+    updated_at           timestamptz NOT NULL DEFAULT now()
+);
+
 -- Every step checks before it acts. This runs on every start, and ALTER
 -- TABLE and GRANT take locks that a running instance's queries, or
 -- autovacuum, would wait for or deadlock against; once the database is
@@ -333,7 +348,7 @@ BEGIN
     END LOOP;
     -- The identity tables: nothing for okwan_tenant, whatever was granted before.
     FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups',
-                             'operator_factors', 'operator_actions'] LOOP
+                             'operator_factors', 'operator_actions', 'billing'] LOOP
         IF has_table_privilege('okwan_tenant', t,
                                'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
             EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);

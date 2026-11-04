@@ -617,6 +617,34 @@ class PostgresStore:
             await con.execute("DELETE FROM tenants WHERE id = $1", tenant_id)
         return sorted(ids)
 
+    async def save_billing(
+        self, tenant_id: str, *, customer_id: str, subscription_id: str, status: str,
+        cancel_at_period_end: bool, current_period_end: datetime | None,
+    ) -> None:
+        """Record or update a paying account's Stripe link, as the login
+        role (billing is an identity table). An empty id keeps the one
+        already known."""
+        await self.pool.execute(
+            "INSERT INTO billing (tenant_id, customer_id, subscription_id, status, "
+            "cancel_at_period_end, current_period_end) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "customer_id = COALESCE(EXCLUDED.customer_id, billing.customer_id), "
+            "subscription_id = COALESCE(EXCLUDED.subscription_id, billing.subscription_id), "
+            "status = EXCLUDED.status, cancel_at_period_end = EXCLUDED.cancel_at_period_end, "
+            "current_period_end = COALESCE(EXCLUDED.current_period_end, billing.current_period_end), "
+            "updated_at = now()",
+            tenant_id, customer_id, subscription_id, status, cancel_at_period_end, current_period_end,
+        )
+
+    async def billing_for(self, tenant_id: str) -> dict | None:
+        row = await self.pool.fetchrow(
+            "SELECT tenant_id, customer_id, subscription_id, status, cancel_at_period_end, "
+            "current_period_end, updated_at FROM billing WHERE tenant_id = $1", tenant_id)
+        return dict(row) if row else None
+
+    async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
+        return await self.pool.fetchval("SELECT tenant_id FROM billing WHERE customer_id = $1", customer_id)
+
     async def reset_password(self, email: str, password_hash: str) -> str:
         """Replace a login's password and end every session it holds.
 

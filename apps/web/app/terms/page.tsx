@@ -123,8 +123,17 @@ const parts: Part[] = [
           your plan&rsquo;s limit are refused until the next month begins or you move to a larger plan.
         </li>
         <li>
-          Paid plans are agreed with us in writing, by an order form or by email, and billed as agreed. Fees are
-          non-refundable except where the law or our agreement says otherwise, and taxes are extra.
+          <strong>Pro</strong> is 99 US dollars a month for 100,000 requests a month, billed monthly in advance by card
+          through Stripe. It starts when Stripe confirms your payment and renews each month until you cancel.
+        </li>
+        <li>
+          You can cancel at any time from <strong>Manage billing</strong> in the dashboard. Pro stays on until the end
+          of the month you have paid for, and the account then returns to the free plan. If a payment fails, Stripe
+          retries it; if it still cannot be collected, the account returns to the free plan.
+        </li>
+        <li>
+          Larger plans are agreed with us in writing, by an order form or by email, and billed as agreed. Fees are
+          non-refundable except where the law or our agreement says otherwise, and taxes are extra where they apply.
         </li>
         <li>We may change plans and prices with 30 days&rsquo; notice. A change does not affect a paid term already agreed.</li>
       </ul>

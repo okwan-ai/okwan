@@ -259,6 +259,10 @@ PUBLIC = {
     ("GET", "/healthz"), ("GET", "/v1/connectors"), ("GET", "/openapi.json"),
     ("GET", "/docs"), ("GET", "/redoc"),
     ("POST", "/v1/signup"), ("POST", "/v1/signup/verify"), ("POST", "/v1/sessions"),
+    # Stripe's webhook: no credential, a signature instead. An event names a
+    # tenant only through metadata Okwan itself wrote at Checkout, and only a
+    # root account's plan can change: tests/test_billing.py.
+    ("POST", "/v1/billing/webhook"),
 }
 #: The tenant is whoever holds the API key; data is read with its vault only.
 KEY_DATA = {
@@ -292,6 +296,9 @@ ADMIN_OTHER = {
     # like the routes above. Every tool from another account, and another
     # account's conversation id, are tested in tests/test_support.py.
     ("POST", "/v1/support/messages"),
+    # Billing: the signed-in account's own plan only. No route takes a tenant
+    # id; a merchant's session and any API key are refused (tests/test_billing.py).
+    ("GET", "/v1/billing"), ("POST", "/v1/billing/checkout"), ("POST", "/v1/billing/portal"),
 }
 #: The operator console: Okwan's own staff, across accounts by design. Every
 #: route answers a plain 404 to anyone but an allowlisted operator whose

@@ -20,6 +20,7 @@ and what it holds only for the length of a request.
 | `support_replies` | Replies an operator sent from the console: the text, who sent it, whether the mail went out | Row-level security | Not purged |
 | `operator_factors` | Each operator's authenticator secret, sealed like a credential | Identity table: login role only; ciphertext under its own data key | Until re-enrolled |
 | `operator_actions` | Every operator action: who, when, what, which ticket or account | Identity table: login role only; append-only, enforced by database triggers | Not purged, and cannot be |
+| `billing` | A paying account's Stripe customer and subscription ids, the subscription's state and renewal date. Never card details | Identity table: login role only (the signed webhook finds the tenant by customer) | As the tenant |
 | `reconciliation_runs` | Each run's summary and trimmed per-order verdicts (outcome, order reference, currency, totals, per-rail amounts, reason); a scrubbed error, at most 300 characters | Row-level security; no raw rail record is written (`okwan_recon` trims rows) | Newest 50 per tenant, kind and name; the insert prunes the rest |
 
 **Not stored anywhere:** card numbers (no rail returns one and no table
@@ -43,6 +44,7 @@ request bodies, customer email addresses or names from the rails.
 | The rails | The tenant's own credentials, as each rail's API requires | To read that tenant's records |
 | Resend | Recipient address and the verification link; support escalations (ticket id, tenant id and name, the account's sign-in address, the assistant's summary, the customer's last three messages, secrets removed and every customer value escaped as text) to `OKWAN_SUPPORT_ESCALATION_TO` | To deliver them; tracking must be off for the sending domain |
 | Anthropic | A support conversation: the customer's messages and the tools' results, secrets removed, plus Okwan's own documentation | To answer it (Claude Opus 5.5). Anthropic becomes a subprocessor: [owner-and-legal.md](owner-and-legal.md) |
+| Stripe | Checkout and portal requests: the account's tenant id (as metadata), its sign-in address, the Pro price id; Stripe collects the card itself | To take payment for Pro. Okwan's own Stripe account, not a connector |
 | Render logs | Warnings naming a tenant id when usage or a run could not be recorded; startup errors | Operations. No credential, token, link or query text is logged |
 | GitHub | Monitor results: which public check failed and why | Incident issues |
 
