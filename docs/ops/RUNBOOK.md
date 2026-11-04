@@ -280,17 +280,30 @@ minutes and keeps one issue labelled `incident` open while anything fails.
 To run it now: *Actions → monitor → Run workflow*. To run it from a
 laptop: `python scripts/monitor.py`.
 
-One-time setup (owner):
+Set up 2026-11-04, and how to redo it:
 
-1. A monitor tenant with no rail credentials:
-   `python -m okwan_vault tenant create "okwan-monitor"`, then
-   `python -m okwan_vault key issue <tenant_id>`.
-2. GitHub → repository *Settings → Secrets and variables → Actions*:
-   secret `OKWAN_MONITOR_KEY` = that key. Variable `OKWAN_ONCALL` = the
-   on-call GitHub username.
-3. Optional: secret `OKWAN_ALERT_WEBHOOK` = a Slack-compatible incoming
-   webhook, posted to when an incident opens and closes.
-4. The on-call person turns on GitHub notifications for issues assigned
+1. The monitor tenant is `okwan-monitor` (`python -m okwan_vault tenant
+   list` shows its id). It holds no rail credentials, so its key reads
+   nothing of value, and the call the monitor makes is unmetered.
+2. Its key is the Actions secret `OKWAN_MONITOR_KEY`: an organization
+   secret (`okwan-ai` → *Settings → Secrets and variables → Actions*)
+   with repository access limited to `okwan`. To replace it, issue a key
+   into a file so it never shows on screen, paste it into the secret,
+   delete the file, then revoke the old key:
+
+   ```bash
+   python -m okwan_vault key issue <tenant_id> | grep -oE 'okw_[A-Za-z0-9_-]{30,}' | tr -d '\n' > ~/okwan-monitor-key.txt
+   ```
+
+   ```bash
+   rm ~/okwan-monitor-key.txt
+   ```
+
+3. Incidents are assigned to `Marwuko` unless the repository variable
+   `OKWAN_ONCALL` names someone else. Change it when the rota changes.
+4. Optional: secret `OKWAN_ALERT_WEBHOOK`, a Slack-compatible incoming
+   webhook posted to when an incident opens and closes.
+5. The on-call person keeps GitHub notifications on for issues assigned
    to them (email, and push in the GitHub mobile app).
 
 Limits to know. GitHub runs schedules late under load, usually by
@@ -303,11 +316,26 @@ opinion from outside GitHub, an uptime service pointed at
 ## Branch protection
 
 CI (`.github/workflows/ci.yml`) runs the tests against a real Postgres,
-lint on changed Python, and both web builds, on every pull request. It
-only blocks a bad merge once `main` requires it: GitHub → *Settings →
-Branches → Add rule* for `main`, require status checks `python`,
-`web (web)` and `web (dashboard)`, and require a pull request before
-merging.
+lint on changed Python, and both web builds, on every pull request. Since
+2026-11-04 the ruleset `main` (GitHub → *Settings → Rules → Rulesets*)
+makes `main` require it:
+
+| Rule | Setting | Why |
+|---|---|---|
+| Pull request before merging | required, 0 approvals | One maintainer, and GitHub does not let anyone approve their own pull request |
+| Status checks | `python`, `web (web)`, `web (dashboard)`; not required to be up to date | The suite against a real database and both builds |
+| Force pushes and deletion | blocked | `main` is what Render deploys |
+| Bypass list | empty | Nobody merges around a red check |
+
+`plant-leaks` is deliberately not required: it runs only when isolation
+code changes, so on any other pull request it never reports, and a
+required check that never reports blocks the merge forever. It still
+runs on those changes and weekly.
+
+If GitHub Actions itself is down, nothing can merge until it recovers.
+For a production fix that cannot wait, an owner can switch the ruleset
+to *Disabled*, merge, and switch it back, saying so in the incident
+issue.
 
 ## Owner decisions
 

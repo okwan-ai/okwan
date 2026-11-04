@@ -91,5 +91,8 @@ returned the vault's master key and database address to any API key
 holder. Fixed in the engine (`packages/query/okwan_query/session.py`,
 `SANDBOX`), tested through REST, MCP and the engine alone, and planted
 back by `scripts/plant_leaks.py` to confirm the suite fails without it.
-The exposure check and rotation are the owner's (`OKWAN_PROJECT.md` §10
-item 29). Recorded in `OKWAN_PROJECT.md` §11.
+**It was never used.** After the fix deployed on 2026-11-04, the owner
+checked the usage counters: production had recorded no query request, on
+either surface, from any tenant, ever. Every successful query is
+metered, and the exploit is a successful query. Recorded in
+`OKWAN_PROJECT.md` §11.

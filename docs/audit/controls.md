@@ -50,3 +50,5 @@ table cannot point at something that no longer exists.
 |---|---|---|---|
 | C21 | Every failure the monitor reports links to a runbook section that exists | `scripts/monitor.py`, `docs/ops/RUNBOOK.md` | `tests/test_monitor.py::test_every_runbook_link_the_monitor_gives_exists` |
 | C22 | The suite runs against a real Postgres on every pull request, and fails if an isolation test skipped | `.github/workflows/ci.yml` | The workflow's own run on each pull request |
+| C23 | Nothing reaches `main`, which production deploys, without a pull request whose required checks pass; no force push, no deletion, no bypass | GitHub ruleset `main` (`docs/ops/RUNBOOK.md`, "Branch protection") | GitHub's rules for the branch: `GET https://api.github.com/repos/okwan-ai/okwan/rules/branches/main` |
+| C24 | Production is checked from outside every ten minutes, signed in, and a failure opens an assigned incident | `scripts/monitor.py`, `.github/workflows/monitor.yml` | `tests/test_monitor.py`; the workflow's run history |
