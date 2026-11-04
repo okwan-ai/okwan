@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ago } from "@/lib/finding";
 import { headline, TICKET_ID, ticket, type Line, type TicketDetail } from "@/lib/ops";
@@ -48,7 +49,7 @@ function Ticket({ t, unlockedUntil }: { t: TicketDetail; unlockedUntil: string }
             <Badge tone={t.status === "resolved" ? "ok" : t.status === "open" ? "ink" : "neutral"}>{STATUS_LABEL[t.status]}</Badge>
             <span>{t.category_label}</span>
             <span aria-hidden>·</span>
-            <span>{t.account}</span>
+            <Link href={`/ops/accounts/${t.tenant_id}`} className="hover:text-ink hover:underline">{t.account}</Link>
             <span aria-hidden>·</span>
             <span suppressHydrationWarning>raised {ago(Date.parse(t.created_at))}</span>
             <span aria-hidden>·</span>

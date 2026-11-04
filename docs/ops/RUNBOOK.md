@@ -335,6 +335,12 @@ it is a 404.
   account's sign-in address, and the customer's answer comes to
   `OKWAN_SUPPORT_ESCALATION_TO`. *Resolve without replying* closes a
   ticket that needs no answer.
+- **Look up an account.** *Accounts* lists every customer: plan and
+  this month's usage, merchants, which connections are saved, active
+  keys, the last check and open tickets. An account's page shows each
+  merchant's saved connections (by field name), its recent checks with
+  their errors, keys by prefix, and its tickets. Nothing secret is ever
+  shown: no credential value, no key. Opening an account is logged.
 - **Wrong code, or "too many attempts".** Codes change every 30 seconds
   and each works once; check the phone's clock is set automatically.
   Five unlock attempts in 15 minutes is the limit; after that, wait.

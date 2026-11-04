@@ -1,25 +1,12 @@
 import Link from "next/link";
 import { ago } from "@/lib/finding";
-import { headline, STATUS_FILTERS, type StatusFilter, type TicketRow, tickets } from "@/lib/ops";
-import { CONSOLE_DESCRIPTION, CONSOLE_TITLE, ConsoleGate, until } from "../_components/ops/console-gate";
-import { Badge, type Tone } from "../_components/ui/badge";
-import { PageHeader } from "../_components/ui/page-header";
+import { headline, STATUS_FILTERS, type StatusFilter, tickets } from "@/lib/ops";
+import { SeverityBadge, StatusBadge } from "../_components/ops/badges";
+import { ConsoleGate, ConsoleHeader } from "../_components/ops/console-gate";
 import { Segmented } from "../_components/ui/segmented";
 import { Table, Td, Th } from "../_components/ui/table";
 
 export const metadata = { title: "Console" };
-
-const SEVERITY: Record<TicketRow["severity"], { tone: Tone; label: string }> = {
-  sev1: { tone: "danger", label: "SEV1 urgent" },
-  sev2: { tone: "warn", label: "SEV2" },
-  sev3: { tone: "neutral", label: "SEV3" },
-};
-
-const STATUS: Record<TicketRow["status"], { tone: Tone; symbol: string; label: string }> = {
-  open: { tone: "ink", symbol: "●", label: "Open" },
-  answered: { tone: "neutral", symbol: "↩", label: "Answered" },
-  resolved: { tone: "ok", symbol: "✓", label: "Resolved" },
-};
 
 const FILTER_LABEL: Record<StatusFilter, string> = { open: "Open", answered: "Answered", resolved: "Resolved", all: "All" };
 
@@ -28,14 +15,7 @@ export default async function ConsolePage({ searchParams }: { searchParams: Prom
   const status: StatusFilter = (STATUS_FILTERS as readonly string[]).includes(raw ?? "") ? (raw as StatusFilter) : "open";
   return (
     <ConsoleGate
-      header={(op, lock) => (
-        <PageHeader
-          title={CONSOLE_TITLE}
-          description={CONSOLE_DESCRIPTION}
-          meta={<span>Signed in as {op.email} · unlocked until {until(op.unlocked_until!)} · everything here is logged</span>}
-          actions={lock}
-        />
-      )}
+      header={(op, lock) => <ConsoleHeader op={op} lock={lock} active="inbox" />}
     >
       {() => <Inbox status={status} />}
     </ConsoleGate>
@@ -49,7 +29,7 @@ async function Inbox({ status }: { status: StatusFilter }) {
   return (
     <section aria-labelledby="inbox-title" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="inbox-title" className="text-base font-semibold">Support inbox</h2>
+        <h2 id="inbox-title" className="sr-only">Support inbox</h2>
         <Segmented
           label="Show tickets"
           value={status}
@@ -67,8 +47,8 @@ async function Inbox({ status }: { status: StatusFilter }) {
               <li key={t.id}>
                 <Link href={`/ops/tickets/${t.id}`} className="block rounded-xl border border-line bg-surface p-4 hover:border-ink/40">
                   <span className="flex flex-wrap gap-1.5">
-                    <Badge tone={SEVERITY[t.severity].tone}>{SEVERITY[t.severity].label}</Badge>
-                    <Badge tone={STATUS[t.status].tone} symbol={STATUS[t.status].symbol}>{STATUS[t.status].label}</Badge>
+                    <SeverityBadge severity={t.severity} />
+                    <StatusBadge status={t.status} />
                   </span>
                   <span className="mt-2 block font-medium">{headline(t.issue)}</span>
                   <span className="mt-1 block text-xs text-ink-soft">
@@ -93,17 +73,17 @@ async function Inbox({ status }: { status: StatusFilter }) {
               <tbody className="divide-y divide-line">
                 {rows.map((t) => (
                   <tr key={t.id} className="hover:bg-canvas/60">
-                    <Td><Badge tone={SEVERITY[t.severity].tone}>{SEVERITY[t.severity].label}</Badge></Td>
+                    <Td><SeverityBadge severity={t.severity} /></Td>
                     <Td className="max-w-md">
                       <Link href={`/ops/tickets/${t.id}`} className="font-medium hover:underline">{headline(t.issue)}</Link>
                       {!t.notified && <span className="block text-xs text-danger">The email to you didn&apos;t go out</span>}
                     </Td>
                     <Td>
-                      <span className="block">{t.account}</span>
+                      <Link href={`/ops/accounts/${t.tenant_id}`} className="block hover:underline">{t.account}</Link>
                       <span className="block text-xs text-ink-soft">{t.contact ?? "no sign-in address"}</span>
                     </Td>
                     <Td className="text-ink-soft">{t.category_label}</Td>
-                    <Td><Badge tone={STATUS[t.status].tone} symbol={STATUS[t.status].symbol}>{STATUS[t.status].label}</Badge></Td>
+                    <Td><StatusBadge status={t.status} /></Td>
                     <Td className="text-right whitespace-nowrap text-ink-soft"><span suppressHydrationWarning>{ago(Date.parse(t.created_at))}</span></Td>
                   </tr>
                 ))}

@@ -51,6 +51,55 @@ export async function ticket(id: string) {
 }
 
 export const TICKET_ID = /^tkt_[0-9a-f]{16}$/;
+export const TENANT_ID = /^ten_[0-9a-f]{16}$/;
+
+export type RunBrief = {
+  id: string; kind: string; name: string; surface: string;
+  status: "ok" | "failed"; finished_at: string; error: string | null;
+};
+
+export type AccountRow = {
+  id: string;
+  name: string;
+  created_at: string;
+  contact: string | null;
+  plan: { name: string; limit: number; used: number; unmetered: boolean };
+  merchants: number;
+  connections: string[];
+  active_keys: number;
+  last_run: RunBrief | null;
+  open_tickets: number;
+};
+
+export type Member = {
+  id: string; name: string; is_account: boolean; created_at: string;
+  /** connector → the credential field names saved. Never values. */
+  connections: Record<string, string[]>;
+  last_run: RunBrief | null;
+};
+
+export type AccountDetail = AccountRow & {
+  usage_by_surface: Record<string, number>;
+  month_start: string;
+  members: Member[];
+  keys: { id: string; tenant_id: string; prefix: string; issued: string; revoked: string | null }[];
+  runs: (RunBrief & { tenant_id: string })[];
+  tickets: TicketRow[];
+};
+
+export function planLine(p: AccountRow["plan"]): string {
+  return p.unmetered
+    ? `${p.name} · ${p.used.toLocaleString("en-US")} this month, unmetered`
+    : `${p.name} · ${p.used.toLocaleString("en-US")} of ${p.limit.toLocaleString("en-US")}`;
+}
+
+export async function accounts() {
+  return api<{ data: AccountRow[] }>("/v1/ops/accounts", { session: await session() });
+}
+
+export async function account(id: string) {
+  return api<AccountDetail>(`/v1/ops/accounts/${encodeURIComponent(id)}`, { session: await session() });
+}
 
 /**
  * A ticket's issue as a title. The assistant writes one sentence now, but

@@ -3,10 +3,41 @@ import type { ReactNode } from "react";
 import { requireTenant } from "@/lib/guard";
 import { operatorMe, type OperatorMe } from "@/lib/ops";
 import { PageHeader } from "../ui/page-header";
+import { Tabs } from "../ui/tabs";
 import { LockButton, UnlockForm } from "./console-actions";
 
 export const CONSOLE_TITLE = "Console";
-export const CONSOLE_DESCRIPTION = "Every customer's support requests, across all accounts. Only you can open this page.";
+export const CONSOLE_DESCRIPTION = "Every account and every support request, across all customers. Only you can open this page.";
+
+/** The console's sections, under its header. */
+export function ConsoleTabs({ active }: { active: "inbox" | "accounts" }) {
+  return (
+    <div className="mb-6">
+      <Tabs
+        label="Console"
+        items={[
+          { href: "/ops", label: "Support inbox", active: active === "inbox" },
+          { href: "/ops/accounts", label: "Accounts", active: active === "accounts" },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** The header every top-level console page shares. */
+export function ConsoleHeader({ op, lock, active }: { op: OperatorMe; lock: ReactNode; active: "inbox" | "accounts" }) {
+  return (
+    <>
+      <PageHeader
+        title={CONSOLE_TITLE}
+        description={CONSOLE_DESCRIPTION}
+        meta={<span>Signed in as {op.email} · unlocked until {until(op.unlocked_until!)} · everything here is logged</span>}
+        actions={lock}
+      />
+      <ConsoleTabs active={active} />
+    </>
+  );
+}
 
 /**
  * The console's three doors, in order: signed in, on the allowlist (else
