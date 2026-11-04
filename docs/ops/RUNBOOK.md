@@ -358,6 +358,31 @@ it is a 404.
   console action, newest first. The database refuses to change or delete
   it.
 
+### Delete an account on request
+
+The Privacy Policy (`okwan.ai/privacy`) promises deletion within 30 days
+of a request from the account's sign-in address. Requests arrive by email
+to info@globaltechstartup.com or as an `account` ticket from the
+assistant.
+
+1. Confirm the request came from the account's sign-in address: the
+   console's account page shows it.
+2. In the Codespace:
+
+   ```bash
+   python -m okwan_vault tenant delete <tenant_id>
+   ```
+
+   It shows the account, its login and its merchants, then asks for the
+   id again. Everything in the account goes in one transaction: merchants,
+   login, sessions, saved credentials, keys, check results, usage, support
+   conversations, tickets and replies, and any unfinished signup for that
+   address. The console's log records that the deletion happened.
+3. Reply to the customer that it is done, and resolve the ticket.
+
+Database backups keep deleted rows until they age out on Neon's
+schedule; the policy says so.
+
 ### Roll back a deploy
 
 Render → service → *Events*: pick the last deploy that was live and

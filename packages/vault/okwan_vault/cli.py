@@ -79,6 +79,32 @@ async def tenant_show(tenant_id: str) -> None:
         await store.close()
 
 
+async def tenant_delete(tenant_id: str) -> None:
+    """Delete an account and everything in it, when its owner asks (the
+    Privacy Policy's "Delete your account"). Says what will go, then asks
+    for the id again: there is no undo."""
+    store = await _store()
+    try:
+        tenant = await store.get_tenant(tenant_id)
+        if tenant is None:
+            sys.exit(f"no such tenant: {tenant_id}")
+        merchants = await store.children_of(tenant_id)
+        email = await store.account_email(tenant_id) if tenant.parent_id is None else None
+        print(f"tenant    {tenant.id}  {tenant.name}")
+        print(f"login     {email or 'none'}")
+        print(f"merchants {len(merchants)}")
+        print("This deletes the tenant, its merchants, the login, and every saved credential,")
+        print("API key, check result, usage count, support conversation and ticket they hold.")
+        print("It cannot be undone. Database backups age out on Neon's own schedule.")
+        if input("Type the tenant id again to delete it: ").strip() != tenant_id:
+            sys.exit("not deleted: the id did not match")
+        gone = await store.delete_tenant(tenant_id)
+        await store.log_operator("cli", "delete_account", tenant_id, {"tenants": len(gone)})
+        print(f"deleted {len(gone)} tenant(s): {', '.join(gone)}")
+    finally:
+        await store.close()
+
+
 async def tenant_list() -> None:
     store = await _store()
     try:
@@ -370,6 +396,7 @@ USAGE = """usage:
   python -m okwan_vault tenant create <name>
   python -m okwan_vault tenant show <tenant_id>
   python -m okwan_vault tenant list
+  python -m okwan_vault tenant delete <tenant_id>
   python -m okwan_vault account add <tenant_id> <email>
   python -m okwan_vault account reset-password <email>
   python -m okwan_vault plan set <tenant_id> <plan>
@@ -400,6 +427,7 @@ def main(argv: list[str]) -> None:
     routes = {
         ("tenant", "create"): (tenant_create, 1),
         ("tenant", "show"): (tenant_show, 1),
+        ("tenant", "delete"): (tenant_delete, 1),
         ("tenant", "list"): (tenant_list, 0),
         ("account", "add"): (account_add, 2),
         ("account", "reset-password"): (account_reset_password, 1),

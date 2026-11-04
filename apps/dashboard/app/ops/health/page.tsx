@@ -20,7 +20,7 @@ const ACTION: Record<string, string> = {
   list_tickets: "Opened the inbox", view_ticket: "Opened a ticket", reply: "Replied to a customer",
   reply_failed: "Reply not sent", set_status: "Changed a ticket's status", list_accounts: "Opened accounts",
   view_account: "Opened an account", view_health: "Opened health", view_log: "Read the log",
-  enroll: "Enrolled an authenticator",
+  enroll: "Enrolled an authenticator", delete_account: "Deleted an account",
 };
 
 export default function HealthPage() {

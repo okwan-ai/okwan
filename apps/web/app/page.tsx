@@ -1,33 +1,13 @@
 /* Okwan public site. A server component: everything renders as HTML,
    and the only motion is CSS, which prefers-reduced-motion turns off. */
 
+import { Mark, Wordmark, Wrap } from "./_components/brand";
+
 const GITHUB = "https://github.com/okwan-ai/okwan";
 const API_DOCS = "https://api.okwan.ai/docs";
 const CONTACT = "mailto:info@globaltechstartup.com?subject=Okwan%20%E2%80%94%20reconciliation";
 
 /* ── Brand ──────────────────────────────────────────────────────── */
-
-function Mark({ size = 24, light = false }: { size?: number; light?: boolean }) {
-  const stroke = light ? "#FFFFFF" : "#0A0A0A";
-  return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M6 8h20" stroke={stroke} strokeWidth="3.5" strokeLinecap="round" />
-      <path d="M6 24h20" stroke={stroke} strokeWidth="3.5" strokeLinecap="round" />
-      <circle cx="16" cy="16" r="4.5" fill="#FFD400" stroke={light ? "none" : stroke} strokeWidth="2" />
-    </svg>
-  );
-}
-
-function Wordmark({ light = false }: { light?: boolean }) {
-  return (
-    <span className="flex items-center gap-2.5">
-      <Mark light={light} />
-      <span className={`text-[21px] font-semibold tracking-[-0.02em] ${light ? "text-white" : "text-ink"}`}>
-        okwan
-      </span>
-    </span>
-  );
-}
 
 /** The signal dot that ends the headline: the mark's yellow point. */
 function SignalDot() {
@@ -37,10 +17,6 @@ function SignalDot() {
       className="ml-[0.06em] inline-block h-[0.2em] w-[0.2em] translate-y-[-0.02em] rounded-full border-[0.035em] border-ink bg-signal align-baseline"
     />
   );
-}
-
-function Wrap({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <div className={`mx-auto w-full max-w-[1440px] px-6 sm:px-8 lg:px-12 xl:px-16 ${className}`}>{children}</div>;
 }
 
 function Eyebrow({ children, light = false }: { children: React.ReactNode; light?: boolean }) {
@@ -658,7 +634,7 @@ function Footer() {
   const cols: [string, [string, string][]][] = [
     ["Product", [["Retail", "#retail"], ["Industries", "#industries"], ["How it works", "#how"], ["Security", "#security"]]],
     ["Developers", [["API docs", API_DOCS], ["GitHub", GITHUB], ["Apache-2.0 license", `${GITHUB}/blob/main/LICENSE`]]],
-    ["Company", [["Contact", CONTACT]]],
+    ["Company", [["Contact", CONTACT], ["Privacy", "/privacy"], ["Terms", "/terms"]]],
   ];
   return (
     <footer className="border-t border-night-line bg-night text-night-soft">

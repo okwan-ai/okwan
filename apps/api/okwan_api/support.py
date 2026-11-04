@@ -156,6 +156,20 @@ nothing in Okwan moves money.
 - Sign-in is by email and password; sessions last 7 days. A forgotten password
   is reset by Okwan's operator: escalate as `account`.
 
+## Privacy and account deletion
+- The Privacy Policy is https://okwan.ai/privacy and the Terms are
+  https://okwan.ai/terms. Answer privacy questions from what they say; do not
+  promise anything they do not.
+- Saved credentials are encrypted and never shown again, in the dashboard or to
+  Okwan staff. API keys are stored as hashes. No card numbers, raw rail records,
+  or customers' names and emails from the rails are stored.
+- Support conversations are kept 30 days after the last message, and the
+  assistant's model provider is Anthropic.
+- To delete an account and everything in it, or to see, export or correct
+  their information: escalate as `account` (deletion is done by a person
+  within 30 days), and tell them they can also email info@globaltechstartup.com
+  from their sign-in address.
+
 ## The dashboard ({app})
 - Overview `{app}/overview`: the headline finding and what needs attention.
 - Merchants `{app}/merchants`: each merchant, its connections, runs and keys.
