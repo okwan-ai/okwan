@@ -93,9 +93,10 @@ class Store(Protocol):
     ) -> str: ...
     async def add_ticket(
         self, tenant_id: str, *, conversation_id: str | None, severity: str,
-        category: str, summary: str, notified: bool,
+        category: str, summary: str, notified: bool, ticket_id: str | None = None,
     ) -> SupportTicket: ...
     async def list_tickets(self, limit: int = 50) -> list[SupportTicket]: ...
+    async def account_email(self, tenant_id: str) -> str | None: ...
 
 
 class MemoryStore:
@@ -432,12 +433,12 @@ class MemoryStore:
 
     async def add_ticket(
         self, tenant_id: str, *, conversation_id: str | None, severity: str,
-        category: str, summary: str, notified: bool,
+        category: str, summary: str, notified: bool, ticket_id: str | None = None,
     ) -> SupportTicket:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         t = SupportTicket(
-            id=f"tkt_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id,
+            id=ticket_id or f"tkt_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id,
             conversation_id=conversation_id, severity=severity, category=category,
             summary=summary, notified=notified,
         )
@@ -447,6 +448,17 @@ class MemoryStore:
     async def list_tickets(self, limit: int = 50) -> list[SupportTicket]:
         """Every tenant's tickets, newest first: for the operator only."""
         return sorted(self._tickets.values(), key=lambda t: t.created_at, reverse=True)[:limit]
+
+    async def account_email(self, tenant_id: str) -> str | None:
+        """The sign-in address of the tenant's login, or of the nearest
+        ancestor's: a merchant has no login, its account does."""
+        logins = {tid: email for email, (tid, _) in self._accounts.items()}
+        t = self._tenants.get(tenant_id)
+        while t is not None:
+            if t.id in logins:
+                return logins[t.id]
+            t = self._tenants.get(t.parent_id) if t.parent_id else None
+        return None
 
 
 async def resolver_for(store: Store, tenant_id: str, connectors=None):
