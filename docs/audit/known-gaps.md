@@ -28,4 +28,5 @@ hidden from the auditor. Closing them is tracked in `OKWAN_PROJECT.md` §10.
 | No request-size limit; missing protective headers | `apps/api/okwan_api/edge.py`, `apps/dashboard/next.config.ts`; controls C18–C19 |
 | A SQL error answered 500 | 400 with the engine's message (`packages/query/okwan_query/rest.py`) |
 | Tests ran only where someone ran them; the Postgres half skipped without a database | `.github/workflows/ci.yml`; control C22 |
-| No monitoring, alerting or runbook | `scripts/monitor.py`, `.github/workflows/monitor.yml`, `docs/ops/RUNBOOK.md` |
+| No monitoring, alerting or runbook | `scripts/monitor.py`, `.github/workflows/monitor.yml`, `docs/ops/RUNBOOK.md`; live since 2026-11-04 with a signed-in check |
+| A change could reach `main`, and so production, without passing CI | Ruleset `main`: pull request and the three CI checks required, force push and deletion blocked; control C23 |
