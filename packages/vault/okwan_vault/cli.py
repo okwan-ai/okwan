@@ -14,6 +14,7 @@ provisioning by hand and for inspecting a tenant.
     python -m okwan_vault account reset-password founder@acme.com
     python -m okwan_vault plan set ten_abc123 pro
     python -m okwan_vault plan show ten_abc123
+    python -m okwan_vault support list
 
 Setting a plan is operator-only on purpose: there is no API route for
 it, so no key or session can raise its own tenant's limit, and there is
@@ -218,6 +219,25 @@ async def plan_show(tenant_id: str) -> None:
     print("\n".join(lines))
 
 
+def ticket_lines(tickets) -> list[str]:
+    """One line per escalation, newest first: what the operator reads."""
+    if not tickets:
+        return ["no support tickets"]
+    return [f"{t.created_at:%Y-%m-%d %H:%M}  {t.id}  {t.severity}  {t.category:<13}  "
+            f"{t.tenant_id}  {'mailed' if t.notified else 'NOT MAILED'}  {t.summary[:120]}"
+            for t in tickets]
+
+
+async def support_list() -> None:
+    """Every escalation from the support assistant, mailed or not."""
+    store = await _store()
+    try:
+        tickets = await store.list_tickets()
+    finally:
+        await store.close()
+    print("\n".join(ticket_lines(tickets)))
+
+
 async def account_reset_password(email: str) -> None:
     """A forgotten password, replaced by the operator.
 
@@ -298,6 +318,7 @@ USAGE = """usage:
   python -m okwan_vault account reset-password <email>
   python -m okwan_vault plan set <tenant_id> <plan>
   python -m okwan_vault plan show <tenant_id>
+  python -m okwan_vault support list
   python -m okwan_vault key issue <tenant_id>
   python -m okwan_vault key revoke <key_id>
   python -m okwan_vault cred set <tenant_id> <connector> <field>
@@ -326,6 +347,7 @@ def main(argv: list[str]) -> None:
         ("account", "reset-password"): (account_reset_password, 1),
         ("plan", "set"): (plan_set, 2),
         ("plan", "show"): (plan_show, 1),
+        ("support", "list"): (support_list, 0),
         ("key", "issue"): (key_issue, 1),
         ("key", "revoke"): (key_revoke, 1),
         ("cred", "set"): (cred_set, 3),

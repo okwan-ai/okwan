@@ -129,9 +129,41 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
 CREATE INDEX IF NOT EXISTS reconciliation_runs_latest_idx
     ON reconciliation_runs (tenant_id, name, finished_at DESC);
 
+-- ── support ─────────────────────────────────────────────────────────
+-- The support assistant's conversations, kept for 30 days after their last
+-- message so a customer can come back to one and an escalation can be
+-- read in full. `messages` is the transcript as the model saw it: customer
+-- text after secret redaction, the assistant's turns, the read-only tools'
+-- results. A tenant's own data: under row-level security below.
+CREATE TABLE IF NOT EXISTS support_conversations (
+    id          text PRIMARY KEY,
+    tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    messages    jsonb NOT NULL,
+    turns       integer NOT NULL DEFAULT 0,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS support_conversations_tenant_idx
+    ON support_conversations (tenant_id, updated_at DESC);
+
+-- What the assistant handed to a person. `notified` says whether the
+-- escalation mail was accepted; the operator lists every ticket with
+-- `python -m okwan_vault support list` either way.
+CREATE TABLE IF NOT EXISTS support_tickets (
+    id               text PRIMARY KEY,
+    tenant_id        text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    conversation_id  text,
+    severity         text NOT NULL CHECK (severity IN ('sev1', 'sev2', 'sev3')),
+    category         text NOT NULL,
+    summary          text NOT NULL,
+    notified         boolean NOT NULL DEFAULT false,
+    created_at       timestamptz NOT NULL DEFAULT now()
+);
+
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
--- stored runs) runs as okwan_tenant, inside one transaction that names
+-- stored runs, support conversations and tickets) runs as okwan_tenant, inside one transaction that names
 -- the tenants it may touch (PostgresStore._scoped). The policy below lets
 -- that role see, and write, only rows whose tenant_id is in that scope.
 -- With no scope it sees nothing and can write nothing. The WHERE
@@ -176,7 +208,8 @@ DECLARE
     scope constant text :=
         $s$tenant_id = ANY (string_to_array(current_setting('okwan.tenant_ids', true), ','))$s$;
 BEGIN
-    FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs'] LOOP
+    FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs',
+                             'support_conversations', 'support_tickets'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

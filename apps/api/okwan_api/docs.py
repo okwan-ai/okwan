@@ -42,15 +42,19 @@ AUTH_HEADERS = {"authorization", "x-okwan-key"}
 #: Sections that are not connectors: (tag, display name, description).
 STATIC_TAGS: list[tuple[str, str, str]] = [
     ("reconciliations", "The check",
-     "Run the check over a merchant's orders and payments. Each run is one request and is saved as "
-     "verdicts and amounts, never raw payment records."),
+     ("Run the check over a merchant's orders and payments. Each run is one request and is saved as "
+     "verdicts and amounts, never raw payment records.")),
     ("query", "SQL",
      "Read-only SQL over the tables the connectors generate. One request per statement."),
     ("tenants", "Merchants & keys",
-     "Your merchants, their keys, connections, usage and saved checks. Takes a key or a dashboard "
-     "session. Reading is free."),
+     ("Your merchants, their keys, connections, usage and saved checks. Takes a key or a dashboard "
+     "session. Reading is free.")),
     ("accounts", "Accounts",
      "Sign-up, email verification and dashboard sessions."),
+    ("support", "Support",
+     ("Okwan's support assistant: answers about your own account, reads it live and never "
+     "changes it, and hands what it cannot settle to a person. Takes a key or a dashboard "
+     "session. Not metered.")),
     ("catalog", "Catalog",
      "Every connector and what its one declaration generates. Public."),
     ("system", "System", "Health of this API and its vault. Public."),
@@ -153,7 +157,7 @@ def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {"name": "Start here", "tags": ["reconciliations"]},
         {"name": "Connectors", "tags": connector_tags},
         {"name": "SQL", "tags": ["query"]},
-        {"name": "Your workspace", "tags": ["tenants", "accounts"]},
+        {"name": "Your workspace", "tags": ["tenants", "accounts", "support"]},
         {"name": "Reference", "tags": ["catalog", "system"]},
     ]
 

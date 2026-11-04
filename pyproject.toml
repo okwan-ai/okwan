@@ -13,6 +13,8 @@ dependencies = [
     "asyncpg>=0.29",
     "duckdb>=1.1",
     "cryptography>=43.0",
+    # The support assistant (okwan_api/support.py).
+    "anthropic>=2.4,<3",
 ]
 
 [project.optional-dependencies]

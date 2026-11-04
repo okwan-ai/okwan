@@ -288,6 +288,10 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
 ADMIN_OTHER = {
     ("GET", "/v1/tenants"), ("POST", "/v1/tenants"),
     ("DELETE", "/v1/tenants/keys/{key_id}"), ("DELETE", "/v1/sessions/current"),
+    # The support assistant: its tools take a merchant id in the body, guarded
+    # like the routes above. Every tool from another account, and another
+    # account's conversation id, are tested in tests/test_support.py.
+    ("POST", "/v1/support/messages"),
 }
 #: Mounted apps. /mcp is the hosted MCP server; its tools are listed next.
 MOUNTS = {("MOUNT", "/mcp")}

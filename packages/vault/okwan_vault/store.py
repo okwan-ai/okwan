@@ -12,14 +12,23 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from . import apikey
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
-from .models import RUNS_KEPT, ApiKey, RunRecord, SealedCredential, Tenant
+from .models import (
+    RUNS_KEPT,
+    SUPPORT_KEPT_DAYS,
+    ApiKey,
+    RunRecord,
+    SealedCredential,
+    SupportConversation,
+    SupportTicket,
+    Tenant,
+)
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
 
@@ -75,6 +84,18 @@ class Store(Protocol):
     async def latest_runs(
         self, tenant_ids: list[str], kind: str, name: str
     ) -> dict[str, RunRecord]: ...
+    async def keys_for(self, tenant_id: str) -> list[ApiKey]: ...
+    async def get_conversation(
+        self, tenant_id: str, conversation_id: str
+    ) -> SupportConversation | None: ...
+    async def save_conversation(
+        self, tenant_id: str, conversation_id: str | None, messages: list, turns: int
+    ) -> str: ...
+    async def add_ticket(
+        self, tenant_id: str, *, conversation_id: str | None, severity: str,
+        category: str, summary: str, notified: bool,
+    ) -> SupportTicket: ...
+    async def list_tickets(self, limit: int = 50) -> list[SupportTicket]: ...
 
 
 class MemoryStore:
@@ -94,6 +115,8 @@ class MemoryStore:
         # token_hash → (tenant_id, expires_at)
         self._sessions: dict[str, tuple[str, datetime]] = {}
         self._runs: dict[str, RunRecord] = {}
+        self._conversations: dict[str, SupportConversation] = {}
+        self._tickets: dict[str, SupportTicket] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -369,6 +392,61 @@ class MemoryStore:
 
     async def delete_session(self, token_hash: str) -> None:
         self._sessions.pop(token_hash, None)
+
+
+    # ── support ─────────────────────────────────────────────────────
+
+    async def keys_for(self, tenant_id: str) -> list[ApiKey]:
+        """A tenant's keys, newest first. The hash stays in the record but no
+        caller of this returns it."""
+        found = [k for k in self._keys.values() if k.tenant_id == tenant_id]
+        return sorted(found, key=lambda k: k.created_at, reverse=True)
+
+    async def get_conversation(
+        self, tenant_id: str, conversation_id: str
+    ) -> SupportConversation | None:
+        c = self._conversations.get(conversation_id)
+        return c if c is not None and c.tenant_id == tenant_id else None
+
+    async def save_conversation(
+        self, tenant_id: str, conversation_id: str | None, messages: list, turns: int
+    ) -> str:
+        """Insert or replace one conversation, then drop the tenant's
+        conversations untouched for SUPPORT_KEPT_DAYS."""
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        now = datetime.now(UTC)
+        old = self._conversations.get(conversation_id) if conversation_id else None
+        if old is not None and old.tenant_id != tenant_id:
+            raise KeyError(f"unknown conversation {conversation_id!r}")
+        cid = conversation_id or f"sup_{uuid.uuid4().hex[:16]}"
+        self._conversations[cid] = SupportConversation(
+            id=cid, tenant_id=tenant_id, messages=list(messages), turns=turns,
+            created_at=old.created_at if old else now, updated_at=now,
+        )
+        cutoff = now - timedelta(days=SUPPORT_KEPT_DAYS)
+        for key, c in list(self._conversations.items()):
+            if c.tenant_id == tenant_id and c.updated_at < cutoff:
+                del self._conversations[key]
+        return cid
+
+    async def add_ticket(
+        self, tenant_id: str, *, conversation_id: str | None, severity: str,
+        category: str, summary: str, notified: bool,
+    ) -> SupportTicket:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        t = SupportTicket(
+            id=f"tkt_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id,
+            conversation_id=conversation_id, severity=severity, category=category,
+            summary=summary, notified=notified,
+        )
+        self._tickets[t.id] = t
+        return t
+
+    async def list_tickets(self, limit: int = 50) -> list[SupportTicket]:
+        """Every tenant's tickets, newest first: for the operator only."""
+        return sorted(self._tickets.values(), key=lambda t: t.created_at, reverse=True)[:limit]
 
 
 async def resolver_for(store: Store, tenant_id: str, connectors=None):
