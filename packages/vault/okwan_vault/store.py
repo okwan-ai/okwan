@@ -67,6 +67,7 @@ class Store(Protocol):
     async def add_account(self, tenant_id: str, email: str, password_hash: str) -> None: ...
     async def reset_password(self, email: str, password_hash: str) -> str: ...
     async def list_tenants(self) -> list[Tenant]: ...
+    async def delete_tenant(self, tenant_id: str) -> list[str]: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
     ) -> None: ...
@@ -155,6 +156,27 @@ class MemoryStore:
 
     async def list_tenants(self) -> list[Tenant]:
         return list(self._tenants.values())
+
+    async def delete_tenant(self, tenant_id: str) -> list[str]:
+        """Delete a tenant, every tenant under it and everything they hold.
+        The ids deleted; empty when there was no such tenant."""
+        if tenant_id not in self._tenants:
+            return []
+        gone = self._subtree(tenant_id)
+        emails = {e for e, (t, _) in self._accounts.items() if t in gone}
+        self._tenants = {k: v for k, v in self._tenants.items() if k not in gone}
+        self._keys = {k: v for k, v in self._keys.items() if v.tenant_id not in gone}
+        self._creds = {k: v for k, v in self._creds.items() if k[0] not in gone}
+        self._usage = {k: v for k, v in self._usage.items() if k[0] not in gone}
+        self._plans = {k: v for k, v in self._plans.items() if k not in gone}
+        self._signups = {k: v for k, v in self._signups.items() if v[0] not in emails}
+        self._accounts = {k: v for k, v in self._accounts.items() if v[0] not in gone}
+        self._sessions = {k: v for k, v in self._sessions.items() if v[0] not in gone}
+        self._runs = {k: v for k, v in self._runs.items() if v.tenant_id not in gone}
+        self._conversations = {k: v for k, v in self._conversations.items() if v.tenant_id not in gone}
+        self._tickets = {k: v for k, v in self._tickets.items() if v.tenant_id not in gone}
+        self._replies = [r for r in self._replies if r["tenant_id"] not in gone]
+        return sorted(gone)
 
     async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
         if tenant_id not in self._tenants:

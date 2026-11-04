@@ -73,3 +73,9 @@ body {
   html { scroll-behavior: auto; }
   .path-draw, .settle { animation: none; }
 }
+
+/* Legal pages: lists and inline links inside the running text. */
+.legal ul { list-style: disc; padding-left: 1.25rem; }
+.legal ul > li + li { margin-top: 0.4rem; }
+.legal strong { color: var(--color-ink); font-weight: 600; }
+.legal p a, .legal li a { color: var(--color-ink); text-decoration: underline; text-underline-offset: 4px; }

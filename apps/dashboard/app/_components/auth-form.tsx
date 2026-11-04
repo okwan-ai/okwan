@@ -62,6 +62,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
         )}
       </label>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      {mode === "signup" && (
+        <p className="text-xs text-ink-soft">
+          By creating an account, you agree to Okwan&apos;s{" "}
+          <a href="https://okwan.ai/terms" target="_blank" rel="noopener" className="underline underline-offset-2 hover:text-ink">Terms of Service</a>{" "}
+          and{" "}
+          <a href="https://okwan.ai/privacy" target="_blank" rel="noopener" className="underline underline-offset-2 hover:text-ink">Privacy Policy</a>.
+        </p>
+      )}
       <div className="flex items-center justify-between gap-4 pt-1">
         <button type="submit" className={buttonClass("primary")} disabled={busy}>
           {busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}

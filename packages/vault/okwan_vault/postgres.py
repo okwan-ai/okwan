@@ -598,6 +598,25 @@ class PostgresStore:
                     raise AccountRefused(f"{email} is already taken") from None
                 raise AccountRefused(f"{tenant_id} already has an account") from None
 
+    async def delete_tenant(self, tenant_id: str) -> list[str]:
+        """Delete a tenant, every tenant under it and everything they hold,
+        in one transaction. Every tenant table cascades from `tenants`; a
+        signup for the same address is not tenant data, so it goes by
+        address. The operator log keeps its entries: they name ids, not
+        contents. The ids deleted; empty when there was no such tenant."""
+        async with self.pool.acquire() as con, con.transaction():
+            ids = [r["id"] for r in await con.fetch(
+                "WITH RECURSIVE sub AS (SELECT id FROM tenants WHERE id = $1 "
+                "UNION ALL SELECT t.id FROM tenants t JOIN sub ON t.parent_id = sub.id) "
+                "SELECT id FROM sub", tenant_id)]
+            if not ids:
+                return []
+            emails = [r["email"] for r in await con.fetch(
+                "SELECT email FROM accounts WHERE tenant_id = ANY($1::text[])", ids)]
+            await con.execute("DELETE FROM signups WHERE email = ANY($1::text[])", emails)
+            await con.execute("DELETE FROM tenants WHERE id = $1", tenant_id)
+        return sorted(ids)
+
     async def reset_password(self, email: str, password_hash: str) -> str:
         """Replace a login's password and end every session it holds.
 

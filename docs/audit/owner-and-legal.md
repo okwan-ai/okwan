@@ -1,20 +1,21 @@
 # Owner and legal items
 
-Flagged here, not drafted. Each needs the owner, and where marked,
-counsel. Engineering can supply facts for any of them (what is stored,
+Each needs the owner, and where marked, counsel. On 2026-11-04 the owner
+chose to write the privacy policy and terms without counsel
+(`OKWAN_PROJECT.md` §9); those rows say what was decided. Engineering can supply facts for any of them (what is stored,
 where, for how long: [data-inventory.md](data-inventory.md)) but does not
 decide them.
 
 | Item | Who | Why it is needed before a contract |
 |---|---|---|
-| Privacy policy and terms of service | Owner, counsel | Signup collects addresses and the vault holds merchants' payment credentials; neither document exists and the site links neither (`OKWAN_PROJECT.md` §10 item 27) |
-| Data processing agreement for customers | Owner, counsel | ISVs will put their merchants' data through Okwan and will ask what Okwan may do with it |
-| Anthropic as a subprocessor of support conversations | Owner, counsel | The support assistant sends a customer's messages and a read-only view of their account (secrets removed) to Anthropic's API. The privacy policy and any DPA must name it, and say that answers come from an AI assistant with a person behind it |
-| Support conversation retention | Owner, counsel | Kept 30 days after the last message (`SUPPORT_KEPT_DAYS`); tickets are not purged. The policy decides both |
-| Subprocessor list | Owner, counsel | Render, Neon, Vercel, Resend, Anthropic and GitHub each touch some data ([dependencies.md](dependencies.md), "Services"); which count as subprocessors, and in which regions they hold data, is a legal reading |
+| Privacy policy and terms of service | Owner | **Published 2026-11-04** at `okwan.ai/privacy` and `okwan.ai/terms` (`apps/web/app/privacy/page.tsx`, `apps/web/app/terms/page.tsx`), written from this pack, and linked from the site footer and the signup form. They describe what the system does today; a change to what is stored changes them |
+| Data processing agreement for customers | Owner | Processor terms are in the Terms, "How we handle data for you". A signed DPA is offered on request |
+| Anthropic as a subprocessor of support conversations | Owner | **Named** in the privacy policy, with what is sent (secrets removed) and that a person reviews what the assistant escalates |
+| Support conversation retention | Owner | **Decided:** conversations 30 days after the last message; tickets and replies for the life of the account, deleted with it |
+| Subprocessor list | Owner | **Published** in the privacy policy with regions: Render (Oregon), Neon (Ohio), Vercel and Google Fonts (global), Resend (Virginia), Anthropic (US). GitHub receives no customer data |
 | Which privacy and data-protection laws apply | Counsel | Customers in the US, and merchants and founders with ties to Ghana and other markets; the answer shapes retention, deletion and breach notice |
 | Breach notification duties and the decision process | Owner, counsel | The runbook stops at "the owner decides, with counsel" (`docs/ops/RUNBOOK.md`, "Suspected cross-tenant exposure"). Who is told, by when, and by whom must be settled before it is needed |
-| Retention and deletion policy | Owner, counsel | Engineering will build the purge and offboarding (known gap G5) to whatever the policy says |
+| Retention and deletion policy | Owner | **Decided** in the privacy policy. Deletion on request within 30 days: `python -m okwan_vault tenant delete` (runbook, "Delete an account on request"). An automatic purge of expired rows is still gap G5 |
 | Whether the 2026-11-03 query hole requires any notice | Owner, counsel | The facts: exposure window from the query layer's launch to the fix's deploy; production has had no customers; the check of who ran queries is `OKWAN_PROJECT.md` §10 item 29 |
 | PCI DSS scope statement | Owner, a qualified assessor | Okwan stores no card numbers and receives none from the rails it reads; an assessor, not engineering, confirms what that means for scope |
 | Response targets and support terms | Owner | Written as proposals in the runbook; they bind only once a contract states them |
