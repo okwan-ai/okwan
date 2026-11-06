@@ -1,40 +1,49 @@
-/* The Okwan logo (§9 2026-11-06), from the owner's own design: "Okwan" in
- * Figtree ExtraBold (SIL Open Font License) as outlines, so it never waits
- * on a font, over the yellow swoosh fitted to the owner's mockup. One
- * drawing everywhere: the dashboard, the site, the browser-tab icon. */
-const WORD = "M398 12Q290 12 207 -34Q124 -81 77 -162Q30 -244 30 -349Q30 -455 77 -536Q124 -618 206 -664Q289 -711 396 -711Q503 -711 586 -664Q668 -618 715 -536Q762 -455 762 -349Q762 -244 716 -162Q669 -81 587 -34Q505 12 398 12ZM398 -136Q457 -136 502 -163Q547 -190 572 -238Q597 -287 597 -349Q597 -412 571 -460Q545 -509 500 -536Q455 -564 396 -564Q337 -564 292 -536Q247 -509 221 -460Q195 -412 195 -349Q195 -287 221 -238Q247 -190 293 -163Q339 -136 398 -136ZM843 0V-700H999V-332L1150 -500H1333L1144 -284L1346 0H1165L1045 -171L999 -120V0ZM1534 0 1364 -500H1523L1615 -208L1707 -500H1861L1950 -215L2044 -500H2203L2032 0H1879L1783 -313L1687 0ZM2407 12Q2318 12 2269 -28Q2220 -68 2220 -141Q2220 -220 2271 -259Q2322 -298 2414 -298H2536Q2531 -338 2512 -360Q2494 -383 2453 -383Q2425 -383 2404 -370Q2383 -357 2368 -334L2232 -379Q2249 -416 2278 -446Q2308 -476 2351 -494Q2394 -512 2451 -512Q2529 -512 2583 -483Q2637 -454 2664 -402Q2691 -350 2691 -279L2689 0H2543L2541 -51Q2521 -20 2487 -4Q2453 12 2407 12ZM2441 -106Q2470 -106 2492 -118Q2514 -130 2526 -150Q2539 -171 2539 -195V-198H2473Q2423 -198 2401 -184Q2379 -170 2379 -145Q2379 -127 2396 -116Q2412 -106 2441 -106ZM2786 0V-500H2933L2939 -436Q2964 -472 3000 -492Q3036 -512 3081 -512Q3141 -512 3182 -488Q3223 -463 3244 -413Q3264 -363 3264 -285V0H3108V-256Q3108 -296 3099 -320Q3090 -343 3074 -354Q3057 -365 3033 -366Q2988 -367 2965 -342Q2942 -316 2942 -264V0Z";
-const SWOOSH = "M365 641C1088 324 1900 299 2651 532";
-const O = "M398 12Q290 12 207 -34Q124 -81 77 -162Q30 -244 30 -349Q30 -455 77 -536Q124 -618 206 -664Q289 -711 396 -711Q503 -711 586 -664Q668 -618 715 -536Q762 -455 762 -349Q762 -244 716 -162Q669 -81 587 -34Q505 12 398 12ZM398 -136Q457 -136 502 -163Q547 -190 572 -238Q597 -287 597 -349Q597 -412 571 -460Q545 -509 500 -536Q455 -564 396 -564Q337 -564 292 -536Q247 -509 221 -460Q195 -412 195 -349Q195 -287 221 -238Q247 -190 293 -163Q339 -136 398 -136Z";
-export const LOGO_INK = "#0C0A2E";
-export const LOGO_SWOOSH = "#FBCC0E";
+/* Okwan's logo, the original (§9 2026-11-06, the owner's call): two
+ * strokes for the systems, the signal dot for where they disagree, and
+ * "okwan" in Instrument Sans SemiBold beside it. The word is drawn as
+ * outlines in the exact box the site has always set it in (mark 24px, gap
+ * 10px, 21px type, -0.02em), so every surface shows the same drawing
+ * whatever font the page loads. Never a third party's logo, and never the
+ * only thing naming the product. */
+const WORD = "M40.28 19.77Q38.58 19.77 37.29 19.06Q35.99 18.34 35.28 17.07Q34.57 15.8 34.57 14.16Q34.57 12.53 35.28 11.29Q35.99 10.05 37.29 9.34Q38.58 8.64 40.28 8.64Q42 8.64 43.28 9.34Q44.56 10.05 45.28 11.29Q45.99 12.53 45.99 14.16Q45.99 15.8 45.27 17.07Q44.54 18.34 43.26 19.06Q41.98 19.77 40.28 19.77ZM40.28 17.65Q41.12 17.65 41.79 17.22Q42.46 16.79 42.84 16Q43.22 15.21 43.22 14.14Q43.22 12.57 42.39 11.66Q41.56 10.76 40.28 10.76Q39 10.76 38.16 11.66Q37.32 12.57 37.32 14.14Q37.32 15.21 37.71 16Q38.09 16.79 38.76 17.22Q39.42 17.65 40.28 17.65ZM47.52 19.56V4.29H50.17V19.56ZM54.43 19.56 49.56 14 54.29 8.85H57.48L52.02 14.48L52.17 13.49L57.69 19.56ZM60.84 19.56 57.56 8.85H60.33L62.27 16.89H62.08L64.45 8.85H66.87L69.28 16.89H69.07L70.98 8.85H73.69L70.41 19.56H67.94L65.52 11.6H65.73L63.32 19.56ZM81.23 19.56Q81.12 19.14 81.07 18.64Q81.02 18.13 81.02 17.42H80.94V12.34Q80.94 11.5 80.46 11.07Q79.99 10.64 79.02 10.64Q78.08 10.64 77.52 10.98Q76.97 11.33 76.84 11.98H74.3Q74.47 10.49 75.73 9.56Q76.99 8.64 79.11 8.64Q81.31 8.64 82.45 9.64Q83.58 10.64 83.58 12.57V17.42Q83.58 17.92 83.65 18.45Q83.73 18.97 83.88 19.56ZM77.51 19.77Q75.9 19.77 74.94 18.96Q73.98 18.15 73.98 16.79Q73.98 15.32 75.06 14.46Q76.13 13.6 78.08 13.3L81.42 12.8V14.48L78.52 14.92Q77.58 15.07 77.1 15.44Q76.63 15.82 76.63 16.49Q76.63 17.1 77.07 17.43Q77.51 17.75 78.29 17.75Q79.42 17.75 80.18 17.19Q80.94 16.62 80.94 15.8L81.23 17.42Q80.81 18.57 79.85 19.17Q78.9 19.77 77.51 19.77ZM85.85 19.56V8.85H88.43V11.37H88.5V19.56ZM93.37 19.56V12.8Q93.37 11.81 92.86 11.31Q92.36 10.8 91.39 10.8Q90.55 10.8 89.89 11.18Q89.23 11.56 88.86 12.23Q88.5 12.9 88.5 13.79L88.22 11.22Q88.77 10.05 89.82 9.34Q90.87 8.64 92.34 8.64Q94.08 8.64 95.06 9.63Q96.03 10.61 96.03 12.25V19.56Z";
+const INK = "#0A0A0A";
+const SIGNAL = "#FFD400";
 
-/** The wordmark. `width` in CSS pixels; the height follows (2.28:1).
- *  `light` for dark grounds: white letters, the same swoosh. */
-export function OkwanLogo({ width = 116, light = false, title }: { width?: number; light?: boolean; title?: string }) {
+/** The mark alone: the tab icon's drawing, for small places. */
+export function OkwanMark({ size = 24, light = false }: { size?: number; light?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="block shrink-0">
+      <MarkStrokes light={light} />
+    </svg>
+  );
+}
+
+/** The wordmark: the mark and "okwan". `width` in CSS pixels; the height
+ *  follows (4:1). `light` for dark grounds. */
+export function OkwanLogo({ width = 96, light = false, title }: { width?: number; light?: boolean; title?: string }) {
   return (
     <svg
-      viewBox="30 -711 3234 1416"
+      viewBox="0 0 96.03 24"
       width={width}
-      height={Math.round((width * 1416) / 3234)}
+      height={Math.round((width * 24) / 96.03 * 10) / 10}
       role={title ? "img" : undefined}
       aria-label={title}
       aria-hidden={title ? undefined : true}
       className="block shrink-0"
     >
-      <path d={WORD} fill={light ? "#FFFFFF" : LOGO_INK} />
-      <path d={SWOOSH} fill="none" stroke={LOGO_SWOOSH} strokeWidth="125" strokeLinecap="round" />
+      <g transform="scale(0.75)"><MarkStrokes light={light} /></g>
+      <path d={WORD} fill={light ? "#FFFFFF" : INK} />
     </svg>
   );
 }
 
-/** The square mark for small places: the logo's own O over its swoosh. */
-export function OkwanMark({ size = 32, light = false }: { size?: number; light?: boolean }) {
+function MarkStrokes({ light }: { light: boolean }) {
+  const stroke = light ? "#FFFFFF" : INK;
   return (
-    <svg viewBox="0 0 128 128" width={size} height={size} aria-hidden="true" className="block shrink-0">
-      <g transform="translate(64 0) scale(0.0874) translate(-396 940)">
-        <path d={O} fill={light ? "#FFFFFF" : LOGO_INK} />
-      </g>
-      <path d="M30 107C50 97 78 94 100 100" fill="none" stroke={LOGO_SWOOSH} strokeWidth="9" strokeLinecap="round" />
-    </svg>
+    <>
+      <path d="M6 8h20" stroke={stroke} strokeWidth="3.5" strokeLinecap="round" />
+      <path d="M6 24h20" stroke={stroke} strokeWidth="3.5" strokeLinecap="round" />
+      <circle cx="16" cy="16" r="4.5" fill={SIGNAL} stroke={light ? "none" : stroke} strokeWidth="2" />
+    </>
   );
 }

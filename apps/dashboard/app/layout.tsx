@@ -85,15 +85,55 @@ export default async function RootLayout({
 
 function SignedOut({ children }: { children: React.ReactNode }) {
   return (
-    <>
-      <header className="border-b border-white/70 bg-white/70 backdrop-blur">
-        <div className="mx-auto flex max-w-[1120px] items-center px-4 py-3 sm:px-8">
-          <a href="https://okwan.ai" className="flex min-h-11 items-center">
-            <OkwanLogo width={96} />
-          </a>
-        </div>
+    <div className="relative isolate min-h-screen overflow-hidden">
+      <SignedOutBackdrop />
+      <header className="mx-auto max-w-[1440px] px-5 pt-8 sm:px-8 lg:pt-10 2xl:pr-0">
+        <a href="https://okwan.ai" aria-label="Okwan home" className="inline-flex min-h-11 items-center">
+          <span className="sm:hidden"><OkwanLogo width={120} /></span>
+          <span className="hidden sm:block"><OkwanLogo width={160} /></span>
+        </a>
       </header>
-      <main id="main" tabIndex={-1} className="mx-auto max-w-[1120px] px-4 py-12 outline-none sm:px-8 lg:py-16">{children}</main>
-    </>
+      <main id="main" tabIndex={-1} className="mx-auto max-w-[1440px] px-5 pt-10 pb-16 outline-none sm:px-8 lg:pt-[43px] 2xl:pr-0">
+        {children}
+      </main>
+    </div>
+  );
+}
+
+/** Sign-in's own light, as the owner drew it: lavender glowing in from the
+ *  top right, a soft wave along the bottom left, warm gold at the bottom
+ *  right. Decoration only. */
+function SignedOutBackdrop() {
+  return (
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(520px 420px at 102% -4%, #c9b8fc 0%, rgba(201,184,252,0) 72%)," +
+            "radial-gradient(640px 420px at -6% -8%, #fdf3e6 0%, rgba(253,243,230,0) 72%)," +
+            "radial-gradient(620px 360px at 100% 104%, #fde2ad 0%, rgba(253,226,173,0) 70%)," +
+            "radial-gradient(700px 420px at -4% 104%, #ddd4fd 0%, rgba(221,212,253,0) 70%)," +
+            "#f5f3fd",
+        }}
+      />
+      <svg viewBox="0 0 1672 941" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
+        <defs>
+          <linearGradient id="wave-lav" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#ffffff" stopOpacity="0.9" />
+            <stop offset="0.5" stopColor="#d9cffd" stopOpacity="0.75" />
+            <stop offset="1" stopColor="#b9a6fb" stopOpacity="0.55" />
+          </linearGradient>
+          <linearGradient id="wave-gold" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0" stopColor="#ffffff" stopOpacity="0" />
+            <stop offset="1" stopColor="#fbd88f" stopOpacity="0.7" />
+          </linearGradient>
+        </defs>
+        <path d="M0 690C120 720 260 800 360 941H0Z" fill="url(#wave-lav)" />
+        <path d="M0 750C150 770 330 850 430 941H360C270 860 130 790 0 770Z" fill="#ffffff" fillOpacity="0.6" />
+        <path d="M1230 112C1300 80 1360 40 1410 0" fill="none" stroke="#ffffff" strokeWidth="2" strokeOpacity="0.9" />
+        <path d="M1250 941C1390 900 1540 870 1672 862V941Z" fill="url(#wave-gold)" />
+      </svg>
+    </div>
   );
 }

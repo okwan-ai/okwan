@@ -11,7 +11,7 @@ export default async function VerifyPage({
   const token = (await searchParams).token ?? "";
   return (
     <div className="mx-auto max-w-md">
-      <h1 className="text-[44px] leading-[1.02] font-semibold tracking-[-0.04em] sm:text-5xl">
+      <h1 className="text-[40px] leading-[1.05] font-extrabold tracking-[-0.02em] sm:text-[52px]">
         Confirm your email.
       </h1>
       <p className="mt-4 mb-10 text-ink-soft">

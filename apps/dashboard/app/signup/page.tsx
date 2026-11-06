@@ -17,18 +17,18 @@ export default async function SignupPage({
       : params.ended === "1" ? "Your session ended: sign-ins last 12 hours at most. Sign in to continue."
         : null;
   return (
-    <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
-      <div className="mx-auto w-full max-w-md lg:mx-0">
-        <h1 className="text-[44px] leading-[1.02] font-semibold tracking-[-0.04em] sm:text-5xl">
+    <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,605fr)_minmax(0,733fr)] lg:gap-[56px] 2xl:gap-[67px]">
+      <div className="w-full max-w-[605px]">
+        <h1 className="pl-2.5 text-[40px] leading-[1.05] font-extrabold tracking-[-0.02em] sm:text-[54px] 2xl:text-[66px]">
           {mode === "signup" ? "Find where your systems disagree." : "Welcome back."}
         </h1>
-        <p className="mt-4 mb-10 text-ink-soft">
+        <p className="mt-4 mb-11 pl-3 text-[17px] text-ink-soft 2xl:text-[23px]">
           {mode === "signup"
             ? "One account, one workspace. Connect a system, prove it with a live read, and take an API key for your agents."
             : "Sign in to manage connections and keys."}
         </p>
         {notice && (
-          <p role="status" className="mb-6 rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink-soft">{notice}</p>
+          <p role="status" className="mb-6 rounded-[18px] border border-white/90 bg-white/80 px-5 py-4 text-[15px] text-ink-soft shadow-float">{notice}</p>
         )}
         <AuthForm mode={mode} />
       </div>
