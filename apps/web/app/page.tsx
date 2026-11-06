@@ -594,6 +594,11 @@ function Security() {
             </div>
           ))}
         </div>
+        <p className="mt-8 text-[15px]">
+          <a className="font-medium text-ink underline underline-offset-4 hover:no-underline" href="/security">
+            How Okwan encrypts credentials, and what is not in place yet
+          </a>
+        </p>
       </Wrap>
     </section>
   );
@@ -632,7 +637,7 @@ function Closing() {
 
 function Footer() {
   const cols: [string, [string, string][]][] = [
-    ["Product", [["Retail", "#retail"], ["Industries", "#industries"], ["How it works", "#how"], ["Security", "#security"]]],
+    ["Product", [["Retail", "#retail"], ["Industries", "#industries"], ["How it works", "#how"], ["Security", "/security"]]],
     ["Developers", [["API docs", API_DOCS], ["GitHub", GITHUB], ["Apache-2.0 license", `${GITHUB}/blob/main/LICENSE`]]],
     ["Company", [["Contact", CONTACT], ["Privacy", "/privacy"], ["Terms", "/terms"]]],
   ];
