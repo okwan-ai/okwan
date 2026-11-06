@@ -244,7 +244,7 @@ function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-line/80 bg-paper/85 backdrop-blur-md">
       <Wrap className="flex h-16 items-center justify-between gap-6">
-        <a href="#top" aria-label="Okwan home"><OkwanLogo width={104} /></a>
+        <a href="#top" aria-label="Okwan home"><OkwanLogo width={96} /></a>
         <nav className="hidden items-center gap-8 text-[14.5px] text-ink-soft md:flex" aria-label="Sections">
           <a className="hover:text-ink" href="#retail">Retail</a>
           <a className="hover:text-ink" href="#industries">Industries</a>
@@ -603,7 +603,7 @@ function Closing() {
   return (
     <section className="relative overflow-hidden bg-night text-white">
       <Wrap className="relative py-24 text-center lg:py-32">
-        <div className="mx-auto mb-8 w-fit"><OkwanMark size={56} light /></div>
+        <div className="mx-auto mb-8 w-fit"><OkwanMark size={44} light /></div>
         <h2 className="mx-auto max-w-[820px] text-[40px] font-semibold leading-[1.02] tracking-[-0.04em] sm:text-[60px]">
           Tell us what your merchants can&apos;t reconcile.
         </h2>
@@ -640,7 +640,7 @@ function Footer() {
     <footer className="border-t border-night-line bg-night text-night-soft">
       <Wrap className="grid gap-10 py-14 sm:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
         <div>
-          <OkwanLogo width={104} light />
+          <OkwanLogo width={96} light />
           <p className="mt-4 max-w-[280px] text-[14px] leading-relaxed">
             Reconciliation infrastructure. Okwan is Twi for &ldquo;path&rdquo;: the path between
             systems that disagree.

@@ -192,7 +192,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
       <aside className="sticky top-0 hidden h-screen w-[300px] shrink-0 min-[900px]:block 2xl:w-[316px]">
         <Glass />
         <div className="relative flex h-full flex-col overflow-y-auto pt-[60px] pr-[44px] pb-[76px] pl-10 [scrollbar-width:none] 2xl:pr-[46px] [@media(max-height:860px)]:pt-9 [@media(max-height:860px)]:pb-12">
-          <div className="mb-[36px] pl-[42px] [@media(max-height:860px)]:mb-6"><Logo /></div>
+          <div className="mb-[44px] pl-[38px] [@media(max-height:860px)]:mb-7"><Logo /></div>
           {nav}
           <div className="min-h-[88px] flex-1" />
           <div className="relative">
@@ -332,8 +332,8 @@ function Glyph({ d }: { d: RunDigest | undefined }) {
 function Logo() {
   return (
     <Link href="/overview" prefetch={false} aria-label="Okwan, overview" className="inline-flex min-h-11 items-center rounded-lg">
-      <span className="min-[900px]:hidden"><OkwanLogo width={88} /></span>
-      <span className="hidden min-[900px]:block"><OkwanLogo width={116} /></span>
+      <span className="min-[900px]:hidden"><OkwanLogo width={96} /></span>
+      <span className="hidden min-[900px]:block"><OkwanLogo width={124} /></span>
     </Link>
   );
 }
