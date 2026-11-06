@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .coverage import Coverage
-from .declaration import MSISDN, ExactRef, Fuzzy, Reconciliation
+from .declaration import MSISDN, ExactRef, Fuzzy, GroupRef, GroupSum, Reconciliation
 from .paths import dig
 
 Row = dict[str, Any]
@@ -43,6 +43,24 @@ class MatchedPair:
     #: Label of the recorded adjustment accounting for the discrepancy.
     #: A break with a known cause is a different finding from one without.
     explained_by: str | None = None
+    #: A group match (GroupRef, GroupSum): the records on the `grouped`
+    #: side that together answer the other side's one record. That side's
+    #: `left`/`right` is then a summary carrying them under "members".
+    members: list[Row] | None = None
+    grouped: str | None = None
+
+    def value(self, side: str, path: str) -> Any:
+        """A field of one side. On a group's side: the sum when every
+        member's value is a whole number (amounts, fees), the shared value
+        when they all agree (a currency), otherwise None."""
+        record = self.left if side == "left" else self.right
+        if self.members is None or self.grouped != side:
+            return dig(record, path)
+        values = [dig(m, path) for m in self.members]
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+            return sum(values)
+        first = values[0]
+        return first if all(v == first for v in values) else None
 
     @property
     def is_unexplained(self) -> bool:
@@ -67,6 +85,14 @@ class Ambiguity:
     left: Row
     candidates: list[Row]
     rule: str
+    #: Which side `left` (the record in question) came from. A group rule
+    #: whose one record is on the right reports it there.
+    side: str = "left"
+    #: Why, when it is not simply "several equal candidates".
+    reason: str | None = None
+    #: For a group rule: each grouping that fitted, so a person can see
+    #: the choice the engine declined to make.
+    alternatives: list[list[Row]] | None = None
 
 
 @dataclass(slots=True)
@@ -173,6 +199,8 @@ class ReconResult:
                 "candidates": (
                     len(r["candidates"]) if isinstance(r.get("candidates"), list) else None
                 ),
+                # A group match: how many records answered the one.
+                "members": r.get("members"),
                 "left_ref": _ref(r.get("left"), left_ref),
                 "right_ref": _ref(r.get("right"), right_ref),
             }
@@ -196,6 +224,7 @@ class ReconResult:
                 "reason": None,
                 "left": p.left,
                 "right": p.right,
+                "members": len(p.members) if p.members is not None else None,
             }
             for p in self.matched
         ]
@@ -211,7 +240,9 @@ class ReconResult:
         ]
         out += [
             {"status": "ambiguous", "rule": a.rule, "confidence": 0.0,
-             "discrepancy": None, "reason": None, "left": a.left, "right": None,
+             "discrepancy": None, "reason": a.reason,
+             "left": a.left if a.side == "left" else None,
+             "right": a.left if a.side == "right" else None,
              "candidates": a.candidates}
             for a in self.ambiguous
         ]
@@ -236,7 +267,7 @@ def _as_dt(value: Any) -> datetime | None:
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(float(value), tz=UTC)
     try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(value))
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
@@ -337,6 +368,14 @@ def _apply_fuzzy(
                 continue
             if _identity_disagrees(identity, l, r):
                 continue
+            if rule.lag is not None:
+                # Settlement runs one way, in business days (E2).
+                days = rule.lag.days(dig(l, rule.timestamp_left), dig(r, rule.timestamp_right))
+                if days is None or not rule.lag.min_days <= days <= rule.lag.max_days:
+                    continue
+                gap = days / (rule.lag.max_days + 1) * span
+                candidates.append((r, gap))
+                continue
             r_ts = _as_dt(dig(r, rule.timestamp_right))
             if l_ts and r_ts:
                 gap = abs((l_ts - r_ts).total_seconds())
@@ -367,6 +406,149 @@ def _apply_fuzzy(
     return still_left, [r for r in right if id(r) not in consumed]
 
 
+def _apply_group_ref(
+    rule: GroupRef, left: list[Row], right: list[Row], out: ReconResult
+) -> tuple[list[Row], list[Row]]:
+    """Each one-side record with every many-side record sharing its
+    reference (E1). One record under the reference is an ordinary pair."""
+    one_side = "left" if rule.many == "right" else "right"
+    ones, many = (left, right) if one_side == "left" else (right, left)
+    one_path, many_path = (rule.left, rule.right) if one_side == "left" else (rule.right, rule.left)
+
+    index: dict[str, list[Row]] = {}
+    for m in many:
+        key = _ref_key(dig(m, many_path), rule.case_sensitive)
+        if key is not None:
+            index.setdefault(key, []).append(m)
+
+    still: list[Row] = []
+    consumed: set[int] = set()
+    for o in ones:
+        key = _ref_key(dig(o, one_path), rule.case_sensitive)
+        bucket = [m for m in index.get(key, ()) if id(m) not in consumed] if key is not None else []
+        if not bucket:
+            still.append(o)
+            continue
+        if len(bucket) > rule.max_members:
+            out.ambiguous.append(Ambiguity(
+                left=o, candidates=bucket, rule=rule.kind, side=one_side,
+                reason=f"{len(bucket)} records carry this reference, more than {rule.max_members}",
+            ))
+            continue
+        consumed.update(id(m) for m in bucket)
+        out.matched.append(_pair(o, bucket, one_side, rule.kind, 1.0))
+    rest = [m for m in many if id(m) not in consumed]
+    return (still, rest) if one_side == "left" else (rest, still)
+
+
+def _pair(one: Row, members: list[Row], one_side: str, rule: str, confidence: float) -> MatchedPair:
+    """A pair, or a group pair when several records answer the one."""
+    if len(members) == 1:
+        l, r = (one, members[0]) if one_side == "left" else (members[0], one)
+        return MatchedPair(l, r, rule, confidence)
+    group = {"members": members, "member_count": len(members)}
+    l, r = (one, group) if one_side == "left" else (group, one)
+    return MatchedPair(l, r, rule, confidence, members=members,
+                       grouped="right" if one_side == "left" else "left")
+
+
+def _apply_group_sum(
+    rule: GroupSum, left: list[Row], right: list[Row], out: ReconResult
+) -> tuple[list[Row], list[Row]]:
+    """Each one-side record against the unclaimed many-side records that
+    sum to it (E1). Records are taken in order, so the earliest deposit
+    claims its batches first; two fitting subsets claim nothing."""
+    one_side = "right" if rule.many == "left" else "left"
+    ones, many = (right, left) if rule.many == "left" else (left, right)
+    span = rule.window_delta.total_seconds()
+    still: list[Row] = []
+    consumed: set[int] = set()
+
+    def in_time(m: Row, o: Row) -> bool:
+        m_ts, o_ts = dig(m, rule.timestamp_many), dig(o, rule.timestamp_one)
+        if rule.lag is not None:
+            l_ts, r_ts = (m_ts, o_ts) if rule.many == "left" else (o_ts, m_ts)
+            return rule.lag.admits(l_ts, r_ts)
+        a, b = _as_dt(m_ts), _as_dt(o_ts)
+        return a is None or b is None or abs((a - b).total_seconds()) <= span
+
+    for o in ones:
+        o_minor = _minor(dig(o, rule.one_amount))
+        o_cur = str(dig(o, rule.one_currency) or "").upper()
+        if o_minor is None:
+            still.append(o)
+            continue
+        pool = [
+            m for m in many
+            if id(m) not in consumed
+            and str(dig(m, rule.currency) or "").upper() == o_cur
+            and _minor(dig(m, rule.amount)) is not None
+            and in_time(m, o)
+        ]
+        groups: dict[tuple, list[Row]] = {}
+        for m in pool:
+            groups.setdefault(tuple(str(dig(m, f)) for f in rule.share), []).append(m)
+
+        fits: list[list[Row]] = []
+        crowded = False
+        for members in groups.values():
+            if len(members) > rule.max_candidates:
+                crowded = True
+                continue
+            fits += _subsets_summing(members, rule.amount, o_minor, rule)
+            if len(fits) > 1:
+                break
+        if len(fits) == 1 and not crowded:
+            consumed.update(id(m) for m in fits[0])
+            # A sum found among unreferenced records is weaker evidence
+            # than a reference: stated, not hidden.
+            out.matched.append(_pair(o, fits[0], one_side, rule.kind, 0.75))
+        elif fits or crowded:
+            seen: dict[int, Row] = {}
+            for fit in fits:
+                for m in fit:
+                    seen.setdefault(id(m), m)
+            out.ambiguous.append(Ambiguity(
+                left=o, candidates=list(seen.values()), rule=rule.kind, side=one_side,
+                reason=(f"more than {rule.max_candidates} candidates in the window; none chosen"
+                        if crowded and not fits else f"{len(fits)} groupings sum to this amount"),
+                alternatives=fits or None,
+            ))
+        else:
+            still.append(o)
+    rest = [m for m in many if id(m) not in consumed]
+    return (rest, still) if rule.many == "left" else (still, rest)
+
+
+def _subsets_summing(members: list[Row], path: str, target: int, rule: GroupSum) -> list[list[Row]]:
+    """Up to two subsets (at most `max_members` records) whose amounts sum
+    to `target` within tolerance. Two is enough to know it is ambiguous."""
+    amounts = [int(_minor(dig(m, path))) for m in members]  # type: ignore[arg-type]
+    order = sorted(range(len(members)), key=lambda i: amounts[i])
+    positive = all(a >= 0 for a in amounts)
+    found: list[list[Row]] = []
+
+    def walk(start: int, chosen: list[int], total: int) -> None:
+        if len(found) > 1:
+            return
+        if chosen and abs(total - target) <= rule.amount_tolerance_minor:
+            found.append([members[i] for i in sorted(chosen)])
+        if len(chosen) == rule.max_members:
+            return
+        for k in range(start, len(order)):
+            i = order[k]
+            # Sorted ascending and all non-negative: once a record overshoots,
+            # every later one does too.
+            if positive and total + amounts[i] > target + rule.amount_tolerance_minor:
+                break
+            walk(k + 1, chosen + [i], total + amounts[i])
+            if len(found) > 1:
+                return
+
+    walk(0, [], 0)
+    return found
+
+
 def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
     """Compare amounts on every pair, however it was matched.
 
@@ -379,11 +561,11 @@ def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
     if ref is None:
         return
     for pair in result.matched:
-        l_amt, r_amt = dig(pair.left, ref.left), dig(pair.right, ref.right_path)
+        l_amt, r_amt = pair.value("left", ref.left), pair.value("right", ref.right_path)
         if l_amt is None or r_amt is None:
             continue
-        l_cur = str(dig(pair.left, ref.currency) or "").upper()
-        r_cur = str(dig(pair.right, ref.right_currency) or "").upper()
+        l_cur = str(pair.value("left", ref.currency) or "").upper()
+        r_cur = str(pair.value("right", ref.right_currency) or "").upper()
         if l_cur and r_cur and l_cur != r_cur:
             continue
         try:
@@ -392,8 +574,7 @@ def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
             continue
 
         for rule in spec.explains:
-            row = pair.left if rule.side == "left" else pair.right
-            if rule.accounts_for(dig(row, rule.path), pair.discrepancy_minor):
+            if rule.accounts_for(pair.value(rule.side, rule.path), pair.discrepancy_minor):
                 pair.explained_by = rule.label
                 break
 
@@ -417,6 +598,10 @@ def match(
             left, right = _apply_exact(rule, left, right, result)
         elif isinstance(rule, Fuzzy):
             left, right = _apply_fuzzy(rule, spec.identity, left, right, result)
+        elif isinstance(rule, GroupRef):
+            left, right = _apply_group_ref(rule, left, right, result)
+        elif isinstance(rule, GroupSum):
+            left, right = _apply_group_sum(rule, left, right, result)
 
     left_ts, right_ts = spec.timestamp_paths
     result.unmatched_left, result.unverifiable_left = _split_unread(
@@ -426,7 +611,37 @@ def match(
         right, right_ts, left_coverage
     )
     _score_discrepancies(spec, result)
+    _describe_groups(spec, result)
     return result
+
+
+def _describe_groups(spec: Reconciliation, result: ReconResult) -> None:
+    """Give each group's summary the figures a person checks it by: the
+    summed amount and the shared currency at the declaration's own paths,
+    and the members' references joined, so a stored row reads
+    "B-1001+B-1002" rather than nothing."""
+    from .paths import put
+
+    amount = spec.resolved_amount
+    refs = ref_paths(spec)
+    for pair in result.matched:
+        if pair.members is None:
+            continue
+        side = pair.grouped
+        summary = pair.left if side == "left" else pair.right
+        paths = []
+        if amount is not None:
+            paths += [amount.left, amount.currency] if side == "left" else [amount.right_path, amount.right_currency]
+        paths += [e.path for e in spec.explains if e.side == side]
+        for path in paths:
+            put(summary, path, pair.value(side, path))
+        ref = refs[0] if side == "left" else refs[1]
+        if ref:
+            # Distinct, in order: a GroupRef's members all carry the one
+            # reference, a GroupSum's each carry their own.
+            parts = list(dict.fromkeys(str(dig(m, ref)) for m in pair.members if dig(m, ref) not in (None, "")))
+            if parts:
+                put(summary, ref, "+".join(parts))
 
 
 def _split_unread(
@@ -467,7 +682,7 @@ PAIR_DISPLAY_ORDER = (
 def ref_paths(spec: Reconciliation) -> tuple[str | None, str | None]:
     """The one human reference each side carries: the first exact key."""
     for rule in spec.keys:
-        if isinstance(rule, ExactRef):
+        if isinstance(rule, (ExactRef, GroupRef)):
             return rule.left, rule.right
     return None, None
 

@@ -362,8 +362,8 @@ def _verdicts(
     for p in result.matched:
         out[id(p.left)] = RailVerdict(
             rail=name, reconciliation=spec.name, status="matched",
-            collected_minor=_int(dig(p.right, rail.collected)),
-            currency=_cur(dig(p.right, rail.currency)),
+            collected_minor=_int(p.value("right", rail.collected)),
+            currency=_cur(p.value("right", rail.currency)),
             discrepancy_minor=p.discrepancy_minor, explained_by=p.explained_by,
             record=p.right,
         )

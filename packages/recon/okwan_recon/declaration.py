@@ -55,6 +55,57 @@ class ExactRef(Frozen):
     case_sensitive: bool = False
 
 
+class SettlementLag(Frozen):
+    """How many bank business days one side settles after the other (E2).
+
+    Replaces a symmetric calendar window where money settles one way: a
+    deposit lands 0 to `max_days` business days after the batch it pays,
+    never before it. Days are the Federal Reserve's (weekends and US bank
+    holidays skipped, `calendar.py`), counted in the merchant's timezone,
+    and a bare date in a record is that day.
+    """
+
+    min_days: int = Field(default=0, ge=0, le=30)
+    max_days: int = Field(default=3, ge=0, le=30)
+    direction: Literal["right_after_left", "left_after_right"] = "right_after_left"
+    calendar: Literal["us_bank"] = "us_bank"
+    timezone: str = "America/New_York"
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"unknown timezone {v!r}") from None
+        return v
+
+    @field_validator("max_days")
+    @classmethod
+    def _ordered(cls, v: int, info) -> int:
+        if v < info.data.get("min_days", 0):
+            raise ValueError("max_days must be at least min_days")
+        return v
+
+    def days(self, left: Any, right: Any) -> int | None:
+        """Business days from the earlier side to the later, or None when
+        either date is missing or they run the wrong way."""
+        from .calendar import as_date, business_days_after
+
+        l_day, r_day = as_date(left, self.timezone), as_date(right, self.timezone)
+        if l_day is None or r_day is None:
+            return None
+        if self.direction == "right_after_left":
+            return business_days_after(l_day, r_day)
+        return business_days_after(r_day, l_day)
+
+    def admits(self, left: Any, right: Any) -> bool:
+        n = self.days(left, right)
+        return n is not None and self.min_days <= n <= self.max_days
+
+
 class Fuzzy(Frozen):
     """Amount + currency inside a time window. Fallback after exact refs.
 
@@ -83,6 +134,10 @@ class Fuzzy(Frozen):
         ),
     )
     amount_tolerance_minor: int = 0
+    lag: SettlementLag | None = Field(
+        default=None,
+        description="Settlement lag in business days; replaces `window` when set",
+    )
 
     @property
     def right_amount(self) -> str:
@@ -103,7 +158,88 @@ class Fuzzy(Frozen):
         return parse_window(self.window)
 
 
-MatchRule = Annotated[ExactRef | Fuzzy, Field(discriminator="kind")]
+class GroupRef(Frozen):
+    """One record against every record on the other side that carries its
+    reference (E1, one-to-many).
+
+    An order paid with two cards on one rail, or a charge and its partial
+    refund as separate rows, is one order with several records. ExactRef
+    would pair the first and report the rest as payments with no order;
+    this pairs the order with all of them and compares the sum. `many`
+    names the side holding the several records.
+    """
+
+    kind: Literal["group_ref"] = "group_ref"
+    left: str
+    right: str
+    many: Literal["left", "right"] = "right"
+    case_sensitive: bool = False
+    max_members: int = Field(
+        default=20, ge=2, le=100,
+        description="More records than this under one reference is not one order: reported ambiguous",
+    )
+
+
+class GroupSum(Frozen):
+    """Several records on one side whose amounts sum to one record on the
+    other, with no shared reference (E1, many-to-one).
+
+    A deposit pays the batches closed since the last one: a weekend's
+    three batches land as one Monday deposit. Candidates are the `many`
+    side's unclaimed records in the same currency, inside the window (or
+    `lag`), sharing every field in `share` (a merchant id, say); a subset
+    of at most `max_members` must sum to the one record within
+    `amount_tolerance_minor`. Exactly one subset is a match. Two subsets
+    that both fit are ambiguous and claim nothing, the same rule as
+    Fuzzy: choosing between them would be invention.
+    """
+
+    kind: Literal["group_sum"] = "group_sum"
+    many: Literal["left", "right"] = "left"
+    amount: str = Field(description="Amount path on the many side, integer minor units")
+    amount_one: str | None = Field(default=None, description="Amount path on the one side; defaults to `amount`")
+    currency: str = "currency"
+    currency_one: str | None = None
+    timestamp_many: str = "created_at"
+    timestamp_one: str = "created_at"
+    share: tuple[str, ...] = Field(
+        default=(), description="Many-side fields every member of a group must have equal",
+    )
+    window: str = "7d"
+    lag: SettlementLag | None = None
+    max_members: int = Field(default=8, ge=2, le=12)
+    max_candidates: int = Field(
+        default=24, ge=2, le=40,
+        description="Candidates searched per record; more is reported ambiguous rather than guessed",
+    )
+    amount_tolerance_minor: int = 0
+
+    @field_validator("window")
+    @classmethod
+    def _check_window(cls, v: str) -> str:
+        parse_window(v)
+        return v
+
+    @property
+    def window_delta(self) -> timedelta:
+        return parse_window(self.window)
+
+    @property
+    def one_amount(self) -> str:
+        return self.amount_one or self.amount
+
+    @property
+    def one_currency(self) -> str:
+        return self.currency_one or self.currency
+
+    def sides(self) -> dict[str, dict[str, str]]:
+        """Amount, currency and timestamp paths by side."""
+        many = {"amount": self.amount, "currency": self.currency, "timestamp": self.timestamp_many}
+        one = {"amount": self.one_amount, "currency": self.one_currency, "timestamp": self.timestamp_one}
+        return {"left": many, "right": one} if self.many == "left" else {"left": one, "right": many}
+
+
+MatchRule = Annotated[ExactRef | Fuzzy | GroupRef | GroupSum, Field(discriminator="kind")]
 
 
 class MSISDN(Frozen):
@@ -282,6 +418,12 @@ class Reconciliation(Frozen):
                     currency=rule.currency,
                     currency_right=rule.right_currency,
                 )
+            if isinstance(rule, GroupSum):
+                s = rule.sides()
+                return AmountRef(
+                    left=s["left"]["amount"], right=s["right"]["amount"],
+                    currency=s["left"]["currency"], currency_right=s["right"]["currency"],
+                )
         return None
 
     @property
@@ -292,6 +434,9 @@ class Reconciliation(Frozen):
         for rule in self.keys:
             if isinstance(rule, Fuzzy):
                 return rule.timestamp_left, rule.timestamp_right
+            if isinstance(rule, GroupSum):
+                s = rule.sides()
+                return s["left"]["timestamp"], s["right"]["timestamp"]
         return None, None
 
     @property

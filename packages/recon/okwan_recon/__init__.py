@@ -4,9 +4,12 @@ from .declaration import (
     ExactRef,
     Explains,
     Fuzzy,
+    GroupRef,
+    GroupSum,
     MatchRule,
     Reconciliation,
     ResourceRef,
+    SettlementLag,
 )
 from .engine import Ambiguity, MatchedPair, ReconResult, Unverifiable, match
 from .fetch import env_credentials, fetch_rows
@@ -20,11 +23,14 @@ __all__ = [
     "ExactRef",
     "Explains",
     "Fuzzy",
+    "GroupRef",
+    "GroupSum",
     "MatchRule",
     "MatchedPair",
     "ReconResult",
     "Reconciliation",
     "ResourceRef",
+    "SettlementLag",
     "Unverifiable",
     "all_reconciliations",
     "env_credentials",
