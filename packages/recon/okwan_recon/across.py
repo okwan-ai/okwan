@@ -177,6 +177,8 @@ class RailVerdict:
     reason: str | None = None
     record: Row | None = None
     candidates: int = 0
+    #: How this rail's verdict was reached (E4); references and amounts.
+    evidence: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -189,6 +191,7 @@ class RailVerdict:
             "explained_by": self.explained_by,
             "reason": self.reason,
             "candidates": self.candidates,
+            "evidence": self.evidence,
             "record": self.record,
         }
 
@@ -341,6 +344,7 @@ def trim_verdict(v: OrderVerdict, ledger_currency: str = "currency") -> Row:
                 "discrepancy_minor": r.discrepancy_minor,
                 "explained_by": r.explained_by,
                 "reason": r.reason,
+                "evidence": r.evidence,
             }
             for r in v.rails
         ],
@@ -359,13 +363,15 @@ def _verdicts(
     """
     name = spec.right.connector
     out: dict[int, RailVerdict] = {}
+    # What this rail read: the proof behind "not on this rail".
+    looked = {"counterpart": result.right_coverage.as_dict()} if result.right_coverage else None
     for p in result.matched:
         out[id(p.left)] = RailVerdict(
             rail=name, reconciliation=spec.name, status="matched",
             collected_minor=_int(p.value("right", rail.collected)),
             currency=_cur(p.value("right", rail.currency)),
             discrepancy_minor=p.discrepancy_minor, explained_by=p.explained_by,
-            record=p.right,
+            record=p.right, evidence=p.evidence,
         )
     for a in result.ambiguous:
         out[id(a.left)] = RailVerdict(
@@ -375,10 +381,12 @@ def _verdicts(
         )
     for u in result.unverifiable_left:
         out[id(u.record)] = RailVerdict(
-            rail=name, reconciliation=spec.name, status="unverifiable", reason=u.reason
+            rail=name, reconciliation=spec.name, status="unverifiable", reason=u.reason,
+            evidence=looked,
         )
     for r in result.unmatched_left:
-        out[id(r)] = RailVerdict(rail=name, reconciliation=spec.name, status="unmatched")
+        out[id(r)] = RailVerdict(rail=name, reconciliation=spec.name, status="unmatched",
+                                 evidence=looked)
     return out
 
 
