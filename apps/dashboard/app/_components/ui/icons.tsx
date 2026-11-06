@@ -75,20 +75,21 @@ const nav = { ...base, width: 22, height: 22, strokeWidth: 2, className: "shrink
 export const NavHome = () => (
   <svg {...nav}><path d="M3.5 10.6 12 3.6l8.5 7" /><path d="M5.6 9.1v10a1.4 1.4 0 0 0 1.4 1.4h3.4v-5.2h3.2v5.2H17a1.4 1.4 0 0 0 1.4-1.4v-10" /></svg>
 );
+/* Each place has its own shape, so no two rows look alike. */
 export const NavFindings = () => (
-  <svg {...nav}><path d="M12 3.4 20.6 12 12 20.6 3.4 12Z" /></svg>
+  <svg {...nav}><path d="M12 3.4 20.6 12 12 20.6 3.4 12Z" /><path d="M12 8.7v3.8" /><path d="M12 15.5h.01" strokeWidth={2.8} /></svg>
 );
 export const NavMerchants = () => (
-  <svg {...nav}><path d="M4.6 8.6h14.8v9.8a2 2 0 0 1-2 2H6.6a2 2 0 0 1-2-2Z" /><path d="M4.6 8.6V7a1.5 1.5 0 0 1 1.5-1.5h11.8A1.5 1.5 0 0 1 19.4 7v1.6" /><path d="M7.4 5.5 6.3 3.4M16.6 5.5l1.1-2.1" /><path d="M9.6 12.4a2.4 2.4 0 0 0 4.8 0" /></svg>
+  <svg {...nav}><path d="M3.6 9.4 5.2 4.6h13.6l1.6 4.8" /><path d="M3.6 9.4a2.8 2.8 0 0 0 5.6 0 2.8 2.8 0 0 0 5.6 0 2.8 2.8 0 0 0 5.6 0" /><path d="M5.2 12v8.2h13.6V12" /><path d="M10 20.2v-4.6h4v4.6" /></svg>
 );
 export const NavIntegrations = () => (
-  <svg {...nav}><path d="M12 2.9 20 7.5v9L12 21.1 4 16.5v-9Z" /><circle cx="12" cy="12" r="3.1" /></svg>
+  <svg {...nav}><path d="M9 3v4.6M15 3v4.6" /><path d="M6.4 7.6h11.2v3.6a5.6 5.6 0 0 1-11.2 0Z" /><path d="M12 16.8V21" /></svg>
 );
 export const NavAgents = () => (
-  <svg {...nav}><path d="M20 15.2V7.5L12 2.9 4 7.5v9l8 4.6 4.1-2.4" /><circle cx="12" cy="12" r="3.1" /><path d="m18.2 17.6 2.6 1.6" /></svg>
+  <svg {...nav}><rect x="4.4" y="8" width="15.2" height="11.6" rx="3.2" /><path d="M12 4.8V8" /><circle cx="12" cy="3.6" r="1.2" /><path d="M9.4 13h.01M14.6 13h.01" strokeWidth={2.8} /><path d="M10 16.4h4" /><path d="M2.4 12.4v2.8M21.6 12.4v2.8" /></svg>
 );
 export const NavApi = () => (
-  <svg {...nav}><path d="M15 4.1a2.5 2.5 0 0 1 3.6 3.6l-9.4 9.4-4.7 1.3 1.3-4.7Z" /><path d="m13.2 6 3.6 3.6" /></svg>
+  <svg {...nav}><path d="m8.4 7-5 5 5 5" /><path d="m15.6 7 5 5-5 5" /><path d="m13.6 4.6-3.2 14.8" /></svg>
 );
 export const IconBell = () => (
   <svg {...base} width={33} height={33} strokeWidth={1.9}><path d="M6 9.5a6 6 0 1 1 12 0c0 5.6 2.4 7.4 2.4 7.4H3.6S6 15.1 6 9.5" /><path d="M10 20.2a2.2 2.2 0 0 0 4 0" /></svg>

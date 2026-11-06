@@ -53,7 +53,7 @@ export function PageHeader({
           {icon}
           <h1 className="text-[34px] leading-[1.1] font-extrabold tracking-[-0.02em] sm:text-[44px] 2xl:text-[49px]">{title}</h1>
         </div>
-        {description && <p className="mt-2 line-clamp-2 text-[16px] text-ink-soft sm:text-[17px] 2xl:text-[19px]">{description}</p>}
+        {description && <p className="mt-2 line-clamp-3 text-[16px] sm:line-clamp-2 text-ink-soft sm:text-[17px] 2xl:text-[19px]">{description}</p>}
         {meta && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-soft">{meta}</div>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-start gap-2 pt-1 max-sm:w-full">{actions}</div>}

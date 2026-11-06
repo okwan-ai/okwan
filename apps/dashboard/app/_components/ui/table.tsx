@@ -11,7 +11,8 @@ export function Table({ children, minWidth = 640, label, flush = false }: {
 }) {
   return (
     <div
-      className={flush ? "overflow-x-auto focus-visible:-outline-offset-2" : "overflow-x-auto rounded-[22px] border border-line/80 bg-surface shadow-float"}
+      // relative: hidden labels inside stay in the scroll box, not past the page edge.
+      className={flush ? "relative overflow-x-auto focus-visible:-outline-offset-2" : "relative overflow-x-auto rounded-[22px] border border-line/80 bg-surface shadow-float"}
       role="region"
       aria-label={label}
       tabIndex={label ? 0 : undefined}
