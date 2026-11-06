@@ -48,7 +48,7 @@ export default async function RootLayout({
       <body className="min-h-screen">
         <a
           href="#main"
-          className="sr-only rounded-lg bg-ink px-4 py-3 text-canvas focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[70]"
+          className="sr-only rounded-lg bg-ink text-canvas focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[70] focus:px-4 focus:py-3"
         >
           Skip to content
         </a>
