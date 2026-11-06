@@ -454,14 +454,15 @@ opinion from outside GitHub, an uptime service pointed at
 ## Branch protection
 
 CI (`.github/workflows/ci.yml`) runs the tests against a real Postgres,
-lint on changed Python, and both web builds, on every pull request. Since
+lint on changed Python, both web builds and the dashboard's layout check
+(below), on every pull request. Since
 2026-11-04 the ruleset `main` (GitHub → *Settings → Rules → Rulesets*)
 makes `main` require it:
 
 | Rule | Setting | Why |
 |---|---|---|
 | Pull request before merging | required, 0 approvals | One maintainer, and GitHub does not let anyone approve their own pull request |
-| Status checks | `python`, `web (web)`, `web (dashboard)`; not required to be up to date | The suite against a real database and both builds |
+| Status checks | `python`, `web (web)`, `web (dashboard)`; not required to be up to date | The suite against a real database, both builds, and the layout check inside `web (dashboard)` |
 | Force pushes and deletion | blocked | `main` is what Render deploys |
 | Bypass list | empty | Nobody merges around a red check |
 
@@ -474,6 +475,36 @@ If GitHub Actions itself is down, nothing can merge until it recovers.
 For a production fix that cannot wait, an owner can switch the ruleset
 to *Disabled*, merge, and switch it back, saying so in the incident
 issue.
+
+### Layout check
+
+Part of `web (dashboard)`, so required. The owner's rule (§9 2026-11-06):
+nothing on a page may overlap. The job builds the dashboard, starts the
+API with an in-memory workspace (`scripts/ui_server.py`: *Acme ISV* with
+*Kofi's Store*, every rail connected and one real check over fixture
+rows, and *Accra Coffee Co.* with only Stripe), and runs
+`apps/dashboard/scripts/layout-check.mjs`. It opens the sign-in pages and
+every signed-in page, a merchant and a connector included, at 1670, 1366,
+1024 and 390px, and fails if any visible text overlaps other text, a page
+scrolls sideways, or anything covers an item of the open account menu.
+
+**When it fails:** the job's summary has a `layout-check` artifact with a
+full-page screenshot of each failing page, named by width and path, and
+the API and dashboard logs. Fix the page; never loosen the check to pass.
+Hidden text (screen-reader only, a closed *How this works*, clamped lines)
+is not counted, so a hit is something a person sees.
+
+**Locally:**
+```bash
+UI_CHECK_PASSWORD=$(openssl rand -hex 16) python scripts/ui_server.py
+```
+then, in `apps/dashboard` with that same password exported:
+```bash
+npm run build && OKWAN_API_URL=http://127.0.0.1:8000 npm start
+```
+```bash
+node scripts/layout-check.mjs
+```
 
 ## Owner decisions
 

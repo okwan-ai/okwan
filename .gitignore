@@ -10,3 +10,7 @@ node_modules/
 .next/
 out/
 tsconfig.tsbuildinfo
+# The dashboard's layout check: failure screenshots and local logs.
+apps/dashboard/layout-check/
+apps/dashboard/ui_server.log
+apps/dashboard/dashboard.log

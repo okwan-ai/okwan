@@ -1,7 +1,7 @@
 # Every pull request and every push to main: the Python suite against a
 # real Postgres (so row-level security and both isolation walls are
-# exercised, not skipped), lint on the Python a change touches, and both
-# Next.js builds. A red check blocks the merge once branch protection on
+# exercised, not skipped), lint on the Python a change touches, both
+# Next.js builds, and the dashboard's layout check. A red check blocks the merge once branch protection on
 # main requires it (docs/ops/RUNBOOK.md, "Branch protection").
 name: ci
 
@@ -60,7 +60,7 @@ jobs:
 
   web:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -79,3 +79,45 @@ jobs:
       - if: matrix.app == 'dashboard'
         run: npm run typecheck
       - run: npm run build
+
+      # The layout check (docs/ops/RUNBOOK.md, "Layout check"): the built
+      # dashboard against the API with a seeded, in-memory workspace, every
+      # page at four widths. Nothing may overlap, scroll sideways, or cover
+      # the open account menu. Part of the required `web (dashboard)` check.
+      - if: matrix.app == 'dashboard'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: matrix.app == 'dashboard'
+        name: Install the API and a browser
+        run: |
+          pip install -e "../..[dev]"
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - if: matrix.app == 'dashboard'
+        name: Start the seeded API and the dashboard
+        run: |
+          # A throwaway sign-in for this job's in-memory workspace, not a secret.
+          pw=$(openssl rand -hex 16)
+          echo "::add-mask::$pw"
+          echo "UI_CHECK_PASSWORD=$pw" >> "$GITHUB_ENV"
+          export UI_CHECK_PASSWORD=$pw OKWAN_OPERATOR_EMAILS=layout@okwan.test
+          nohup python ../../scripts/ui_server.py > ui_server.log 2>&1 &
+          for i in $(seq 1 60); do grep -q seeded ui_server.log && break; sleep 1; done
+          grep -q seeded ui_server.log || { cat ui_server.log; exit 1; }
+          OKWAN_API_URL=http://127.0.0.1:8000 nohup npm start > dashboard.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3000/signup && break; sleep 1; done
+          curl -sf -o /dev/null http://localhost:3000/signup || { cat dashboard.log; exit 1; }
+      - if: matrix.app == 'dashboard'
+        name: Layout check
+        run: node scripts/layout-check.mjs
+      - if: failure() && matrix.app == 'dashboard'
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-check
+          path: |
+            apps/dashboard/layout-check/
+            apps/dashboard/ui_server.log
+            apps/dashboard/dashboard.log
+          if-no-files-found: ignore
