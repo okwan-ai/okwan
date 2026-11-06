@@ -29,7 +29,7 @@ from okwan_recon.registry import all_across, get_across
 from .catalog import missing_credentials
 from .guard import UnsafeStatement
 from .mcp import catalog_payload
-from .session import DEFAULT_LIMIT, QuerySession
+from .session import DEFAULT_LIMIT
 
 
 class Unauthenticated(Exception):
@@ -287,7 +287,7 @@ def build_server(max_records: int = DEFAULT_LIMIT):
             return {"error": str(exc), "tables": []}
 
     async def okwan_query(
-        ctx: Context, sql: str, limit: int = DEFAULT_LIMIT
+        ctx: Context, sql: str, limit: int = DEFAULT_LIMIT, fresh: bool = False
     ) -> dict[str, Any]:
         """Run a read-only SQL query across connectors.
 
@@ -296,7 +296,10 @@ def build_server(max_records: int = DEFAULT_LIMIT):
         fetched live; unreferenced ones are not called at all. Each
         reconciliation is a table too, `recon.<name>` (or
         `recon.across_<name>` for a fold), run live when a query names it,
-        so its verdicts join with anything else. SELECT and WITH only.
+        so its verdicts join with anything else. A run from the last five
+        minutes is read again rather than repeated, and the response says
+        so under `runs`; pass fresh=true to run it now (live runs are
+        limited to 12 a minute per account). SELECT and WITH only.
         """
         try:
             tenant, resolver = await _caller(ctx)
@@ -305,18 +308,20 @@ def build_server(max_records: int = DEFAULT_LIMIT):
         if (limited := await _over_quota(tenant)) is not None:
             return {"error": limited, "rows": [], "row_count": 0}
 
-        from .rest import sql_run_recorder
+        from .rest import sql_session
+        from .session import TooManyRuns
 
-        session = QuerySession(
-            resolver=resolver, max_records=min(limit, max_records),
-            on_run=sql_run_recorder(tenant, resolver),
-        )
+        session = sql_session(tenant, resolver, max_records=min(limit, max_records), fresh=fresh)
         try:
             result = await session.query(sql)
             from okwan_api.auth import meter
 
-            await meter(tenant, "mcp:query")
+            if session.upstream_reads:
+                await meter(tenant, "mcp:query")
             return result
+        except TooManyRuns as exc:
+            return {"error": str(exc), "retry_after_seconds": int(exc.retry_after) + 1,
+                    "rows": [], "row_count": 0}
         except UnsafeStatement as exc:
             return {"error": str(exc), "rows": [], "row_count": 0}
         except Exception as exc:  # noqa: BLE001 — surfaced to the agent as data
