@@ -21,6 +21,9 @@ COLUMNS = _COLUMNS = (
     ("reason", "VARCHAR"),
     ("left_record", "JSON"),
     ("right_record", "JSON"),
+    # How the verdict was reached (E4): key, window or lag, amounts
+    # compared, group members, each part of the explanation.
+    ("evidence", "JSON"),
 )
 
 
@@ -41,6 +44,7 @@ def materialize_view(con: Any, spec: Reconciliation, result: ReconResult) -> str
             row["reason"],
             json.dumps(row["left"], default=str) if row["left"] is not None else None,
             json.dumps(row["right"], default=str) if row["right"] is not None else None,
+            json.dumps(row.get("evidence"), default=str) if row.get("evidence") is not None else None,
         )
         for row in result.rows()
     ]

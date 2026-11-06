@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import combinations
 from typing import Any
 
 from .coverage import Coverage
@@ -48,6 +49,11 @@ class MatchedPair:
     #: `left`/`right` is then a summary carrying them under "members".
     members: list[Row] | None = None
     grouped: str | None = None
+    #: How this pair was established and judged (E4): the key and its
+    #: value, the window or lag and where the pair fell in it, the
+    #: amounts compared, the members of a group, and each part of the
+    #: explanation. References and amounts only, never a record.
+    evidence: dict[str, Any] = field(default_factory=dict)
 
     def value(self, side: str, path: str) -> Any:
         """A field of one side. On a group's side: the sum when every
@@ -201,6 +207,8 @@ class ReconResult:
                 ),
                 # A group match: how many records answered the one.
                 "members": r.get("members"),
+                # How the verdict was reached (E4). References and amounts.
+                "evidence": r.get("evidence"),
                 "left_ref": _ref(r.get("left"), left_ref),
                 "right_ref": _ref(r.get("right"), right_ref),
             }
@@ -225,17 +233,24 @@ class ReconResult:
                 "left": p.left,
                 "right": p.right,
                 "members": len(p.members) if p.members is not None else None,
+                "evidence": p.evidence,
             }
             for p in self.matched
         ]
+        # A miss is a finding only because the other side looked: say what
+        # it read.
+        looked_right = {"counterpart": self.right_coverage.as_dict()} if self.right_coverage else None
+        looked_left = {"counterpart": self.left_coverage.as_dict()} if self.left_coverage else None
         out += [
             {"status": "unmatched_left", "rule": None, "confidence": 0.0,
-             "discrepancy": None, "reason": None, "left": r, "right": None}
+             "discrepancy": None, "reason": None, "left": r, "right": None,
+             "evidence": looked_right}
             for r in self.unmatched_left
         ]
         out += [
             {"status": "unmatched_right", "rule": None, "confidence": 0.0,
-             "discrepancy": None, "reason": None, "left": None, "right": r}
+             "discrepancy": None, "reason": None, "left": None, "right": r,
+             "evidence": looked_left}
             for r in self.unmatched_right
         ]
         out += [
@@ -243,17 +258,23 @@ class ReconResult:
              "discrepancy": None, "reason": a.reason,
              "left": a.left if a.side == "left" else None,
              "right": a.left if a.side == "right" else None,
-             "candidates": a.candidates}
+             "candidates": a.candidates,
+             "evidence": {
+                 "candidates": len(a.candidates),
+                 **({"groupings": [len(g) for g in a.alternatives]} if a.alternatives else {}),
+             }}
             for a in self.ambiguous
         ]
         out += [
             {"status": "unverifiable_left", "rule": None, "confidence": 0.0,
-             "discrepancy": None, "reason": u.reason, "left": u.record, "right": None}
+             "discrepancy": None, "reason": u.reason, "left": u.record, "right": None,
+             "evidence": looked_right}
             for u in self.unverifiable_left
         ]
         out += [
             {"status": "unverifiable_right", "rule": None, "confidence": 0.0,
-             "discrepancy": None, "reason": u.reason, "left": None, "right": u.record}
+             "discrepancy": None, "reason": u.reason, "left": None, "right": u.record,
+             "evidence": looked_left}
             for u in self.unverifiable_right
         ]
         return out
@@ -311,7 +332,10 @@ def _apply_exact(
             still_left.append(l)
             continue
         consumed.add(id(hit))
-        out.matched.append(MatchedPair(l, hit, rule.kind, 1.0))
+        out.matched.append(MatchedPair(l, hit, rule.kind, 1.0, evidence={
+            "rule": rule.kind,
+            "key": {"left": rule.left, "right": rule.right, "value": str(dig(l, rule.left))},
+        }))
     return still_left, [r for r in right if id(r) not in consumed]
 
 
@@ -374,7 +398,7 @@ def _apply_fuzzy(
                 if days is None or not rule.lag.min_days <= days <= rule.lag.max_days:
                     continue
                 gap = days / (rule.lag.max_days + 1) * span
-                candidates.append((r, gap))
+                candidates.append((r, gap, {"lag": _lag_evidence(rule.lag, days)}))
                 continue
             r_ts = _as_dt(dig(r, rule.timestamp_right))
             if l_ts and r_ts:
@@ -383,7 +407,7 @@ def _apply_fuzzy(
                     continue
             else:
                 gap = span
-            candidates.append((r, gap))
+            candidates.append((r, gap, {"window": rule.window, "gap_seconds": int(gap) if l_ts and r_ts else None}))
 
         if not candidates:
             still_left.append(l)
@@ -394,14 +418,17 @@ def _apply_fuzzy(
             # is not evidence enough to choose — settlement lag is the least
             # reliable signal a rail has.
             out.ambiguous.append(
-                Ambiguity(left=l, candidates=[r for r, _ in candidates], rule=rule.kind)
+                Ambiguity(left=l, candidates=[r for r, _, _ in candidates], rule=rule.kind)
             )
             continue
 
-        best, gap = candidates[0]
+        best, gap, timing = candidates[0]
         consumed.add(id(best))
         confidence = round(max(0.5, 1.0 - gap / span * 0.5), 4)
-        out.matched.append(MatchedPair(l, best, rule.kind, confidence))
+        out.matched.append(MatchedPair(l, best, rule.kind, confidence, evidence={
+            "rule": rule.kind, **timing,
+            "amount_tolerance_minor": rule.amount_tolerance_minor,
+        }))
 
     return still_left, [r for r in right if id(r) not in consumed]
 
@@ -436,7 +463,10 @@ def _apply_group_ref(
             ))
             continue
         consumed.update(id(m) for m in bucket)
-        out.matched.append(_pair(o, bucket, one_side, rule.kind, 1.0))
+        pair = _pair(o, bucket, one_side, rule.kind, 1.0)
+        pair.evidence = {"rule": rule.kind,
+                         "key": {"left": rule.left, "right": rule.right, "value": str(dig(o, one_path))}}
+        out.matched.append(pair)
     rest = [m for m in many if id(m) not in consumed]
     return (still, rest) if one_side == "left" else (rest, still)
 
@@ -502,7 +532,16 @@ def _apply_group_sum(
             consumed.update(id(m) for m in fits[0])
             # A sum found among unreferenced records is weaker evidence
             # than a reference: stated, not hidden.
-            out.matched.append(_pair(o, fits[0], one_side, rule.kind, 0.75))
+            pair = _pair(o, fits[0], one_side, rule.kind, 0.75)
+            pair.evidence = {
+                "rule": rule.kind,
+                **({"lag": {"min_days": rule.lag.min_days, "max_days": rule.lag.max_days,
+                            "calendar": rule.lag.calendar, "timezone": rule.lag.timezone}}
+                   if rule.lag else {"window": rule.window}),
+                "share": {f: dig(fits[0][0], f) for f in rule.share},
+                "amount_tolerance_minor": rule.amount_tolerance_minor,
+            }
+            out.matched.append(pair)
         elif fits or crowded:
             seen: dict[int, Row] = {}
             for fit in fits:
@@ -573,10 +612,50 @@ def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
         except (TypeError, ValueError):
             continue
 
-        for rule in spec.explains:
-            if rule.accounts_for(pair.value(rule.side, rule.path), pair.discrepancy_minor):
-                pair.explained_by = rule.label
-                break
+        pair.evidence["compared"] = {
+            "left_path": ref.left, "right_path": ref.right_path,
+            "left_minor": int(l_amt), "right_minor": int(r_amt),
+            "currency": l_cur or r_cur or None,
+        }
+        parts = _explanation(spec, pair)
+        if parts:
+            pair.explained_by = "+".join(p["label"] for p in parts)
+            pair.evidence["explanation"] = parts
+
+
+#: Most causes combined to explain one difference. Beyond this a match is
+#: more likely coincidence than accounting.
+MAX_EXPLANATION_PARTS = 4
+
+
+def _explanation(spec: Reconciliation, pair: MatchedPair) -> list[dict[str, Any]] | None:
+    """The causes that account for a pair's difference, exactly (E3).
+
+    One declared cause first, in declaration order, as before. Failing
+    that, the smallest combination of causes whose amounts add up to the
+    difference: a fee and a refund on the same order. Each part must be
+    non-zero and point the way its `sign` says; magnitudes are summed,
+    because rails state adjustments with their own sign conventions.
+    """
+    gap = pair.discrepancy_minor
+    if not gap:
+        return None
+    stated = []
+    for rule in spec.explains:
+        amount = rule.figure(lambda path, side=rule.side: pair.value(side, path))
+        if amount is not None and rule.allows(amount, gap):
+            stated.append((rule, amount))
+    for size in range(1, min(len(stated), MAX_EXPLANATION_PARTS) + 1):
+        for combo in combinations(stated, size):
+            if sum(abs(a) for _, a in combo) == abs(gap):
+                return [{"label": r.label, "side": r.side, "paths": list(r.fields), "amount_minor": a}
+                        for r, a in combo]
+    return None
+
+
+def _lag_evidence(lag, days: int) -> dict[str, Any]:
+    return {"business_days": days, "min_days": lag.min_days, "max_days": lag.max_days,
+            "calendar": lag.calendar, "timezone": lag.timezone}
 
 
 def match(
@@ -632,10 +711,18 @@ def _describe_groups(spec: Reconciliation, result: ReconResult) -> None:
         paths = []
         if amount is not None:
             paths += [amount.left, amount.currency] if side == "left" else [amount.right_path, amount.right_currency]
-        paths += [e.path for e in spec.explains if e.side == side]
+        paths += [f for e in spec.explains if e.side == side for f in e.fields]
         for path in paths:
             put(summary, path, pair.value(side, path))
         ref = refs[0] if side == "left" else refs[1]
+        amount_path = None if amount is None else (amount.left if side == "left" else amount.right_path)
+        # A reference and an amount per member, the figures the privacy
+        # policy says a stored result holds; never a member's record.
+        pair.evidence["members"] = [
+            {"ref": None if not ref else dig(m, ref),
+             "amount_minor": None if not amount_path else dig(m, amount_path)}
+            for m in pair.members
+        ]
         if ref:
             # Distinct, in order: a GroupRef's members all carry the one
             # reference, a GroupSum's each carry their own.
@@ -684,6 +771,9 @@ def ref_paths(spec: Reconciliation) -> tuple[str | None, str | None]:
     for rule in spec.keys:
         if isinstance(rule, (ExactRef, GroupRef)):
             return rule.left, rule.right
+    for rule in spec.keys:
+        if isinstance(rule, GroupSum) and (rule.ref_many or rule.ref_one):
+            return (rule.ref_many, rule.ref_one) if rule.many == "left" else (rule.ref_one, rule.ref_many)
     return None, None
 
 

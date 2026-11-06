@@ -12,7 +12,7 @@ from datetime import timedelta
 from typing import Annotated, Any, Literal
 
 from okwan_core import get as get_connector
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _DURATION = re.compile(r"^(\d+)([smhd])$")
 _UNIT = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
@@ -208,6 +208,8 @@ class GroupSum(Frozen):
     window: str = "7d"
     lag: SettlementLag | None = None
     max_members: int = Field(default=8, ge=2, le=12)
+    ref_many: str | None = Field(default=None, description="A human id on the many side (a batch id), for evidence")
+    ref_one: str | None = Field(default=None, description="A human id on the one side (a deposit's FITID)")
     max_candidates: int = Field(
         default=24, ge=2, le=40,
         description="Candidates searched per record; more is reported ambiguous rather than guessed",
@@ -311,15 +313,53 @@ class Explains(Frozen):
     order ledger; a fee would be recorded on the rail. Sign follows the
     discrepancy convention (left minus right), so a right-side refund
     explains a positive difference.
+
+    `paths` instead of `path` sums several fields into one figure (E3):
+    a processor's fee rule, where a deposit is the gross less the
+    discount, the chargebacks and the adjustments, each its own column.
+    A missing field counts as nothing; all of them missing, as no figure.
     """
 
-    path: str
+    path: str | None = None
+    paths: tuple[str, ...] = ()
     side: Literal["left", "right"] = "right"
     label: str = Field(
         default="adjustment",
         description="What this explains, surfaced in output: refund, fee, chargeback...",
     )
     sign: Literal["positive", "negative", "either"] = "positive"
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Explains:
+        if (self.path is None) == (not self.paths):
+            raise ValueError("an explanation names exactly one of `path` or `paths`")
+        return self
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.path,) if self.path is not None else self.paths
+
+    def figure(self, read) -> int | None:
+        """The amount this explanation states, read through `read(path)`."""
+        total, seen = 0, False
+        for path in self.fields:
+            value = read(path)
+            if value is None:
+                continue
+            try:
+                total += int(value)
+            except (TypeError, ValueError):
+                return None
+            seen = True
+        return total if seen else None
+
+    def allows(self, amount: int, discrepancy: int) -> bool:
+        """Non-zero, and pointing the way `sign` says."""
+        if amount == 0 or discrepancy == 0:
+            return False
+        if self.sign == "positive" and discrepancy < 0:
+            return False
+        return not (self.sign == "negative" and discrepancy > 0)
 
     def accounts_for(self, value: Any, discrepancy: int) -> bool:
         if value is None or discrepancy == 0:
