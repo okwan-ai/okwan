@@ -7,9 +7,9 @@ import { type RunDigest, type SeenFinding, verdictOf } from "@/lib/finding";
 import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
-import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconLock, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
+import { IconArrowRight, IconClose, IconGear, IconLock, IconMenu, IconSearch, IconSignOut, NavAgents, NavApi, NavFindings, NavHome, NavIntegrations, NavMerchants } from "./ui/icons";
 import { planState } from "@/lib/usage-shape";
-import { SwooshWordmark } from "./ui/mark";
+import { OkwanLogo } from "./ui/mark";
 
 export type MerchantLink = { id: string; name: string };
 
@@ -63,12 +63,12 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
   }, []);
 
   const nav = (
-    <nav aria-label="Main" className="flex flex-col gap-1.5 text-[15px]">
-      <Item href="/overview" path={path} icon={<IconHome />}>Overview</Item>
+    <nav aria-label="Main" className="flex flex-col gap-[3px] text-[17px] 2xl:text-[19px]">
+      <Item href="/overview" path={path} icon={<NavHome />} first>Overview</Item>
       <Item
         href="/findings"
         path={path}
-        icon={<IconAlert />}
+        icon={<NavFindings />}
         count={
           ok.length ? <Count n={openFindings} label="open findings" strong={openFindings > 0} />
             : failed ? <Count text="!" label="checks couldn't run" strong />
@@ -77,7 +77,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
       >
         Findings
       </Item>
-      <Item href="/merchants" path={path} icon={<IconStore />} count={<Count n={merchants.length} label="merchants" />}>
+      <Item href="/merchants" path={path} icon={<NavMerchants />} count={<Count n={merchants.length} label="merchants" />}>
         Merchants
       </Item>
       {current && (
@@ -90,26 +90,28 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
           <span className="min-w-0 flex-1 truncate">{current.name}</span>
         </Link>
       )}
-      <p className="mt-7 mb-1.5 px-4 text-[13px] font-medium text-ink-muted">Connect</p>
-      <Item href="/integrations" path={path} icon={<IconPlug />}>Integrations</Item>
-      <Item href="/agents" path={path} icon={<IconAgent />}>Agents</Item>
-      <a
-        href={`${apiBase}/docs`}
-        target="_blank"
-        rel="noopener"
-        className="flex min-h-12 items-center gap-3.5 rounded-2xl px-4 font-medium text-ink hover:bg-accent-soft"
-      >
-        <span className="text-ink-soft"><IconTerminal /></span>
-        <span className="flex-1">API reference</span>
-        <span aria-hidden className="text-xs">↗</span>
-        <span className="sr-only">(opens in a new tab)</span>
-      </a>
-      {operator && (
-        <>
-          <p className="mt-7 mb-1.5 px-4 text-[13px] font-medium text-ink-muted">Run Okwan</p>
-          <Item href="/ops" path={path} icon={<IconLock />}>Console</Item>
-        </>
-      )}
+      <p className="mt-6 mb-1 px-[13px] text-[14px] font-medium text-ink-soft 2xl:text-[15px]">Connect</p>
+      {/* The glass narrows here (the waist of the drawing), so these rows do too. */}
+      <div className="flex flex-col gap-[3px] min-[900px]:mr-5">
+        <Item href="/integrations" path={path} icon={<NavIntegrations />}>Integrations</Item>
+        <Item href="/agents" path={path} icon={<NavAgents />}>Agents</Item>
+        <a
+          href={`${apiBase}/docs`}
+          target="_blank"
+          rel="noopener"
+          className="flex min-h-[51px] items-center gap-5 rounded-full px-[22px] font-medium text-ink hover:bg-accent-soft/70"
+        >
+          <NavApi />
+          <span className="flex-1">API reference</span>
+          <span className="sr-only">(opens in a new tab)</span>
+        </a>
+        {operator && (
+          <>
+            <p className="mt-6 mb-1 px-[13px] text-[14px] font-medium text-ink-soft 2xl:text-[15px]">Run Okwan</p>
+            <Item href="/ops" path={path} icon={<IconLock />}>Console</Item>
+          </>
+        )}
+      </div>
     </nav>
   );
 
@@ -140,7 +142,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
 
       {/* Narrow: a top bar with search and the menu button. */}
       <header className="sticky top-0 z-40 border-b border-line bg-white/85 backdrop-blur min-[900px]:hidden">
-        <div className="flex items-center justify-between gap-1 px-2">
+        <div className="flex items-center justify-between gap-1 px-3 py-1.5">
           <Logo />
           {current && <span className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{current.name}</span>}
           <div className="flex shrink-0 items-center">
@@ -187,15 +189,86 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
 
       {/* Wide: the sidebar, a white panel floating on the canvas. Search is
           ⌘K, or the account menu in the top bar. */}
-      <aside className="sticky top-0 hidden h-screen w-[288px] shrink-0 p-5 pr-2 min-[900px]:flex">
-        <div className="flex w-full flex-col overflow-y-auto rounded-[32px] border border-white/80 bg-white/80 px-4 py-7 shadow-float backdrop-blur-xl">
-          <div className="mb-8 px-3"><Logo /></div>
+      <aside className="sticky top-0 hidden h-screen w-[300px] shrink-0 min-[900px]:block 2xl:w-[316px]">
+        <Glass />
+        <div className="relative flex h-full flex-col overflow-y-auto pt-[60px] pr-[44px] pb-[76px] pl-10 [scrollbar-width:none] 2xl:pr-[46px] [@media(max-height:860px)]:pt-9 [@media(max-height:860px)]:pb-12">
+          <div className="mb-[36px] pl-[42px] [@media(max-height:860px)]:mb-6"><Logo /></div>
           {nav}
-          <div className="min-h-6 flex-1" />
-          {footer}
+          <div className="min-h-[88px] flex-1" />
+          <div className="relative">
+            <PlanBubble />
+            <div className="relative">{footer}</div>
+          </div>
         </div>
       </aside>
     </>
+  );
+}
+
+/**
+ * The sidebar's glass, as the owner drew it: a frosted panel whose right
+ * edge swells by the main pages, narrows by Connect and swells again by
+ * the plan. Decoration only; it stretches with the window, its edges stay
+ * a hairline.
+ */
+function Glass() {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 320 940"
+      preserveAspectRatio="none"
+      className="pointer-events-none absolute inset-0 h-full w-full overflow-visible drop-shadow-[0_24px_40px_rgba(60,40,160,0.12)]"
+    >
+      <defs>
+        <linearGradient id="glass-fill" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity="0.78" />
+          <stop offset="1" stopColor="#f4f2ff" stopOpacity="0.62" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M72 16H232C276 16 302 44 302 92V300C302 352 258 392 258 452V560C258 628 318 652 318 730V872C318 906 296 928 262 928H64C34 928 12 906 12 876V76C12 42 38 16 72 16Z"
+        fill="url(#glass-fill)"
+        stroke="#ffffff"
+        strokeOpacity="0.95"
+        strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+/** The bubble that holds the plan, lit violet along its rim. It wraps the
+ *  plan card, not the window, so a short screen never pushes it into the
+ *  links above. */
+function PlanBubble() {
+  return (
+    <svg
+      aria-hidden
+      viewBox="12 652 306 276"
+      preserveAspectRatio="none"
+      className="pointer-events-none absolute -top-16 -right-11 -bottom-16 -left-7 h-[calc(100%+8rem)] w-[calc(100%+4.5rem)] overflow-visible"
+    >
+      <defs>
+        <linearGradient id="bubble-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity="0.35" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0.9" />
+        </linearGradient>
+        <linearGradient id="bubble-rim" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#a58bff" stopOpacity="0" />
+          <stop offset="0.55" stopColor="#8a6bff" stopOpacity="0.55" />
+          <stop offset="1" stopColor="#6d45f5" stopOpacity="0.9" />
+        </linearGradient>
+        <filter id="rim-blur" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3" /></filter>
+      </defs>
+      <path
+        d="M12 724C40 676 110 652 176 654C250 656 306 694 318 750V872C318 906 296 928 262 928H64C34 928 12 906 12 876Z"
+        fill="url(#bubble-fill)"
+        stroke="#ffffff"
+        strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
+      />
+      <path d="M150 655C228 652 298 688 316 746" fill="none" stroke="url(#bubble-rim)" strokeWidth="7" strokeLinecap="round" filter="url(#rim-blur)" />
+    </svg>
   );
 }
 
@@ -203,21 +276,21 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
 function PlanCard({ plan }: { plan: Usage["plan"] | null }) {
   if (!plan) {
     return (
-      <div className="rounded-3xl border border-line bg-[linear-gradient(160deg,var(--color-accent-soft),#ffffff_70%)] p-4 text-sm">
-        <p className="font-semibold">Plan &amp; usage</p>
-        <p className="mt-1 text-xs text-ink-soft">Usage isn&apos;t available right now.</p>
+      <div className="px-[13px] text-sm">
+        <p className="text-[18px] font-bold 2xl:text-[20px]">Plan &amp; usage</p>
+        <p className="mt-1 text-ink-soft">Usage isn&apos;t available right now.</p>
       </div>
     );
   }
   const s = planState(plan);
   const free = plan.name === "free";
-  const fill = s.state === "danger" ? "bg-danger" : "bg-[linear-gradient(90deg,var(--color-accent),var(--color-accent-2))]";
+  const fill = s.state === "danger" ? "bg-danger" : "bg-[linear-gradient(90deg,#2a22f4,var(--color-meter))]";
   const line = plan.unmetered
     ? `${plan.used.toLocaleString("en-US")} requests this month`
     : `${plan.used.toLocaleString("en-US")} of ${plan.limit.toLocaleString("en-US")} this month`;
   return (
-    <div className="rounded-3xl border border-line bg-[linear-gradient(160deg,var(--color-accent-soft),#ffffff_70%)] p-4">
-      <p className="text-[15px] font-bold capitalize">{plan.name} Plan</p>
+    <div className="pr-[2px] pl-[13px]">
+      <p className="text-[18px] font-bold capitalize 2xl:text-[20px]">{plan.name} Plan</p>
       {s.share !== null && (
         <div
           role="progressbar"
@@ -226,20 +299,20 @@ function PlanCard({ plan }: { plan: Usage["plan"] | null }) {
           aria-valuemax={plan.limit}
           aria-valuenow={Math.min(plan.used, plan.limit)}
           aria-valuetext={s.text}
-          className="mt-3 h-2 overflow-hidden rounded-full bg-white shadow-[inset_0_0_0_1px_var(--color-line)]"
+          className="mt-3 h-3.5 overflow-hidden rounded-full bg-[#cbcdf2]"
         >
-          {/* A sliver stays visible at zero, so the bar reads as a bar. */}
-          <div className={`h-full rounded-full ${fill}`} style={{ width: `${Math.max(s.share * 100, 3)}%` }} />
+          {/* A pill stays visible at zero, so the bar reads as a bar. */}
+          <div className={`h-full min-w-3.5 rounded-full ${fill}`} style={{ width: `${s.share * 100}%` }} />
         </div>
       )}
-      <p className={`mt-2 text-[13px] ${s.state === "danger" ? "font-semibold text-danger" : "text-ink-soft"}`}>
+      <p className={`mt-2.5 text-[14px] 2xl:text-[15px] ${s.state === "danger" ? "font-semibold text-danger" : "text-ink"}`}>
         {s.state === "danger" ? "Limit reached this month" : line}
       </p>
       <Link
         href="/settings?tab=plan"
-        className="mt-4 flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-white text-sm font-semibold text-accent shadow-[0_6px_18px_-10px_rgba(60,38,160,0.5)] hover:bg-accent-soft"
+        className="mt-6 -mr-[4px] -ml-[3px] flex min-h-12 items-center justify-center gap-3 rounded-full bg-white text-[16px] font-bold text-accent shadow-[0_10px_24px_-12px_rgba(52,40,160,0.45),0_0_0_1px_rgba(232,233,246,0.9)] hover:bg-accent-soft 2xl:text-[18px]"
       >
-        {free ? "Upgrade Plan" : "Manage plan"} <span aria-hidden>→</span>
+        {free ? "Upgrade Plan" : "Manage plan"} <IconArrowRight />
       </Link>
     </div>
   );
@@ -258,17 +331,20 @@ function Glyph({ d }: { d: RunDigest | undefined }) {
 
 function Logo() {
   return (
-    <Link href="/overview" prefetch={false} aria-label="Okwan, overview" className="inline-flex min-h-11 items-center rounded-lg px-1">
-      <SwooshWordmark size={28} />
+    <Link href="/overview" prefetch={false} aria-label="Okwan, overview" className="inline-flex min-h-11 items-center rounded-lg">
+      <span className="min-[900px]:hidden"><OkwanLogo width={88} /></span>
+      <span className="hidden min-[900px]:block"><OkwanLogo width={116} /></span>
     </Link>
   );
 }
 
-function Item({ href, path, icon, count, children }: {
+function Item({ href, path, icon, count, first = false, children }: {
   href: string;
   path: string;
   icon: ReactNode;
   count?: ReactNode;
+  /** The first row: a little air below it, as drawn. */
+  first?: boolean;
   children: ReactNode;
 }) {
   const active = path === href || path.startsWith(`${href}/`);
@@ -278,13 +354,13 @@ function Item({ href, path, icon, count, children }: {
       // Looks active on a sub-page (/integrations/paypal) but names the page
       // only on its own URL; the sub-page's breadcrumb carries aria-current.
       aria-current={path === href ? "page" : undefined}
-      className={`flex min-h-12 items-center gap-3.5 rounded-2xl px-4 font-medium ${
+      className={`flex min-h-[51px] items-center gap-5 rounded-full pr-1 pl-[22px] ${first ? "mb-[11px]" : ""} ${
         active
-          ? "bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-2))] text-white shadow-lift"
-          : "text-ink hover:bg-accent-soft"
+          ? "bg-pill font-bold text-white"
+          : "font-medium text-ink hover:bg-accent-soft/70"
       }`}
     >
-      <span className={active ? "text-white" : "text-ink-soft"}>{icon}</span>
+      {icon}
       <span className="flex-1">{children}</span>
       {count}
     </Link>
@@ -294,8 +370,8 @@ function Item({ href, path, icon, count, children }: {
 function Count({ n, text, label, strong = false }: { n?: number; text?: string; label: string; strong?: boolean }) {
   return (
     <span
-      className={`inline-flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[13px] font-bold tabular-nums ${
-        strong ? "bg-signal text-ink" : "bg-accent-soft text-accent"
+      className={`inline-flex h-[34px] min-w-[34px] items-center justify-center rounded-full px-2 text-[17px] font-bold tabular-nums ${
+        strong ? "bg-signal text-ink" : "bg-[#d1d0f1] text-ink"
       }`}
     >
       {text ?? n}

@@ -28,18 +28,18 @@ export function Rich({ text, numbered = false }: { text: string; numbered?: bool
       {shown.map((g, i) => {
         if (g.kind === "ul") {
           return (
-            <ul key={i} className="list-disc space-y-1 pl-5">
+            <ul key={i} className="list-disc space-y-2 pl-6">
               {g.rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*[-*] /, "")} /></li>)}
             </ul>
           );
         }
         if (g.kind === "ol") {
           return (
-            <ol key={i} className={numbered ? "space-y-3" : "list-decimal space-y-1 pl-5"}>
+            <ol key={i} className={numbered ? "space-y-3.5" : "list-decimal space-y-1 pl-5"}>
               {g.rows.map((r, j) => (
-                <li key={j} className={numbered ? "flex gap-3" : undefined}>
+                <li key={j} className={numbered ? "flex gap-3.5" : undefined}>
                   {numbered && (
-                    <span aria-hidden className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-2))] text-[13px] font-bold text-white shadow-lift">
+                    <span aria-hidden className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-orb text-[17px] font-bold text-white">
                       {j + 1}
                     </span>
                   )}
@@ -47,6 +47,16 @@ export function Rich({ text, numbered = false }: { text: string; numbered?: bool
                 </li>
               ))}
             </ol>
+          );
+        }
+        // A line that is all bold ("**How to fix it:**") heads what follows;
+        // after the first group, a hairline sets it apart, as drawn.
+        const heading = g.rows.length === 1 && /^\s*\*\*[^*]+\*\*\s*$/.test(g.rows[0]);
+        if (heading) {
+          return (
+            <p key={i} className={`font-bold ${i > 0 ? "mt-4 border-t border-line pt-4" : ""}`}>
+              {g.rows[0].trim().slice(2, -2)}
+            </p>
           );
         }
         return <p key={i} className="whitespace-pre-wrap"><Inline text={g.rows.join("\n")} /></p>;

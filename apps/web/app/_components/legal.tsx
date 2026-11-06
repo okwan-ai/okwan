@@ -1,6 +1,6 @@
 /* The frame for the site's legal pages: the header and footer of the home
    page, one readable column, and a contents list that links each section. */
-import { Wordmark, Wrap } from "./brand";
+import { OkwanLogo, Wrap } from "./brand";
 
 export const COMPANY = "Global Tech Startup LLC";
 export const CONTACT_EMAIL = "info@globaltechstartup.com";
@@ -13,7 +13,7 @@ export function LegalPage({ title, intro, parts }: { title: string; intro: React
     <>
       <header className="border-b border-line/80 bg-paper">
         <Wrap className="flex h-16 items-center justify-between gap-6">
-          <a href="/" aria-label="Okwan home"><Wordmark /></a>
+          <a href="/" aria-label="Okwan home"><OkwanLogo width={104} /></a>
           <nav className="flex items-center gap-6 text-[14.5px] text-ink-soft" aria-label="Legal">
             <a className="hover:text-ink aria-[current=page]:text-ink" href="/privacy" aria-current={title.startsWith("Privacy") ? "page" : undefined}>Privacy</a>
             <a className="hover:text-ink aria-[current=page]:text-ink" href="/terms" aria-current={title.startsWith("Terms") ? "page" : undefined}>Terms</a>

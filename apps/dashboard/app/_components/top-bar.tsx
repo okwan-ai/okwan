@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { openPalette } from "./command-palette";
+import { IconBell } from "./ui/icons";
 
 /**
  * The wide-screen top bar: findings and the account. The bell is not a
  * notification feed: it is the way to Findings, with the signal dot while
  * any order needs a look. Phones have the sidebar's own top bar instead.
  */
-export function TopBar({ account, openFindings }: { account: string; openFindings: number }) {
+export function TopBar({ account, openFindings, docked = false }: { account: string; openFindings: number; docked?: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -26,30 +27,27 @@ export function TopBar({ account, openFindings }: { account: string; openFinding
   }, [open]);
 
   return (
-    <div className="hidden justify-end pt-5 pb-2 min-[900px]:flex">
-      <div ref={box} className="relative flex items-center gap-1 rounded-full border border-white/80 bg-white/80 py-1.5 pr-2 pl-2 shadow-float backdrop-blur-xl">
+    <div className={docked ? "flex justify-end pr-5" : "hidden justify-end pt-5 pb-5 min-[900px]:flex 2xl:hidden"}>
+      <div ref={box} className="relative flex h-[68px] items-center rounded-full border border-white/90 bg-white/85 pr-4 pl-4 shadow-float backdrop-blur-xl">
         <Link
           href="/findings"
           aria-label={openFindings > 0 ? `Findings: ${openFindings} need a look` : "Findings"}
-          className="relative inline-flex h-11 w-11 items-center justify-center rounded-full text-ink hover:bg-accent-soft"
+          className="relative inline-flex h-12 w-12 items-center justify-center rounded-full text-ink hover:bg-accent-soft"
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M6 9a6 6 0 1 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9" />
-            <path d="M10 20a2.2 2.2 0 0 0 4 0" />
-          </svg>
-          {openFindings > 0 && <span aria-hidden className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full border-2 border-white bg-signal" />}
+          <IconBell />
+          {openFindings > 0 && <span aria-hidden className="absolute top-[5px] right-[7px] h-3 w-3 rounded-full bg-signal" />}
         </Link>
-        <span aria-hidden className="mx-1 h-7 w-px bg-line" />
+        <span aria-hidden className="mx-4 h-10 w-px bg-line" />
         <button
           ref={button}
           type="button"
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
-          className="inline-flex min-h-11 max-w-[260px] items-center gap-2 rounded-full px-3 text-[15px] font-semibold hover:bg-accent-soft"
+          className="inline-flex min-h-12 max-w-[280px] items-center gap-6 rounded-full px-3 text-[18px] font-semibold hover:bg-accent-soft 2xl:text-[21px]"
         >
           <span className="truncate" title={account}>{account}</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className={open ? "rotate-180" : ""}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className={open ? "rotate-180" : ""}>
             <path d="m6 9 6 6 6-6" />
           </svg>
         </button>

@@ -12,11 +12,11 @@ import { FindingsTable } from "../_components/findings-table";
 import { RangeSelect } from "../_components/range-select";
 import { RANGES } from "@/lib/ranges";
 import { MerchantList } from "../_components/merchants-table";
-import { RunAll } from "../_components/run-all";
 import { SetupChecklist, type Step } from "../_components/setup-checklist";
 import { VerdictCard } from "../_components/verdict-card";
 import { Card, CardBody } from "../_components/ui/card";
 import { OutcomeSpectrum } from "../_components/ui/outcome-spectrum";
+import { IconArrowRight, IconClock } from "../_components/ui/icons";
 import { PageHeader, Section } from "../_components/ui/page-header";
 import { Skeleton, SkeletonRows } from "../_components/ui/skeleton";
 import { PlanStrip } from "../_components/usage/plan-strip";
@@ -30,8 +30,9 @@ const DAY = 86_400_000;
 
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
   const me = await requireTenant();
-  const raw = (await searchParams).days ?? "30";
-  const days = (RANGES.map((r) => r.value) as readonly string[]).includes(raw) ? raw : "30";
+  // The last seven days unless the URL says otherwise, as drawn.
+  const raw = (await searchParams).days ?? "7";
+  const days = (RANGES.map((r) => r.value) as readonly string[]).includes(raw) ? raw : "7";
   return (
     <>
       <PageHeader
@@ -102,17 +103,17 @@ async function OverviewBody({ account, days }: { account: string; days: string }
   return (
     <>
       {strip}
-      <WorkspaceVerdict runs={runs} stale={stale.length} ready={all.filter((r) => eligible(r.merchant)).map((r) => ({ id: r.merchant.tenant.id, name: r.merchant.tenant.name }))} />
-      <div className="mt-6 empty:hidden"><SetupChecklist account={account} steps={steps} /></div>
+      <WorkspaceVerdict runs={runs} stale={stale.length} />
 
       <Section
+        className="mt-12 2xl:mt-[52px]"
         title="Needs attention"
         description={rows.every((r) => r.outcome === "collected_twice")
           ? "Orders where the same payment was collected more than once."
           : "Orders that need a look, from each merchant's latest check."}
         aside={rows.length > 0 ? (
-          <Link href="/findings" prefetch={false} className="inline-flex min-h-11 items-center gap-2 text-[15px] font-semibold text-accent underline underline-offset-4 hover:text-accent-2">
-            View all findings <span aria-hidden>→</span>
+          <Link href="/findings" prefetch={false} className="group inline-flex min-h-11 items-center gap-3 text-[16px] font-semibold text-accent hover:text-accent-deep 2xl:text-[19px]">
+            <span className="underline underline-offset-[5px]">View all findings</span> <IconArrowRight />
           </Link>
         ) : null}
       >
@@ -122,6 +123,9 @@ async function OverviewBody({ account, days }: { account: string; days: string }
           <FindingsTable scope="workspace" rows={rows} limit={ATTENTION_LIMIT} toolbar={false} apiBase={apiUrl()} simple />
         )}
       </Section>
+
+      {/* Setup, once a check has run, waits below the results. */}
+      <div className="mt-8 empty:hidden"><SetupChecklist account={account} steps={steps} /></div>
 
       <Section
         title="Needs you"
@@ -140,12 +144,7 @@ async function OverviewBody({ account, days }: { account: string; days: string }
  * owed back), and every order checked split by outcome. Caveats sit in the
  * footer, so "None" never hides a merchant that couldn't run.
  */
-function WorkspaceVerdict({ runs, stale, ready }: {
-  runs: MerchantRun[];
-  stale: number;
-  /** Merchants a Run all would check, for the card's footer. */
-  ready: { id: string; name: string }[];
-}) {
+function WorkspaceVerdict({ runs, stale }: { runs: MerchantRun[]; stale: number }) {
   const t = twiceTotals(runs);
   const ok = runs.flatMap((r) => (r.state === "ok" ? [r.finding.summary] : []));
   const sum = (k: "orders" | "collected" | "split_tender" | "collected_twice" | "collected_inconsistent" | "uncollected" | "unverifiable") =>
@@ -165,140 +164,116 @@ function WorkspaceVerdict({ runs, stale, ready }: {
   const outcomes = [
     { key: "paid", label: "Paid once", n: paid, dot: "bg-ok-bright", always: true },
     { key: "twice", label: "Collected twice", n: sum("collected_twice"), dot: "bg-signal", always: true },
-    { key: "none", label: "Not paid", n: sum("uncollected"), dot: "bg-line-strong/40", always: true },
+    { key: "none", label: "Not paid", n: sum("uncollected"), dot: "bg-[#dcdcef]", always: true },
     { key: "inconsistent", label: "Doesn't add up", n: sum("collected_inconsistent"), dot: "bg-ink-soft", always: false },
     { key: "unverifiable", label: "Couldn't verify", n: sum("unverifiable"), dot: "bg-trace", always: false },
   ].filter((o) => o.always || o.n > 0);
 
   return (
-    <>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-        <section
-          aria-label="Amount at risk"
-          className="relative isolate overflow-hidden rounded-[28px] bg-[linear-gradient(135deg,#26136f_0%,#3a1fa0_45%,#6d32e8_100%)] p-7 text-white shadow-[0_24px_50px_-24px_rgba(58,31,160,0.7)] sm:p-9"
+    <div className="grid gap-[21px] lg:grid-cols-[minmax(0,469fr)_minmax(0,404fr)]">
+      <section
+        aria-label="Amount at risk"
+        className="relative isolate overflow-hidden rounded-[28px] bg-hero px-8 pt-9 pb-8 text-white shadow-[0_26px_50px_-24px_rgba(40,14,170,0.75)] 2xl:px-9 2xl:pt-[36px] 2xl:pb-[30px]"
+      >
+        <Ribbons />
+        <p className="text-[18px] leading-tight font-medium text-white/90 2xl:text-[20px]">Amount at risk</p>
+        <p className={`mt-4 font-extrabold tracking-[-0.01em] tabular-nums ${amounts.length > 1 ? "text-4xl" : "text-[48px] sm:text-[54px] 2xl:text-[58px]"} leading-none`}>
+          {!twice && !warn.length && <span aria-hidden className="mr-3 font-mono text-3xl text-ok-bright">✓</span>}
+          {value}
+        </p>
+        <p className="mt-5 text-[16px] text-white/85 2xl:text-[17px]">
+          {!twice
+            ? `No order taken twice across ${plural(ok.length, "merchant")}`
+            : <>
+              {plural(t.orders, "order")} · {plural(t.merchants, "merchant")}
+              {t.mixed || !owed.length ? null : allOwed
+                ? " · all owed back to customers"
+                : <> · <strong className="font-semibold text-white">{owed.join(" + ")} owed back</strong></>}
+            </>}
+        </p>
+        <Link
+          href={twice ? "/findings?outcome=collected_twice" : "/findings"}
+          prefetch={false}
+          className="mt-7 inline-flex min-h-[50px] items-center gap-3.5 rounded-[16px] bg-white px-6 text-[16px] font-bold text-accent-ink shadow-[0_12px_26px_-12px_rgba(0,0,0,0.55)] hover:bg-accent-soft 2xl:text-[18px]"
         >
-          <Ribbons />
-          <p className="text-lg font-medium text-white/85">Amount at risk</p>
-          <p className={`mt-3 font-bold tracking-[-0.03em] tabular-nums ${amounts.length > 1 ? "text-4xl" : "text-5xl sm:text-[60px]"} leading-none`}>
-            {!twice && !warn.length && <span aria-hidden className="mr-3 font-mono text-3xl text-ok-bright">✓</span>}
-            {value}
-          </p>
-          <p className="mt-4 text-[15px] text-white/80">
-            {!twice
-              ? `No order taken twice across ${plural(ok.length, "merchant")}`
-              : <>
-                {plural(t.orders, "order")} · {plural(t.merchants, "merchant")}
-                {t.mixed || !owed.length ? null : allOwed
-                  ? " · all owed back to customers"
-                  : <> · <strong className="font-semibold text-white">{owed.join(" + ")} owed back</strong></>}
-              </>}
-          </p>
-          <Link
-            href={twice ? "/findings?outcome=collected_twice" : "/findings"}
-            prefetch={false}
-            className="mt-7 inline-flex min-h-12 items-center gap-2 rounded-2xl bg-white px-6 text-[15px] font-bold text-accent-deep shadow-[0_10px_24px_-12px_rgba(0,0,0,0.5)] hover:bg-accent-soft"
-          >
-            {twice ? "Review the orders" : "View findings"} <span aria-hidden>→</span>
-          </Link>
-        </section>
+          {twice ? "Review the orders" : "View findings"} <IconArrowRight />
+        </Link>
+      </section>
 
-        <section aria-label="Orders checked" className="rounded-[28px] border border-white/80 bg-white/90 p-7 shadow-float sm:p-8">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <p className="min-w-0">
-              <span className="text-4xl font-bold tracking-[-0.03em] tabular-nums">{orders.toLocaleString("en-US")}</span>
-              <span className="ml-2 text-[15px] font-medium">orders checked across {plural(ok.length, "merchant")}</span>
+      <section aria-label="Orders checked" className="rounded-[28px] border border-white/90 bg-white/90 px-[22px] pt-[26px] pb-6 shadow-float">
+        <div className="flex items-baseline gap-x-3">
+          <span className="text-[36px] leading-none font-extrabold tabular-nums 2xl:text-[40px]">{orders.toLocaleString("en-US")}</span>
+          <span className="min-w-0 flex-1 text-[15px] leading-snug font-medium">orders checked across {plural(ok.length, "merchant")}</span>
+          {rate !== null && (
+            <p className="shrink-0 text-[22px] font-extrabold tabular-nums">
+              {(rate * 100).toFixed(1)}%<span className="sr-only"> paid exactly once</span>
             </p>
-            {rate !== null && (
-              <p className="text-2xl font-bold tabular-nums">
-                {(rate * 100).toFixed(1)}%<span className="sr-only"> paid exactly once</span>
-              </p>
-            )}
+          )}
+        </div>
+        {orders > 0 && (
+          <div aria-hidden className="mt-5 h-[15px] overflow-hidden rounded-full bg-line">
+            <div className="animate-settle h-full rounded-full bg-[linear-gradient(90deg,var(--color-ok-bright),#04c001)]" style={{ width: `${(paid / orders) * 100}%` }} />
           </div>
-          {orders > 0 && (
-            <div aria-hidden className="mt-5 h-3.5 overflow-hidden rounded-full bg-accent-soft">
-              <div className="animate-settle h-full rounded-full bg-[linear-gradient(90deg,#16a34a,var(--color-ok-bright))]" style={{ width: `${(paid / orders) * 100}%` }} />
-            </div>
-          )}
-          {rate === null && orders > 0 && (
-            <p className="mt-2 text-xs text-ink-soft">Match rate withheld: some orders couldn&apos;t be verified.</p>
-          )}
-          <ul className="mt-5 space-y-3" aria-label="Orders by outcome">
-            {outcomes.map((o) => (
-              <li key={o.key} className="flex items-center justify-between gap-3 text-[15px]">
-                <span className="inline-flex items-center gap-3">
-                  <span aria-hidden className={`h-3.5 w-3.5 rounded-full ${o.dot}`} />
-                  {o.label}
-                </span>
-                <span className="font-bold tabular-nums">{o.n.toLocaleString("en-US")}</span>
-              </li>
-            ))}
-          </ul>
-          {unconfirmed > 0 && (
-            <p className="mt-3 text-xs text-ink-soft">{plural(unconfirmed, "paid-once order")} not ruled out on another rail.</p>
-          )}
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-t border-line pt-4 text-sm text-ink-soft">
-            <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-1">
-              <span suppressHydrationWarning>{resultsFrom(runs)}</span>
+        )}
+        {rate === null && orders > 0 && (
+          <p className="mt-2 text-xs text-ink-soft">Match rate withheld: some orders couldn&apos;t be verified.</p>
+        )}
+        <ul className="mt-5 space-y-2" aria-label="Orders by outcome">
+          {outcomes.map((o) => (
+            <li key={o.key} className="flex items-center justify-between gap-3 text-[16px] 2xl:text-[17px]">
+              <span className="inline-flex items-center gap-4">
+                <span aria-hidden className={`h-4 w-4 rounded-full ${o.dot}`} />
+                {o.label}
+              </span>
+              <span className="font-bold tabular-nums">{o.n.toLocaleString("en-US")}</span>
+            </li>
+          ))}
+        </ul>
+        {unconfirmed > 0 && (
+          <p className="mt-3 text-xs text-ink-soft">{plural(unconfirmed, "paid-once order")} not ruled out on another rail.</p>
+        )}
+        <div className="mt-4 border-t border-line pt-3.5 text-[16px] text-ink-soft 2xl:text-[17px]">
+          <p className="flex items-center gap-3">
+            <IconClock />
+            <span suppressHydrationWarning>{resultsFrom(runs)}</span>
+          </p>
+          {(stale > 0 || warn.length > 0) && (
+            <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
               {stale > 0 && <span>{plural(stale, "merchant")} last checked before this period</span>}
               {warn.map((w) => (
                 <span key={w} className="inline-flex items-center gap-1 text-ink">
                   <span aria-hidden className="font-mono">?</span>{w}
                 </span>
               ))}
-            </div>
-            {ready.length > 0 && <RunAll merchants={ready} variant="secondary" />}
-          </div>
-        </section>
-      </div>
-      {twice && <HowItAddsUp runs={runs} />}
-    </>
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
-/** The hero's decoration: two soft ribbons sweeping out of the corner. */
+/** The hero's decoration, as drawn: a glossy ribbon sweeping up out of
+ *  the bottom-right corner. */
 function Ribbons() {
   return (
-    <svg aria-hidden viewBox="0 0 400 260" preserveAspectRatio="none" className="pointer-events-none absolute right-0 bottom-0 -z-10 h-[78%] w-[62%] opacity-90">
+    <svg aria-hidden viewBox="0 0 469 286" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 -z-10 h-full w-full">
       <defs>
         <linearGradient id="okwan-ribbon-a" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#ffffff" stopOpacity="0" />
-          <stop offset="0.6" stopColor="#c4b5fd" stopOpacity="0.55" />
-          <stop offset="1" stopColor="#ffffff" stopOpacity="0.85" />
+          <stop offset="0" stopColor="#7b5cff" stopOpacity="0" />
+          <stop offset="0.5" stopColor="#8f6cff" stopOpacity="0.55" />
+          <stop offset="1" stopColor="#c9b6ff" stopOpacity="0.7" />
         </linearGradient>
         <linearGradient id="okwan-ribbon-b" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#a78bfa" stopOpacity="0" />
-          <stop offset="1" stopColor="#ddd6fe" stopOpacity="0.6" />
+          <stop offset="0" stopColor="#ffffff" stopOpacity="0.05" />
+          <stop offset="0.55" stopColor="#efe8ff" stopOpacity="0.75" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0.9" />
         </linearGradient>
       </defs>
-      <path d="M40 260 C 160 250, 250 200, 300 120 S 370 10, 400 0 L 400 260 Z" fill="url(#okwan-ribbon-b)" />
-      <path d="M120 260 C 210 240, 280 190, 320 130 S 380 40, 400 30 L 400 60 C 370 80, 350 140, 320 180 S 240 255, 170 260 Z" fill="url(#okwan-ribbon-a)" />
+      <path d="M262 286C352 270 420 214 469 128V286Z" fill="url(#okwan-ribbon-a)" />
+      <path d="M306 286C384 262 438 212 469 160V196C440 238 392 272 344 286Z" fill="url(#okwan-ribbon-b)" />
+      <path d="M352 286C408 268 446 234 469 204V226C448 252 418 274 388 286Z" fill="#ffffff" fillOpacity="0.28" />
     </svg>
-  );
-}
-
-/** The hero's terms, merchant by merchant, and what it leaves out, so the
- *  one big number can be checked by eye. Same data as the figure. */
-function HowItAddsUp({ runs }: { runs: MerchantRun[] }) {
-  const terms = runs.flatMap((r) => (r.state === "ok" && r.finding.summary.collected_twice > 0 ? [r] : []));
-  const left = runs.flatMap((r) => (r.state === "failed" ? [`${r.merchant.tenant.name}: couldn't run`] : []))
-    .concat(terms.filter((r) => r.finding.twice_currency === null).map((r) => `${r.merchant.tenant.name}: counted as orders, not money (currencies differ or not all orders listed)`));
-  return (
-    <details className="mt-4 px-1 text-sm text-ink-soft">
-      <summary className="inline-flex min-h-11 cursor-pointer items-center font-medium underline-offset-4 hover:underline">How this adds up</summary>
-      <ul className="mt-1 space-y-1">
-        {terms.map((r) => {
-          const s = r.finding.summary;
-          const cur = r.finding.twice_currency;
-          return (
-            <li key={r.merchant.tenant.id} className="flex flex-wrap justify-between gap-x-4 tabular-nums">
-              <span>{r.merchant.tenant.name} · {s.collected_twice} order{s.collected_twice === 1 ? "" : "s"}</span>
-              <span>{cur ? <>{formatMinor(s.collected_twice_minor, cur)} · {formatMinor(s.overcollected_minor, cur)} owed back</> : "—"}</span>
-            </li>
-          );
-        })}
-      </ul>
-      {left.length > 0 && <p className="mt-2 text-xs">Not in the figure: {left.join("; ")}.</p>}
-    </details>
   );
 }
 

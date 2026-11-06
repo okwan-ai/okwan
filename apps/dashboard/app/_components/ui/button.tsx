@@ -8,7 +8,7 @@ type Variant = "primary" | "secondary" | "ghost";
  *  Yellow is never a button: it means "two systems disagree".
  *  Every size keeps a 44px touch target. */
 const VARIANT: Record<Variant, string> = {
-  primary: "bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-2))] text-white shadow-lift hover:brightness-110",
+  primary: "bg-violet text-white shadow-lift hover:brightness-110",
   secondary: "border border-line bg-surface text-ink shadow-[0_1px_2px_rgba(60,38,160,0.06)] hover:border-accent/40 hover:text-accent",
   ghost: "text-ink-soft hover:bg-accent-soft hover:text-accent",
 };

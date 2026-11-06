@@ -1,24 +1,29 @@
 @import "tailwindcss";
 
 /* ── Okwan dashboard tokens (§9 2026-11-06) ───────────────────────── */
-/* The owner's design: a soft lavender canvas, white surfaces that float,
- * deep indigo ink, and purple for the one primary action and the active
- * place. Yellow still means "two systems disagree here" and nothing else:
+/* The owner's design, taken from their mockup: a near-white canvas lit
+ * peach and lavender at the corners, white surfaces that float, deep navy
+ * ink, indigo for links and the active place, violet for the one primary
+ * action. Yellow still means "two systems disagree here" and nothing else:
  * the findings count and the collected-twice mark. Never a button fill. */
 @theme {
-  --color-canvas: #f5f3fc;
+  --color-canvas: #f7f6fd;
   --color-surface: #ffffff;
-  --color-ink: #16123a;
-  --color-ink-soft: #4a4670;
-  /* Secondary text: 5.6:1 on surface, 5.2:1 on canvas. */
-  --color-ink-muted: #625e86;
-  /* Purple: the primary action, the active nav item, the hero. */
-  --color-accent: #5b34f2;
-  --color-accent-2: #7c3aed;
-  --color-accent-deep: #2a1873;
-  --color-accent-soft: #efebff;
-  --color-signal: #ffc61a;
+  --color-ink: #0c0a2e;
+  --color-ink-soft: #2e3366;
+  /* Secondary text: at least 6:1 on surface and canvas. */
+  --color-ink-muted: #545a84;
+  /* Indigo: links, the active place, focus. Violet: the gradients' far end. */
+  --color-accent: #3322d4;
+  --color-accent-2: #7a1fe6;
+  --color-accent-deep: #2f06ae;
+  --color-accent-soft: #e6defd;
+  /* Text on accent-soft (the asker's bubble): 11:1. */
+  --color-accent-ink: #221a8f;
+  --color-signal: #f8cd0a;
   --color-signal-deep: #e0a800;
+  /* The plan meter's fill, as drawn. */
+  --color-meter: #0b08f2;
   --color-night: #1c1356;
   --color-night-2: #241970;
   --color-night-line: #3a2f86;
@@ -26,36 +31,43 @@
   --color-night-ink: #ece9ff;
   --color-night-soft: #bab3e8;
   /* Data marks that are neither good nor bad news. */
-  --color-trace: #a39fc0;
-  --color-line: #ebe8f6;
-  /* Input borders: 3.4:1 on surface (WCAG 1.4.11). */
-  --color-line-strong: #8b87ab;
+  --color-trace: #a3a6c8;
+  --color-line: #e8e9f6;
+  /* Input borders: 3:1 on surface (WCAG 1.4.11). */
+  --color-line-strong: #8d90b2;
 
   /* Status, not brand: each pairs with a label, never colour alone.
    * Text on its -soft fill is at least 4.8:1. */
   --color-danger: #c0262f;
-  --color-danger-soft: #fde6e8;
+  --color-danger-soft: #fce1e3;
   --color-ok: #157a3b;
-  --color-ok-bright: #22c55e;
+  --color-ok-bright: #0fcf35;
   --color-ok-soft: #e2f6e9;
 
-  --font-display: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-body: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Figtree", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --shadow-float: 0 18px 44px -22px rgba(60, 38, 160, 0.28), 0 2px 6px -2px rgba(60, 38, 160, 0.08);
-  --shadow-lift: 0 10px 24px -10px rgba(91, 52, 242, 0.55);
+  --shadow-float: 0 22px 48px -26px rgba(52, 40, 160, 0.30), 0 2px 8px -3px rgba(52, 40, 160, 0.10);
+  --shadow-lift: 0 12px 26px -12px rgba(47, 6, 174, 0.65);
 }
 
 body {
-  /* Lavender light from the top left, a warm wash at the bottom right. */
+  /* As drawn: peach at the top left, lavender along the top, a warm rose
+   * glow at the bottom right, near-white in the middle. */
   background:
-    radial-gradient(1100px 700px at -10% -10%, #ebe5ff 0%, transparent 60%),
-    radial-gradient(900px 700px at 110% 110%, #ffe8dd 0%, transparent 55%),
+    radial-gradient(620px 520px at -4% -6%, #fde1dc 0%, rgba(253, 225, 220, 0) 72%),
+    radial-gradient(1200px 420px at 55% -12%, #efecfd 0%, rgba(239, 236, 253, 0) 70%),
+    radial-gradient(760px 460px at 104% 108%, #fcdfe2 0%, rgba(252, 223, 226, 0) 70%),
+    radial-gradient(520px 300px at 92% 112%, #fde3cf 0%, rgba(253, 227, 207, 0) 70%),
+    radial-gradient(700px 900px at -10% 70%, #eeedfd 0%, rgba(238, 237, 253, 0) 70%),
     var(--color-canvas);
   background-attachment: fixed;
   color: var(--color-ink);
   font-family: var(--font-body);
+  /* Medium, as drawn: Figtree reads light at 400 on the pale canvas. */
+  font-weight: 500;
+  letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -90,9 +102,33 @@ body {
   .card {
     background: var(--color-surface);
     border: 1px solid var(--color-line);
-    border-radius: 22px;
+    border-radius: 24px;
     box-shadow: var(--shadow-float);
   }
+}
+
+/* The owner's gradients, as drawn (§9 2026-11-06). */
+/* The active page: indigo to deep violet, lit along its top edge. */
+@utility bg-pill {
+  background:
+    linear-gradient(180deg, rgba(168, 120, 255, 0.42) 0%, rgba(168, 120, 255, 0) 48%),
+    linear-gradient(90deg, #4a3cf0 0%, #2a0bb6 58%, #3a0aa9 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 12px 24px -12px rgba(42, 11, 182, 0.75);
+}
+/* Amount at risk: night indigo deepening to electric violet at the corner. */
+@utility bg-hero {
+  background:
+    radial-gradient(70% 90% at 100% 100%, #4c18f4 0%, rgba(76, 24, 244, 0) 70%),
+    linear-gradient(135deg, #2e2a7d 0%, #1d0f73 48%, #2a0cae 100%);
+}
+/* The send button and the primary action. */
+@utility bg-violet {
+  background: linear-gradient(180deg, #7a1fe6 0%, #3802ae 100%);
+}
+/* Numbered steps: a lit violet orb. */
+@utility bg-orb {
+  background: radial-gradient(circle at 35% 28%, #b490ff 0%, #7b43f0 40%, #4511c2 100%);
+  box-shadow: 0 6px 14px -6px rgba(69, 17, 194, 0.7);
 }
 
 /* Hatches for data marks: the excess over an order total, and outcomes that

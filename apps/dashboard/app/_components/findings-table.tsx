@@ -51,6 +51,10 @@ export function groupOf(outcome: string): MerchantFilter {
  * so `/findings?outcome=collected_twice` can be linked. The merchant
  * filter is controlled by the panel, so the AgentPanel's outcome follows it.
  */
+
+/** The Overview's plain table, at the owner's sizes. */
+const SIMPLE_TH = "bg-[#f6f6fd] py-3.5 text-[16px] 2xl:text-[17px]";
+const SIMPLE_TD = "py-3 text-[16px] text-ink 2xl:text-[17px]";
 export function FindingsTable({
   scope,
   rows,
@@ -233,12 +237,12 @@ export function FindingsTable({
             <Table label={ws ? "Findings" : "Orders"} minWidth={ws ? 820 : 720} flush>
               <thead>
                 <tr>
-                  <Th>Outcome</Th>
-                  <Th>Order</Th>
-                  <Th>What happened</Th>
+                  <Th className={simple ? SIMPLE_TH + " pl-[34px]" : ""}>Outcome</Th>
+                  <Th className={simple ? SIMPLE_TH : ""}>Order</Th>
+                  <Th className={simple ? SIMPLE_TH : ""}>What happened</Th>
                   {!simple && <Th className="hidden w-28 lg:table-cell"><span className="sr-only">Order against what was taken</span></Th>}
-                  {showMerchant && <Th>Merchant</Th>}
-                  <Th className="text-right">{simple ? "Amount" : "At stake"}</Th>
+                  {showMerchant && <Th className={simple ? SIMPLE_TH : ""}>Merchant</Th>}
+                  <Th className={simple ? `${SIMPLE_TH} pr-[27px] text-right` : "text-right"}>{simple ? "Amount" : "At stake"}</Th>
                   {!simple && <Th className="w-12"><span className="sr-only">Open</span></Th>}
                 </tr>
               </thead>
@@ -247,29 +251,29 @@ export function FindingsTable({
                   const m = money(r);
                   return (
                     <tr key={`${r.merchantId}-${r.order}-${i}`} className="hover:bg-canvas/60">
-                      <Td>
+                      <Td className={simple ? SIMPLE_TD + " pl-[34px]" : ""}>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
-                          <Badge tone={OUTCOME_TONE[r.outcome]} symbol={simple ? undefined : OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
+                          <Badge tone={OUTCOME_TONE[r.outcome]} symbol={simple ? undefined : OUTCOME_MARK[r.outcome]} size={simple ? "lg" : "sm"}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
                           {fresh.has(rowKey(r)) && <Badge title="Not in the check before this one">New</Badge>}
                         </span>
                       </Td>
-                      <Td>
+                      <Td className={simple ? SIMPLE_TD : ""}>
                         <button
                           type="button"
                           ref={(el) => { deskButtons.current[i] = el; }}
                           onClick={() => setProof(i)}
                           aria-label={`Show the proof for order ${r.order}`}
                           className={simple
-                            ? "inline-flex min-h-11 items-center text-[15px] font-semibold text-accent underline underline-offset-4 hover:text-accent-2"
+                            ? "inline-flex min-h-11 items-center text-[16px] font-medium text-accent underline underline-offset-[5px] hover:text-accent-deep 2xl:text-[18px]"
                             : "inline-flex min-h-11 items-center font-mono text-[13px] underline underline-offset-4 decoration-line-strong hover:decoration-ink"}
                         >
                           {r.order}
                         </button>
                       </Td>
-                      <Td className="text-ink-soft">{what(r, formatMinor)}</Td>
+                      <Td className={simple ? SIMPLE_TD : "text-ink-soft"}>{what(r, formatMinor)}</Td>
                       {!simple && <Td className="hidden lg:table-cell"><MiniTrail r={r} /></Td>}
                       {showMerchant && (
-                        <Td>
+                        <Td className={simple ? SIMPLE_TD : ""}>
                           <Link
                             href={`/merchants/${encodeURIComponent(r.merchantId)}?tab=findings`}
                             className="inline-flex min-h-11 items-center whitespace-nowrap underline-offset-4 hover:underline"
@@ -278,10 +282,10 @@ export function FindingsTable({
                           </Link>
                         </Td>
                       )}
-                      <Td className="text-right">
+                      <Td className={simple ? `${SIMPLE_TD} pr-[27px] text-right` : "text-right"}>
                         {m ? (
                           <>
-                            <span className={`block font-bold tabular-nums${m.soft ? " text-ink-soft" : ""}${simple ? " text-[15px]" : ""}`}>{m.value}</span>
+                            <span className={`block font-bold tabular-nums${m.soft ? " text-ink-soft" : ""}${simple ? " text-[16px] 2xl:text-[18px]" : ""}`}>{m.value}</span>
                             {!simple && <span className="block text-xs text-ink-soft">{m.label}</span>}
                           </>
                         ) : (
