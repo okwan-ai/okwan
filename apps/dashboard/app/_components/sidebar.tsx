@@ -8,8 +8,8 @@ import { CommandPalette, openPalette } from "./command-palette";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
 import { IconAgent, IconAlert, IconClose, IconGear, IconHome, IconLock, IconMenu, IconPlug, IconSearch, IconSignOut, IconStore, IconTerminal } from "./ui/icons";
-import { PlanMeter } from "./usage/plan-meter";
-import { Wordmark } from "./ui/mark";
+import { planState } from "@/lib/usage-shape";
+import { SwooshWordmark } from "./ui/mark";
 
 export type MerchantLink = { id: string; name: string };
 
@@ -63,7 +63,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
   }, []);
 
   const nav = (
-    <nav aria-label="Main" className="flex flex-col gap-0.5 text-sm">
+    <nav aria-label="Main" className="flex flex-col gap-1.5 text-[15px]">
       <Item href="/overview" path={path} icon={<IconHome />}>Overview</Item>
       <Item
         href="/findings"
@@ -84,20 +84,20 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
         <Link
           href={`/merchants/${encodeURIComponent(current.id)}`}
           aria-current="page"
-          className="ml-7 flex min-h-11 items-center gap-2.5 rounded-lg bg-ink/[0.06] px-3 text-sm font-medium text-ink"
+          className="ml-9 flex min-h-11 items-center gap-2.5 rounded-xl bg-accent-soft px-3 text-sm font-semibold text-accent"
         >
           <Glyph d={results[current.id]} />
           <span className="min-w-0 flex-1 truncate">{current.name}</span>
         </Link>
       )}
-      <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Connect</p>
+      <p className="mt-7 mb-1.5 px-4 text-[13px] font-medium text-ink-muted">Connect</p>
       <Item href="/integrations" path={path} icon={<IconPlug />}>Integrations</Item>
       <Item href="/agents" path={path} icon={<IconAgent />}>Agents</Item>
       <a
         href={`${apiBase}/docs`}
         target="_blank"
         rel="noopener"
-        className="flex min-h-11 items-center gap-3 rounded-lg px-3 text-ink-soft hover:bg-ink/[0.04] hover:text-ink"
+        className="flex min-h-12 items-center gap-3.5 rounded-2xl px-4 font-medium text-ink hover:bg-accent-soft"
       >
         <span className="text-ink-soft"><IconTerminal /></span>
         <span className="flex-1">API reference</span>
@@ -106,7 +106,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
       </a>
       {operator && (
         <>
-          <p className="mt-6 mb-1 px-3 text-xs font-medium text-ink-soft">Run Okwan</p>
+          <p className="mt-7 mb-1.5 px-4 text-[13px] font-medium text-ink-muted">Run Okwan</p>
           <Item href="/ops" path={path} icon={<IconLock />}>Console</Item>
         </>
       )}
@@ -114,29 +114,23 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
   );
 
   const footer = (
-    <div className="space-y-3 border-t border-line pt-4 text-xs">
-      {plan ? (
-        <Link href="/settings?tab=plan" className="block rounded-lg hover:bg-ink/[0.04]">
-          <PlanMeter plan={plan} compact />
+    <div className="space-y-3">
+      <PlanCard plan={plan} />
+      {/* Phones: the account menu lives here; wide screens have the top bar. */}
+      <div className="space-y-1 text-sm min-[900px]:hidden">
+        <Link
+          href="/settings"
+          aria-current={path === "/settings" ? "page" : undefined}
+          className="flex min-h-11 items-center gap-3 rounded-xl px-3 hover:bg-accent-soft"
+        >
+          <span className="text-ink-soft"><IconGear /></span>
+          <span className="min-w-0">
+            <span className="block font-medium">Settings</span>
+            <span className="block truncate text-xs text-ink-soft" title={tenant}>{tenant}</span>
+          </span>
         </Link>
-      ) : (
-        <div>
-          <p className="font-medium text-ink">Plan &amp; usage</p>
-          <p className="text-ink-soft">Usage isn&apos;t available right now.</p>
-        </div>
-      )}
-      <Link
-        href="/settings"
-        aria-current={path === "/settings" ? "page" : undefined}
-        className={`flex min-h-11 items-center gap-3 rounded-lg px-2 text-sm hover:bg-ink/[0.04] ${path === "/settings" ? "bg-ink/[0.06] font-medium" : ""}`}
-      >
-        <span className="text-ink-soft"><IconGear /></span>
-        <span className="min-w-0">
-          <span className="block">Settings</span>
-          <span className="block truncate text-xs font-normal text-ink-soft" title={tenant}>{tenant}</span>
-        </span>
-      </Link>
-      <SignOutButton />
+        <SignOutButton />
+      </div>
     </div>
   );
 
@@ -145,7 +139,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
       <CommandPalette merchants={merchants} connectors={connectors} verdicts={verdicts} findings={findings} />
 
       {/* Narrow: a top bar with search and the menu button. */}
-      <header className="sticky top-0 z-40 border-b border-line bg-canvas/95 backdrop-blur min-[900px]:hidden">
+      <header className="sticky top-0 z-40 border-b border-line bg-white/85 backdrop-blur min-[900px]:hidden">
         <div className="flex items-center justify-between gap-1 px-2">
           <Logo />
           {current && <span className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{current.name}</span>}
@@ -184,30 +178,70 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
           aria-modal="true"
           aria-label="Menu"
           hidden={!open}
-          className="absolute inset-x-0 top-full flex h-[calc(100dvh-100%)] flex-col overflow-y-auto overscroll-contain border-t border-line bg-canvas px-3 py-4"
+          className="absolute inset-x-0 top-full flex h-[calc(100dvh-100%)] flex-col overflow-y-auto overscroll-contain border-t border-line bg-white px-3 py-4"
         >
           {nav}
           <div className="mt-auto pt-6">{footer}</div>
         </div>
       </header>
 
-      {/* Wide: the fixed sidebar. */}
-      <aside className="sticky top-0 hidden h-screen w-[236px] shrink-0 flex-col border-r border-line bg-surface px-3 py-4 min-[900px]:flex">
-        <div className="mb-3"><Logo /></div>
-        <button
-          type="button"
-          onClick={openPalette}
-          className="mb-4 flex min-h-11 items-center gap-2 rounded-lg border border-line bg-canvas px-3 text-left text-sm text-ink-soft hover:border-ink/40 hover:text-ink"
-        >
-          <IconSearch className="h-4 w-4" />
-          <span className="flex-1">Search</span>
-          <kbd className="rounded border border-line bg-surface px-1.5 font-mono text-[11px]">⌘K</kbd>
-        </button>
-        {nav}
-        <div className="flex-1" />
-        <div className="pt-3">{footer}</div>
+      {/* Wide: the sidebar, a white panel floating on the canvas. Search is
+          ⌘K, or the account menu in the top bar. */}
+      <aside className="sticky top-0 hidden h-screen w-[288px] shrink-0 p-5 pr-2 min-[900px]:flex">
+        <div className="flex w-full flex-col overflow-y-auto rounded-[32px] border border-white/80 bg-white/80 px-4 py-7 shadow-float backdrop-blur-xl">
+          <div className="mb-8 px-3"><Logo /></div>
+          {nav}
+          <div className="min-h-6 flex-1" />
+          {footer}
+        </div>
       </aside>
     </>
+  );
+}
+
+/** The month against the plan, and the one way up from Free. */
+function PlanCard({ plan }: { plan: Usage["plan"] | null }) {
+  if (!plan) {
+    return (
+      <div className="rounded-3xl border border-line bg-[linear-gradient(160deg,var(--color-accent-soft),#ffffff_70%)] p-4 text-sm">
+        <p className="font-semibold">Plan &amp; usage</p>
+        <p className="mt-1 text-xs text-ink-soft">Usage isn&apos;t available right now.</p>
+      </div>
+    );
+  }
+  const s = planState(plan);
+  const free = plan.name === "free";
+  const fill = s.state === "danger" ? "bg-danger" : "bg-[linear-gradient(90deg,var(--color-accent),var(--color-accent-2))]";
+  const line = plan.unmetered
+    ? `${plan.used.toLocaleString("en-US")} requests this month`
+    : `${plan.used.toLocaleString("en-US")} of ${plan.limit.toLocaleString("en-US")} this month`;
+  return (
+    <div className="rounded-3xl border border-line bg-[linear-gradient(160deg,var(--color-accent-soft),#ffffff_70%)] p-4">
+      <p className="text-[15px] font-bold capitalize">{plan.name} Plan</p>
+      {s.share !== null && (
+        <div
+          role="progressbar"
+          aria-label="Requests used this month"
+          aria-valuemin={0}
+          aria-valuemax={plan.limit}
+          aria-valuenow={Math.min(plan.used, plan.limit)}
+          aria-valuetext={s.text}
+          className="mt-3 h-2 overflow-hidden rounded-full bg-white shadow-[inset_0_0_0_1px_var(--color-line)]"
+        >
+          {/* A sliver stays visible at zero, so the bar reads as a bar. */}
+          <div className={`h-full rounded-full ${fill}`} style={{ width: `${Math.max(s.share * 100, 3)}%` }} />
+        </div>
+      )}
+      <p className={`mt-2 text-[13px] ${s.state === "danger" ? "font-semibold text-danger" : "text-ink-soft"}`}>
+        {s.state === "danger" ? "Limit reached this month" : line}
+      </p>
+      <Link
+        href="/settings?tab=plan"
+        className="mt-4 flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-white text-sm font-semibold text-accent shadow-[0_6px_18px_-10px_rgba(60,38,160,0.5)] hover:bg-accent-soft"
+      >
+        {free ? "Upgrade Plan" : "Manage plan"} <span aria-hidden>→</span>
+      </Link>
+    </div>
   );
 }
 
@@ -224,8 +258,8 @@ function Glyph({ d }: { d: RunDigest | undefined }) {
 
 function Logo() {
   return (
-    <Link href="/overview" prefetch={false} aria-label="Okwan, overview" className="flex min-h-11 items-center rounded-lg px-2">
-      <Wordmark />
+    <Link href="/overview" prefetch={false} aria-label="Okwan, overview" className="inline-flex min-h-11 items-center rounded-lg px-1">
+      <SwooshWordmark size={28} />
     </Link>
   );
 }
@@ -244,11 +278,13 @@ function Item({ href, path, icon, count, children }: {
       // Looks active on a sub-page (/integrations/paypal) but names the page
       // only on its own URL; the sub-page's breadcrumb carries aria-current.
       aria-current={path === href ? "page" : undefined}
-      className={`flex min-h-11 items-center gap-3 rounded-lg px-3 ${
-        active ? "bg-ink/[0.06] font-medium text-ink" : "text-ink-soft hover:bg-ink/[0.04] hover:text-ink"
+      className={`flex min-h-12 items-center gap-3.5 rounded-2xl px-4 font-medium ${
+        active
+          ? "bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-2))] text-white shadow-lift"
+          : "text-ink hover:bg-accent-soft"
       }`}
     >
-      <span className={active ? "text-ink" : "text-ink-soft"}>{icon}</span>
+      <span className={active ? "text-white" : "text-ink-soft"}>{icon}</span>
       <span className="flex-1">{children}</span>
       {count}
     </Link>
@@ -258,8 +294,8 @@ function Item({ href, path, icon, count, children }: {
 function Count({ n, text, label, strong = false }: { n?: number; text?: string; label: string; strong?: boolean }) {
   return (
     <span
-      className={`min-w-6 rounded-full px-1.5 text-center text-xs tabular-nums ${
-        strong ? "bg-ink font-medium text-canvas" : "bg-ink/[0.06] text-ink-soft"
+      className={`inline-flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-[13px] font-bold tabular-nums ${
+        strong ? "bg-signal text-ink" : "bg-accent-soft text-accent"
       }`}
     >
       {text ?? n}

@@ -97,7 +97,7 @@ export function McpClients({ apiBase, server, initial }: { apiBase: string; serv
           <ol className="space-y-2.5 text-sm">
             {client.steps.map((s, i) => (
               <li key={i} className="flex gap-3">
-                <span aria-hidden className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-ink text-[11px] font-semibold text-canvas tabular-nums">{i + 1}</span>
+                <span aria-hidden className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-2))] text-[11px] font-semibold text-white tabular-nums">{i + 1}</span>
                 <span className="min-w-0 break-words"><Rich text={s} /></span>
               </li>
             ))}

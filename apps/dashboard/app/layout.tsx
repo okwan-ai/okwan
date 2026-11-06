@@ -8,7 +8,8 @@ import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import { IdleGuard } from "./_components/idle-guard";
 import { SupportPanel } from "./_components/support-panel";
-import { Wordmark } from "./_components/ui/mark";
+import { TopBar } from "./_components/top-bar";
+import { SwooshWordmark } from "./_components/ui/mark";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -63,7 +64,13 @@ export default async function RootLayout({
               operator={op !== null}
             />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
-              <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 sm:py-10 xl:px-12">{children}</div>
+              <div className="mx-auto max-w-[1440px] px-4 pt-6 pb-12 sm:px-8 min-[900px]:pt-0 xl:px-10">
+                <TopBar
+                  account={tree.self.name}
+                  openFindings={Object.values(verdicts).filter((d) => d.ok).reduce((n, d) => n + d.open, 0)}
+                />
+                {children}
+              </div>
             </main>
             <SupportPanel />
             <IdleGuard />
@@ -79,10 +86,10 @@ export default async function RootLayout({
 function SignedOut({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <header className="border-b border-line bg-surface">
+      <header className="border-b border-white/70 bg-white/70 backdrop-blur">
         <div className="mx-auto flex max-w-[1120px] items-center px-4 py-3 sm:px-8">
           <a href="https://okwan.ai" className="flex min-h-11 items-center">
-            <Wordmark />
+            <SwooshWordmark size={26} />
           </a>
         </div>
       </header>

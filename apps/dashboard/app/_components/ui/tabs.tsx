@@ -8,7 +8,7 @@ export type TabItem = { href: string; label: string; short?: string; active: boo
 
 const BADGE_TONE: Record<TabBadge["tone"], string> = {
   neutral: "bg-ink/5 text-ink-soft",
-  strong: "bg-ink font-medium text-canvas",
+  strong: "bg-signal font-semibold text-ink",
   ok: "bg-ok-soft text-ok",
 };
 

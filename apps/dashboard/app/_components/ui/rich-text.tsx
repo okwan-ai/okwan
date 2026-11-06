@@ -2,7 +2,8 @@ import { Fragment, type ReactNode } from "react";
 
 /** The assistant writes light Markdown. Rendered from text, never as HTML:
  *  paragraphs, "- " lists, **bold**, `code` and links. */
-export function Rich({ text }: { text: string }) {
+/** `numbered`: ordered steps drawn as purple numbered circles (Support). */
+export function Rich({ text, numbered = false }: { text: string; numbered?: boolean }) {
   // Line by line, so a list right under a heading ("**How to fix it:**"
   // then "- ...") is still a list: runs of list lines become one list, and
   // runs of other lines one paragraph.
@@ -34,8 +35,17 @@ export function Rich({ text }: { text: string }) {
         }
         if (g.kind === "ol") {
           return (
-            <ol key={i} className="list-decimal space-y-1 pl-5">
-              {g.rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*\d+\. /, "")} /></li>)}
+            <ol key={i} className={numbered ? "space-y-3" : "list-decimal space-y-1 pl-5"}>
+              {g.rows.map((r, j) => (
+                <li key={j} className={numbered ? "flex gap-3" : undefined}>
+                  {numbered && (
+                    <span aria-hidden className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-2))] text-[13px] font-bold text-white shadow-lift">
+                      {j + 1}
+                    </span>
+                  )}
+                  <span className={numbered ? "min-w-0" : undefined}><Inline text={r.replace(/^\s*\d+\. /, "")} /></span>
+                </li>
+              ))}
             </ol>
           );
         }

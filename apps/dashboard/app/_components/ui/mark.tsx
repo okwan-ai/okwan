@@ -22,3 +22,17 @@ export function Wordmark({ light = false, size = 22 }: { light?: boolean; size?:
     </span>
   );
 }
+
+/** The dashboard's wordmark (§9 2026-11-06): "Okwan" over a yellow swoosh,
+ *  the path between two systems. The swoosh is decoration; the word names
+ *  the product. */
+export function SwooshWordmark({ size = 30 }: { size?: number }) {
+  return (
+    <span className="inline-flex flex-col items-start leading-none">
+      <span className="font-bold tracking-[-0.03em] text-ink" style={{ fontSize: size }}>Okwan</span>
+      <svg aria-hidden="true" viewBox="0 0 120 16" width={size * 3.1} height={size * 0.42} className="-mt-0.5 ml-[6%]">
+        <path d="M4 10 C 32 2, 70 2, 96 6 S 114 12, 116 10" fill="none" stroke="#FFC61A" strokeWidth="5" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
+}

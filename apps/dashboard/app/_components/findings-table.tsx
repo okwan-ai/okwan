@@ -63,6 +63,7 @@ export function FindingsTable({
   newKeys = [],
   exportName,
   partial = false,
+  simple = false,
 }: {
   scope: "workspace" | "merchant";
   rows: AttentionRow[];
@@ -75,9 +76,13 @@ export function FindingsTable({
   newKeys?: string[];
   exportName?: string;
   partial?: boolean;
+  /** The Overview's short list: outcome, order, what happened, amount, and
+   *  the merchant only when there is more than one. Rows still open. */
+  simple?: boolean;
 }) {
   const params = useSearchParams();
   const ws = scope === "workspace";
+  const showMerchant = ws && (!simple || new Set(rows.map((r) => r.merchantId)).size > 1);
 
   // Workspace: ?outcome, ?merchant and ?q, synced both ways.
   const [outcome, setOutcome] = useState(() => (ws ? valid(params.get("outcome")) : ""));
@@ -231,10 +236,10 @@ export function FindingsTable({
                   <Th>Outcome</Th>
                   <Th>Order</Th>
                   <Th>What happened</Th>
-                  <Th className="hidden w-28 lg:table-cell"><span className="sr-only">Order against what was taken</span></Th>
-                  {ws && <Th>Merchant</Th>}
-                  <Th className="text-right">At stake</Th>
-                  <Th className="w-12"><span className="sr-only">Open</span></Th>
+                  {!simple && <Th className="hidden w-28 lg:table-cell"><span className="sr-only">Order against what was taken</span></Th>}
+                  {showMerchant && <Th>Merchant</Th>}
+                  <Th className="text-right">{simple ? "Amount" : "At stake"}</Th>
+                  {!simple && <Th className="w-12"><span className="sr-only">Open</span></Th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -244,7 +249,7 @@ export function FindingsTable({
                     <tr key={`${r.merchantId}-${r.order}-${i}`} className="hover:bg-canvas/60">
                       <Td>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
-                          <Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
+                          <Badge tone={OUTCOME_TONE[r.outcome]} symbol={simple ? undefined : OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>
                           {fresh.has(rowKey(r)) && <Badge title="Not in the check before this one">New</Badge>}
                         </span>
                       </Td>
@@ -254,14 +259,16 @@ export function FindingsTable({
                           ref={(el) => { deskButtons.current[i] = el; }}
                           onClick={() => setProof(i)}
                           aria-label={`Show the proof for order ${r.order}`}
-                          className="inline-flex min-h-11 items-center font-mono text-[13px] underline underline-offset-4 decoration-line-strong hover:decoration-ink"
+                          className={simple
+                            ? "inline-flex min-h-11 items-center text-[15px] font-semibold text-accent underline underline-offset-4 hover:text-accent-2"
+                            : "inline-flex min-h-11 items-center font-mono text-[13px] underline underline-offset-4 decoration-line-strong hover:decoration-ink"}
                         >
                           {r.order}
                         </button>
                       </Td>
                       <Td className="text-ink-soft">{what(r, formatMinor)}</Td>
-                      <Td className="hidden lg:table-cell"><MiniTrail r={r} /></Td>
-                      {ws && (
+                      {!simple && <Td className="hidden lg:table-cell"><MiniTrail r={r} /></Td>}
+                      {showMerchant && (
                         <Td>
                           <Link
                             href={`/merchants/${encodeURIComponent(r.merchantId)}?tab=findings`}
@@ -274,14 +281,14 @@ export function FindingsTable({
                       <Td className="text-right">
                         {m ? (
                           <>
-                            <span className={`block font-semibold tabular-nums${m.soft ? " text-ink-soft" : ""}`}>{m.value}</span>
-                            <span className="block text-xs text-ink-soft">{m.label}</span>
+                            <span className={`block font-bold tabular-nums${m.soft ? " text-ink-soft" : ""}${simple ? " text-[15px]" : ""}`}>{m.value}</span>
+                            {!simple && <span className="block text-xs text-ink-soft">{m.label}</span>}
                           </>
                         ) : (
                           <span className="text-ink-soft">—</span>
                         )}
                       </Td>
-                      <Td className="py-1 pr-2">
+                      {!simple && <Td className="py-1 pr-2">
                         <button
                           type="button"
                           onClick={() => setProof(i)}
@@ -290,7 +297,7 @@ export function FindingsTable({
                         >
                           <IconChevron />
                         </button>
-                      </Td>
+                      </Td>}
                     </tr>
                   );
                 })}
@@ -316,7 +323,7 @@ export function FindingsTable({
                   key={`${r.merchantId}-${r.order}-${i}`}
                   onClick={() => setProof(i)}
                   buttonRef={(el) => { phoneButtons.current[i] = el; }}
-                  title={<Badge tone={OUTCOME_TONE[r.outcome]} symbol={OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>}
+                  title={<Badge tone={OUTCOME_TONE[r.outcome]} symbol={simple ? undefined : OUTCOME_MARK[r.outcome]}>{OUTCOME_LABEL[r.outcome] ?? r.outcome}</Badge>}
                   money={m ?? undefined}
                   sentence={<><span className="font-mono text-[13px]">{r.order}</span> · {what(r, formatMinor)}</>}
                   meta={ws ? r.merchantName : fresh.has(rowKey(r)) ? <Badge title="Not in the check before this one">New</Badge> : undefined}

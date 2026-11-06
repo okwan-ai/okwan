@@ -5,13 +5,13 @@ import Link from "next/link";
 export type SegmentItem = { key: string; label: string; count?: number; glyph?: string; href?: string };
 
 const GROUP = {
-  light: "inline-flex shrink-0 rounded-lg border border-line bg-surface p-0.5",
+  light: "inline-flex shrink-0 rounded-2xl border border-line bg-surface p-1 shadow-float",
   night: "inline-flex shrink-0 rounded-lg bg-canvas/10 p-0.5",
 } as const;
 
-const ITEM_BASE = "inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium";
+const ITEM_BASE = "inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-xl px-3 text-sm font-medium";
 const ITEM = {
-  light: `${ITEM_BASE} text-ink-soft hover:text-ink aria-pressed:bg-ink aria-pressed:text-canvas aria-[current=page]:bg-ink aria-[current=page]:text-canvas`,
+  light: `${ITEM_BASE} text-ink-soft hover:text-ink aria-pressed:bg-accent aria-pressed:font-semibold aria-pressed:text-white aria-[current=page]:bg-accent aria-[current=page]:font-semibold aria-[current=page]:text-white`,
   night: `${ITEM_BASE} text-canvas/80 hover:text-canvas aria-pressed:bg-canvas aria-pressed:text-ink aria-[current=page]:bg-canvas aria-[current=page]:text-ink focus-visible:outline-canvas`,
 } as const;
 
