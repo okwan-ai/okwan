@@ -3,7 +3,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { SupportReply } from "../api/support/route";
 import { useDialog } from "./ui/dialog";
-import { IconClose, IconHelp, IconPaperPlane } from "./ui/icons";
+import { IconClose, IconPaperPlane } from "./ui/icons";
 import { Rich } from "./ui/rich-text";
 
 /**
@@ -24,6 +24,11 @@ const STARTERS = [
   "Why did I get a 402?",
 ];
 
+/** Opens the panel from anywhere: the top bar's Ask Okwan, the phone bar. */
+export function openSupport() {
+  window.dispatchEvent(new Event("okwan:support"));
+}
+
 /** `topBar`: from 2xl the right column holds the account bar above the
  *  panel, as in the owner's design; below that the page has it. */
 export function SupportPanel({ topBar }: { topBar?: ReactNode }) {
@@ -38,6 +43,12 @@ export function SupportPanel({ topBar }: { topBar?: ReactNode }) {
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [lines, busy]);
+
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener("okwan:support", onOpen);
+    return () => window.removeEventListener("okwan:support", onOpen);
+  }, []);
 
   async function send(text: string) {
     const message = text.trim();
@@ -91,16 +102,6 @@ export function SupportPanel({ topBar }: { topBar?: ReactNode }) {
 
   return (
     <>
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="fixed right-4 bottom-4 z-40 inline-flex min-h-12 items-center gap-2 rounded-full bg-violet px-5 text-[15px] font-semibold text-white shadow-lift hover:brightness-110 sm:right-6 sm:bottom-6 2xl:hidden"
-        >
-          <IconHelp />
-          Ask Okwan
-        </button>
-      )}
       {/* Below 2xl: a slide-over opened by the button. From 2xl: docked
           beside the page, always there, as in the owner's design. */}
       <div className={`${open ? "fixed inset-0 z-50" : "hidden"} 2xl:static 2xl:z-auto 2xl:mr-4 2xl:ml-7 2xl:block 2xl:w-[405px] 2xl:shrink-0`}>

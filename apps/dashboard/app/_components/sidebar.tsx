@@ -5,9 +5,10 @@ import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type RunDigest, type SeenFinding, verdictOf } from "@/lib/finding";
 import { CommandPalette, openPalette } from "./command-palette";
+import { openSupport } from "./support-panel";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
-import { IconArrowRight, IconClose, IconGear, IconLock, IconMenu, IconSearch, IconSignOut, NavAgents, NavApi, NavFindings, NavHome, NavIntegrations, NavMerchants } from "./ui/icons";
+import { IconArrowRight, IconClose, IconGear, IconHelp, IconLock, IconMenu, IconSearch, IconSignOut, NavAgents, NavApi, NavFindings, NavHome, NavIntegrations, NavMerchants } from "./ui/icons";
 import { planState } from "@/lib/usage-shape";
 import { OkwanLogo } from "./ui/mark";
 
@@ -146,6 +147,14 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
           <Logo />
           {current && <span className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{current.name}</span>}
           <div className="flex shrink-0 items-center">
+            <button
+              type="button"
+              aria-label="Ask Okwan"
+              onClick={openSupport}
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-accent hover:bg-accent-soft"
+            >
+              <IconHelp />
+            </button>
             <button
               type="button"
               aria-label="Search"

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { openPalette } from "./command-palette";
-import { IconBell } from "./ui/icons";
+import { openSupport } from "./support-panel";
+import { IconBell, IconHelp } from "./ui/icons";
 
 /**
  * The wide-screen top bar: findings and the account. The bell is not a
@@ -27,8 +28,24 @@ export function TopBar({ account, openFindings, docked = false }: { account: str
   }, [open]);
 
   return (
-    <div className={docked ? "flex justify-end pr-5" : "hidden justify-end pt-5 pb-5 min-[900px]:flex 2xl:hidden"}>
+    // Above the page, so the account menu opens over everything below it.
+    <div className={docked ? "relative z-40 flex justify-end pr-5" : "relative z-40 hidden justify-end pt-5 pb-5 min-[900px]:flex 2xl:hidden"}>
       <div ref={box} className="relative flex h-[68px] items-center rounded-full border border-white/90 bg-white/85 pr-4 pl-4 shadow-float backdrop-blur-xl">
+        {/* Below 2xl Support is not docked: it opens from here, never from a
+            button floating over the page. */}
+        {!docked && (
+          <>
+            <button
+              type="button"
+              onClick={openSupport}
+              className="inline-flex min-h-12 items-center gap-2.5 rounded-full px-4 text-[16px] font-semibold text-accent hover:bg-accent-soft"
+            >
+              <IconHelp />
+              Ask Okwan
+            </button>
+            <span aria-hidden className="mx-3 h-10 w-px bg-line" />
+          </>
+        )}
         <Link
           href="/findings"
           aria-label={openFindings > 0 ? `Findings: ${openFindings} need a look` : "Findings"}
