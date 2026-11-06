@@ -277,9 +277,9 @@ function Hero() {
             <span className="whitespace-nowrap">disagree<SignalDot /></span>
           </h1>
           <p className="mt-7 max-w-[560px] text-[18px] leading-[1.6] text-ink-soft">
-            Your POS, your processors, your order ledger and your bank each tell a different story
-            about the same money. Okwan matches them record by record and says what agrees, what
-            differs and why, as an engine your product embeds.
+            Your order ledger and your payment processors each tell a different story about the same
+            money. Okwan matches them record by record and says what agrees, what differs and why, as
+            an engine your product embeds. POS batches and bank deposits are next.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             <a
@@ -296,7 +296,7 @@ function Hero() {
             </a>
           </div>
           <ul className="mt-10 flex flex-wrap gap-x-7 gap-y-2.5 text-[14px] text-ink-soft">
-            {["Read-only by construction", "Credentials sealed per tenant", "Open core, Apache-2.0"].map((t) => (
+            {["Read-only by construction", "Credentials sealed per tenant", "Open source, Apache-2.0"].map((t) => (
               <li key={t} className="flex items-center gap-2 whitespace-nowrap">
                 <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
                   <path d="M3 8.5l3 3 7-7" stroke="#0A0A0A" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
@@ -352,14 +352,14 @@ function SectionHead({ eyebrow, title, intro, light = false }: { eyebrow: string
 }
 
 const RETAIL: { title: string; body: string; status: "live" | "next"; detail?: string }[] = [
-  { status: "live", title: "Orders against every payment rail",
+  { status: "live", title: "Orders against Stripe and PayPal",
     body: "Each order traced to the rail that collected it, across Stripe and PayPal at once: paid once, charged twice, split across rails, or not paid at all.",
     detail: "GET /v1/reconciliations/across/rails" },
   { status: "live", title: "Fees and refunds, explained",
-    body: "When a processor fee or a refund accounts for a gap exactly, it is named as the cause, so the list you chase holds only real breaks.",
+    body: "When a Stripe or PayPal fee, or a PayPal refund, accounts for a gap exactly, it is named as the cause, so the list you chase holds only real breaks.",
     detail: "explains=[rail_fee, refund]" },
-  { status: "live", title: "Your own database, against any rail",
-    body: "Point a declaration at a query over your own Postgres and reconcile it against a processor like any other system.",
+  { status: "live", title: "Your own payments table, against Shopify orders",
+    body: "Keep your payments in a recon_payments table in your own Postgres, and Okwan reconciles them against your Shopify orders, with refunds explained.",
     detail: 'ResourceRef(connector="postgres", resource="sql")' },
   { status: "next", title: "POS batches against processor deposits",
     body: "Card batches closed at the register against what the processor actually deposited, by day and by location." },
@@ -572,7 +572,7 @@ function Developers() {
 
 const TRUST = [
   { title: "Read-only by construction", body: "A reconciliation over a write operation cannot be declared. Okwan reads; it never moves money." },
-  { title: "Credentials sealed per tenant", body: "Each stored credential has its own encryption key and is bound to its tenant, connector and field. None travels in a request." },
+  { title: "Credentials sealed per tenant", body: "Each stored credential has its own encryption key and is bound to its tenant, connector and field. None is ever shown again or returned by the API." },
   { title: "Keys shown once", body: "API keys are stored as hashes. A lost key is replaced, never read back." },
   { title: "Isolated by default", body: "Another account's tenant answers 404, not 403, so the API cannot reveal who else is a customer." },
 ];

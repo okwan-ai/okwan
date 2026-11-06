@@ -1,5 +1,5 @@
 # OKWAN AI — Master Project File
-**Version 1.42 · November 6, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
+**Version 1.43 · November 6, 2026 · Owner: Felix, Co-Founder/CTO — Global Tech Startup LLC (US)**
 
 > Single source of truth for the Okwan AI platform. Every strategic, technical, brand, and immigration-related decision lives here. Update the version and changelog with every major decision.
 
@@ -436,7 +436,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 27. ~~Privacy policy and terms before signup opens~~ — **published 2026-11-04 (v1.34):** `okwan.ai/privacy` and `okwan.ai/terms`, written by the owner without counsel (§9 2026-11-04) from the audit pack's facts, linked from the site footer and the signup form. Account deletion on request is `python -m okwan_vault tenant delete`. Signup can open: set `OKWAN_SIGNUP_OPEN=true` on Render
 28. **US retail connectors, chosen with RSPA members.** Which POS their merchants run decides the first; each is probed live against the §3.5 criterion (a list operation over the records being reconciled) before any code
     - **Tier 1 plan (§9 2026-11-06).** Engine first: E1 group matching (many-to-one, one-to-many, bounded, ambiguous when two groupings fit), E2 settlement-lag windows (business days, US bank holidays, one direction), E3 combined explanations (fee rules per processor), E4 an evidence trail on every verdict. Then, **held for demand and dealer sample files**: the importer (CSV, XLSX, OFX; upload and saved mapping; no SFTP or AI mapping in v1), the `files` connector with three canonical Resources, the dashboard screens, bank deposits as importer layouts (Plaid later). **Datacap: held** until portal access arrives and the owner confirms NDA coverage; then a live §3.5 probe for list operations over transactions and batches before any code. Owner actions: confirm demand with RSPA members; collect one anonymised export per processor (Fiserv, TSYS, Worldpay, Heartland/Global) and per major bank
-    - **Site copy (§9 2026-11-06).** Corrections proposed for the sentences that overstate what is live ("every payment rail", "any database against any rail", the hero's POS and bank); awaiting the owner's approval before publishing
+    - ~~Site copy~~ — **published 2026-11-06 (v1.43), the owner's approval.** Six sentences that overstated what is live, corrected: the hero names the order ledger and processors (POS and bank deposits "next"); "Orders against Stripe and PayPal"; fees explained on Stripe and PayPal, refunds on PayPal; "Your own payments table, against Shopify orders"; a credential "is never shown again or returned by the API" (it does travel to the provider on each read); "Open source, Apache-2.0". The SQL-view claims became true with v1.40 and needed no change
 
 **Before the first paying customer** *(added v1.25)*
 29. ~~Deploy the query sandbox, then check and rotate~~ — **done 2026-11-04 (v1.26).** Deployed: the new security headers answer on `api.okwan.ai`, and the store started on Neon, which it refuses to do without the restricted role and row-level security. **The hole was never used:** the usage counters hold no query request, on REST or MCP, from any tenant (checked with asyncpg in the Codespace, which has no `psql`). Nothing to rotate for this incident. The Neon password that transited chat in August (§11) was rotated long before this, the owner confirmed on 2026-11-04, so no rotation is outstanding
@@ -471,6 +471,7 @@ The fourth (2026-08-31) is the first recorded over the **hosted multi-tenant MCP
 ---
 
 *Changelog:*
+*v1.43 — Site copy corrected where it overstated what is live (§10 item 28), approved by the owner.*
 *v1.42 — Engine E3 and E4 (§9 2026-11-06): explanations over several fields and combined causes; evidence on every verdict through REST, MCP, the SQL view, the fold and stored runs.*
 *v1.41 — Engine E1 and E2 (§9 2026-11-06): `GroupRef`, `GroupSum` and `SettlementLag` with a computed Federal Reserve calendar; additive, shipped declarations unchanged.*
 *v1.40 — Tier 1 plan approved and sequenced, importer and Datacap held (§9 2026-11-06). Reconciliations are SQL tables (`recon.*`) on `POST /v1/query` and `okwan_query`, run live as the caller and stored with surface `sql`.*
