@@ -236,7 +236,7 @@ export function ranAgo(at: number | null, now = Date.now()): string {
 }
 
 /** How a stored run reads in a list: "dashboard · 2 days ago". */
-export const SURFACE_LABEL: Record<string, string> = { dashboard: "Dashboard", rest: "REST", mcp: "Agent (MCP)" };
+export const SURFACE_LABEL: Record<string, string> = { dashboard: "Dashboard", rest: "REST", mcp: "Agent (MCP)", sql: "SQL" };
 
 /** The identity of a finding across two runs of the same merchant. */
 export function rowKey(r: { outcome: string; order: string }): string {

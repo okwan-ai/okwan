@@ -127,6 +127,10 @@ No route can refund, charge or move money. {write_line}
 verdict per order: {outcomes}. Filter with `outcome`; page with `limit` (up to {MAX_ROWS:,}) and the `cursor`
 from the previous page. Every run is saved, and reading saved runs under `/v1/tenants/{{id}}/runs` is free.
 
+Each reconciliation is also a SQL table: `recon.shopify_stripe`, `recon.shopify_paypal` and, for the check,
+`recon.across_rails`. Naming one in `POST /v1/query` (or the MCP tool `okwan_query`) runs it live with the same
+result as its REST route, so its verdicts join with any other table in one statement.
+
 ## Requests and plans
 
 A successful call that reads a provider (a connector route, a SQL statement, a check) counts as one request

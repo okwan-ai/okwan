@@ -12,7 +12,8 @@ from ..across import AcrossRails, AcrossResult
 from ..declaration import Reconciliation
 from ..engine import ReconResult
 
-_COLUMNS = (
+#: A reconciliation view's columns; the SQL catalog states these same ones.
+COLUMNS = _COLUMNS = (
     ("status", "VARCHAR"),
     ("rule", "VARCHAR"),
     ("confidence", "DOUBLE"),
@@ -57,7 +58,8 @@ def materialize_view(con: Any, spec: Reconciliation, result: ReconResult) -> str
     return spec.view_name
 
 
-_ACROSS_COLUMNS = (
+#: An across-rails view's columns, one row per order.
+ACROSS_COLUMNS = _ACROSS_COLUMNS = (
     ("outcome", "VARCHAR"),
     ("order_record", "JSON"),
     ("order_total_minor", "BIGINT"),

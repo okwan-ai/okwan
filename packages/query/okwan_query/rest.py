@@ -26,6 +26,17 @@ async def _tenant_resolver(tenant):
     return await resolver_for(get_store(), tenant.id)
 
 
+def sql_run_recorder(tenant, resolver):
+    """Store a reconciliation a query ran, like any other run (surface
+    `sql`); reading `recon.*` is running it."""
+    from okwan_api.runs import record_run
+
+    async def on_run(spec, started, *, result=None, error=None) -> None:
+        await record_run(tenant, spec, "sql", started, result=result, error=error, resolver=resolver)
+
+    return on_run
+
+
 def build_router() -> APIRouter:
     from okwan_api.auth import check_quota, current_tenant, meter
 
@@ -39,8 +50,9 @@ def build_router() -> APIRouter:
     async def run_query(
         body: QueryIn, tenant=Depends(check_quota)
     ) -> dict[str, Any]:
+        resolver = await _tenant_resolver(tenant)
         session = QuerySession(
-            resolver=await _tenant_resolver(tenant), max_records=body.limit
+            resolver=resolver, max_records=body.limit, on_run=sql_run_recorder(tenant, resolver)
         )
         try:
             result = await session.query(body.sql)

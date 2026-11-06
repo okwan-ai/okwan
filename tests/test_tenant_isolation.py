@@ -488,6 +488,7 @@ HTTP_SURFACES = [
     ("POST", "/v1/shopify/orders/list", {}),
     ("POST", "/v1/paypal/transactions/list", {}),
     ("POST", "/v1/query", {"sql": "SELECT * FROM stripe.charges"}),
+    ("POST", "/v1/query", {"sql": "SELECT * FROM recon.across_rails"}),
     ("POST", "/v1/query", {"sql": "SELECT o.name, c.id FROM shopify.orders o "
                                   "JOIN stripe.charges c ON c.order_ref = o.name"}),
     ("GET", "/v1/reconciliations/shopify_stripe", None),
@@ -551,6 +552,8 @@ def _tool(name: str):
 
 MCP_CALLS = [
     ("okwan_query", {"sql": "SELECT * FROM stripe.charges"}),
+    # A reconciliation read as a SQL table runs as the caller too.
+    ("okwan_query", {"sql": "SELECT * FROM recon.across_rails"}),
     ("okwan_reconcile", {"name": "shopify_stripe"}),
     ("okwan_reconcile", {"name": "rails"}),
 ]
