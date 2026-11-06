@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import duckdb
@@ -22,7 +24,7 @@ from okwan_core import CredentialError
 from okwan_recon.declaration import ResourceRef
 from okwan_recon.fetch import CredentialResolver, env_credentials, fetch_rows
 
-from .catalog import Table, catalog, missing_credentials
+from .catalog import RECON, Table, catalog, missing_credentials, recon_spec
 from .guard import check as check_statement
 
 #: schema.table references in a SQL string. Deliberately loose — a name
@@ -54,10 +56,15 @@ class QuerySession:
         self,
         resolver: CredentialResolver = env_credentials,
         max_records: int = DEFAULT_LIMIT,
+        on_run: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._con = duckdb.connect(":memory:", config=SANDBOX)
         self._resolver = resolver
         self._max_records = max_records
+        #: Called with (spec, started, result=..., error=...) after a
+        #: `recon.*` table runs, so the surface stores the run like any
+        #: other (§3.4, "every run is stored").
+        self._on_run = on_run
         self._loaded: set[str] = set()
         self._catalog = {t.qualified: t for t in catalog()}
 
@@ -102,6 +109,11 @@ class QuerySession:
                 "not configured in this deployment"
             )
 
+        if table.connector == RECON:
+            count = await self._run_reconciliation(table)
+            self._loaded.add(table.qualified)
+            return count
+
         connector = "postgres" if table.connector == "rail" else table.connector
         resource = "sql" if table.connector == "rail" else table.resource
 
@@ -127,6 +139,34 @@ class QuerySession:
             )
         self._loaded.add(table.qualified)
         return len(rows)
+
+    async def _run_reconciliation(self, table: Table) -> int:
+        """Run the declaration as this session's caller, at its own record
+        caps (so SQL and REST give the same verdicts), and materialise its
+        view. The query's `limit` caps connector tables, not a run."""
+        from okwan_recon.across import AcrossRails, run_across
+        from okwan_recon.emitters.duckdb_view import (
+            materialize_across_view,
+            materialize_view,
+        )
+        from okwan_recon.runner import run
+
+        spec = recon_spec(table)
+        started = datetime.now(UTC)
+        try:
+            if isinstance(spec, AcrossRails):
+                result = await run_across(spec, self._resolver)
+                materialize_across_view(self._con, spec, result)
+            else:
+                result = await run(spec, self._resolver)
+                materialize_view(self._con, spec, result)
+        except Exception as exc:
+            if self._on_run is not None:
+                await self._on_run(spec, started, error=exc)
+            raise
+        if self._on_run is not None:
+            await self._on_run(spec, started, result=result)
+        return len(result.rows())
 
     async def query(self, sql: str) -> dict[str, Any]:
         """Load whatever the SQL references, then execute it.

@@ -293,8 +293,10 @@ def build_server(max_records: int = DEFAULT_LIMIT):
 
         Tables are `connector.resource` — call okwan_describe_tables first
         and use only tables marked queryable. Referenced tables are
-        fetched live; unreferenced ones are not called at all. SELECT and
-        WITH only.
+        fetched live; unreferenced ones are not called at all. Each
+        reconciliation is a table too, `recon.<name>` (or
+        `recon.across_<name>` for a fold), run live when a query names it,
+        so its verdicts join with anything else. SELECT and WITH only.
         """
         try:
             tenant, resolver = await _caller(ctx)
@@ -303,7 +305,12 @@ def build_server(max_records: int = DEFAULT_LIMIT):
         if (limited := await _over_quota(tenant)) is not None:
             return {"error": limited, "rows": [], "row_count": 0}
 
-        session = QuerySession(resolver=resolver, max_records=min(limit, max_records))
+        from .rest import sql_run_recorder
+
+        session = QuerySession(
+            resolver=resolver, max_records=min(limit, max_records),
+            on_run=sql_run_recorder(tenant, resolver),
+        )
         try:
             result = await session.query(sql)
             from okwan_api.auth import meter

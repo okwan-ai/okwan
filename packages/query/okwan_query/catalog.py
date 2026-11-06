@@ -102,9 +102,49 @@ def declare_sql_table(
     return table
 
 
+#: The schema reconciliation views live in. Never a connector name.
+RECON = "recon"
+
+
+def recon_tables() -> list[Table]:
+    """Every registered reconciliation as a SQL table, from the same
+    declaration as its REST route and MCP tool (§3, the one-definition
+    rule): `recon.<name>` for a pair, `recon.across_<name>` for a fold.
+    Querying one runs it live, as the caller, like any connector table."""
+    from okwan_recon.emitters.duckdb_view import ACROSS_COLUMNS, COLUMNS
+    from okwan_recon.registry import all_across, all_reconciliations
+
+    out = [
+        Table(connector=RECON, resource=spec.view_name.partition(".")[2], operation="reconcile",
+              model=type(spec.name, (), {}), columns=COLUMNS, params={"name": spec.name})
+        for spec in all_reconciliations()
+    ]
+    out += [
+        Table(connector=RECON, resource=spec.view_name.partition(".")[2], operation="across",
+              model=type(spec.name, (), {}), columns=ACROSS_COLUMNS, params={"name": spec.name})
+        for spec in all_across()
+    ]
+    return out
+
+
+def recon_spec(table: Table):
+    """The declaration a `recon.*` table runs."""
+    from okwan_recon.registry import get, get_across
+
+    return get_across(table.params["name"]) if table.operation == "across" else get(table.params["name"])
+
+
+def _sides(spec) -> list:
+    from okwan_recon.across import AcrossRails
+
+    pairs = spec.members() if isinstance(spec, AcrossRails) else [spec]
+    return [ref for p in pairs for ref in (p.left, p.right)]
+
+
 def catalog() -> list[Table]:
-    """Every SQL-addressable resource across every registered connector."""
-    return [t for c in all_connectors() for t in tables_for(c)] + list(_DECLARED)
+    """Every SQL-addressable resource across every registered connector,
+    then every reconciliation."""
+    return [t for c in all_connectors() for t in tables_for(c)] + list(_DECLARED) + recon_tables()
 
 
 def missing_credentials(
@@ -118,6 +158,19 @@ def missing_credentials(
     from okwan_recon.fetch import env_credentials
 
     resolve = resolver or env_credentials
+    if table.connector == RECON:
+        # Every system the reconciliation reads, named with its connector
+        # since several are involved: ("paypal.client_id", ...).
+        missing: list[str] = []
+        for ref in _sides(recon_spec(table)):
+            for field in missing_credentials(
+                Table(connector=ref.connector, resource=ref.resource, operation=ref.operation,
+                      model=object, columns=()), resolver,
+            ):
+                name = f"{ref.connector}.{field}"
+                if name not in missing:
+                    missing.append(name)
+        return tuple(missing)
     name = "postgres" if table.connector == "rail" else table.connector
     try:
         connector = get_connector(name)
