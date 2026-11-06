@@ -3,13 +3,13 @@ import type { ReactNode } from "react";
 export type Tone = "danger" | "warn" | "ok" | "neutral" | "ink";
 
 const TONE: Record<Tone, string> = {
-  danger: "border-danger/30 bg-danger-soft text-danger",
-  // Not the signal: yellow means only "these systems disagree" (§2).
+  danger: "border-transparent bg-danger-soft text-danger",
+  // Not the signal: yellow means only "these systems disagree".
   // The symbol and label carry "warn"; the stronger border sets it apart.
-  warn: "border-ink-soft/50 bg-surface text-ink",
-  ok: "border-ok/30 bg-ok-soft text-ok",
-  neutral: "border-line bg-canvas text-ink-soft",
-  ink: "border-ink bg-ink text-canvas",
+  warn: "border-ink-soft/40 bg-surface text-ink",
+  ok: "border-transparent bg-ok-soft text-ok",
+  neutral: "border-line bg-surface text-ink-soft",
+  ink: "border-transparent bg-accent text-white",
 };
 
 /** Status is a symbol and a label; the tone only reinforces them. */
@@ -18,16 +18,21 @@ export function Badge({
   symbol,
   children,
   title,
+  size = "sm",
 }: {
   tone?: Tone;
   symbol?: string;
   children: ReactNode;
   title?: string;
+  /** "lg": the Overview's outcome pill, as drawn. */
+  size?: "sm" | "lg";
 }) {
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${TONE[tone]}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border whitespace-nowrap ${
+        size === "lg" ? "px-4 py-[7px] text-[15px] font-medium 2xl:text-[17px]" : "px-2.5 py-1 text-xs font-semibold"
+      } ${TONE[tone]}`}
     >
       {symbol && <span aria-hidden className="font-mono text-[11px] leading-none">{symbol}</span>}
       {children}

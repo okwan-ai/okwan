@@ -2,7 +2,8 @@ import { Fragment, type ReactNode } from "react";
 
 /** The assistant writes light Markdown. Rendered from text, never as HTML:
  *  paragraphs, "- " lists, **bold**, `code` and links. */
-export function Rich({ text }: { text: string }) {
+/** `numbered`: ordered steps drawn as purple numbered circles (Support). */
+export function Rich({ text, numbered = false }: { text: string; numbered?: boolean }) {
   // Line by line, so a list right under a heading ("**How to fix it:**"
   // then "- ...") is still a list: runs of list lines become one list, and
   // runs of other lines one paragraph.
@@ -27,16 +28,35 @@ export function Rich({ text }: { text: string }) {
       {shown.map((g, i) => {
         if (g.kind === "ul") {
           return (
-            <ul key={i} className="list-disc space-y-1 pl-5">
+            <ul key={i} className="list-disc space-y-2 pl-6">
               {g.rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*[-*] /, "")} /></li>)}
             </ul>
           );
         }
         if (g.kind === "ol") {
           return (
-            <ol key={i} className="list-decimal space-y-1 pl-5">
-              {g.rows.map((r, j) => <li key={j}><Inline text={r.replace(/^\s*\d+\. /, "")} /></li>)}
+            <ol key={i} className={numbered ? "space-y-3.5" : "list-decimal space-y-1 pl-5"}>
+              {g.rows.map((r, j) => (
+                <li key={j} className={numbered ? "flex gap-3.5" : undefined}>
+                  {numbered && (
+                    <span aria-hidden className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-orb text-[17px] font-bold text-white">
+                      {j + 1}
+                    </span>
+                  )}
+                  <span className={numbered ? "min-w-0" : undefined}><Inline text={r.replace(/^\s*\d+\. /, "")} /></span>
+                </li>
+              ))}
             </ol>
+          );
+        }
+        // A line that is all bold ("**How to fix it:**") heads what follows;
+        // after the first group, a hairline sets it apart, as drawn.
+        const heading = g.rows.length === 1 && /^\s*\*\*[^*]+\*\*\s*$/.test(g.rows[0]);
+        if (heading) {
+          return (
+            <p key={i} className={`font-bold ${i > 0 ? "mt-4 border-t border-line pt-4" : ""}`}>
+              {g.rows[0].trim().slice(2, -2)}
+            </p>
           );
         }
         return <p key={i} className="whitespace-pre-wrap"><Inline text={g.rows.join("\n")} /></p>;

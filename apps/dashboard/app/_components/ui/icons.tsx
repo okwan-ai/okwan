@@ -68,3 +68,40 @@ export const IconHelp = ({ className }: P) => (
 export const IconSend = ({ className }: P) => (
   <svg {...base} className={className}><path d="M4 12 20 4l-6 16-3-7z" /><path d="m11 13 9-9" /></svg>
 );
+
+/* The owner's design (§9 2026-11-06): the sidebar's own icons, as drawn in
+ * the mockup, a little heavier than the inline set. */
+const nav = { ...base, width: 22, height: 22, strokeWidth: 2, className: "shrink-0" };
+export const NavHome = () => (
+  <svg {...nav}><path d="M3.5 10.6 12 3.6l8.5 7" /><path d="M5.6 9.1v10a1.4 1.4 0 0 0 1.4 1.4h3.4v-5.2h3.2v5.2H17a1.4 1.4 0 0 0 1.4-1.4v-10" /></svg>
+);
+export const NavFindings = () => (
+  <svg {...nav}><path d="M12 3.4 20.6 12 12 20.6 3.4 12Z" /></svg>
+);
+export const NavMerchants = () => (
+  <svg {...nav}><path d="M4.6 8.6h14.8v9.8a2 2 0 0 1-2 2H6.6a2 2 0 0 1-2-2Z" /><path d="M4.6 8.6V7a1.5 1.5 0 0 1 1.5-1.5h11.8A1.5 1.5 0 0 1 19.4 7v1.6" /><path d="M7.4 5.5 6.3 3.4M16.6 5.5l1.1-2.1" /><path d="M9.6 12.4a2.4 2.4 0 0 0 4.8 0" /></svg>
+);
+export const NavIntegrations = () => (
+  <svg {...nav}><path d="M12 2.9 20 7.5v9L12 21.1 4 16.5v-9Z" /><circle cx="12" cy="12" r="3.1" /></svg>
+);
+export const NavAgents = () => (
+  <svg {...nav}><path d="M20 15.2V7.5L12 2.9 4 7.5v9l8 4.6 4.1-2.4" /><circle cx="12" cy="12" r="3.1" /><path d="m18.2 17.6 2.6 1.6" /></svg>
+);
+export const NavApi = () => (
+  <svg {...nav}><path d="M15 4.1a2.5 2.5 0 0 1 3.6 3.6l-9.4 9.4-4.7 1.3 1.3-4.7Z" /><path d="m13.2 6 3.6 3.6" /></svg>
+);
+export const IconBell = () => (
+  <svg {...base} width={33} height={33} strokeWidth={1.9}><path d="M6 9.5a6 6 0 1 1 12 0c0 5.6 2.4 7.4 2.4 7.4H3.6S6 15.1 6 9.5" /><path d="M10 20.2a2.2 2.2 0 0 0 4 0" /></svg>
+);
+export const IconCalendar = () => (
+  <svg {...base} width={22} height={22} strokeWidth={1.9}><rect x="3.6" y="5" width="16.8" height="15.4" rx="2.6" /><path d="M3.6 10h16.8M8 3v4M16 3v4" /></svg>
+);
+export const IconClock = () => (
+  <svg {...base} width={20} height={20} strokeWidth={1.9}><circle cx="12" cy="12" r="8.6" /><path d="M12 7.6V12l3 2" /></svg>
+);
+export const IconArrowRight = ({ className }: P) => (
+  <svg {...base} width={20} height={20} strokeWidth={2.4} className={className}><path d="M5 12h13" /><path d="m13 6.5 5.5 5.5-5.5 5.5" /></svg>
+);
+export const IconPaperPlane = () => (
+  <svg {...base} width={24} height={24} strokeWidth={2}><path d="M21 3 10.2 13.8" /><path d="M21 3 14.2 21l-4-7.2L3 9.8Z" /></svg>
+);

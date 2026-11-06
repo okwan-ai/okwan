@@ -118,7 +118,7 @@ export function SetupChecklist({ account, steps, prominent = false }: { account:
 
   if (prominent) {
     return (
-      <section aria-labelledby="setup-title" className="rounded-xl border border-line bg-surface">
+      <section aria-labelledby="setup-title" className="rounded-[22px] border border-white/80 bg-white/90 shadow-float">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4">
           <div>
             <h2 id="setup-title" className="text-base font-semibold">Get set up</h2>
@@ -135,11 +135,11 @@ export function SetupChecklist({ account, steps, prominent = false }: { account:
   }
 
   return (
-    <section aria-labelledby="setup-title" className="rounded-xl border border-line bg-surface">
+    <section aria-labelledby="setup-title" className="rounded-[22px] border border-white/80 bg-white/90 shadow-float">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-2">
         <h2 id="setup-title" className="text-sm font-semibold">Setup</h2>
         {progress}
-        <p className="min-w-0 flex-1 text-sm sm:truncate">
+        <p className="order-last min-w-0 basis-full text-sm sm:order-none sm:basis-0 sm:flex-1 sm:truncate">
           <span className="text-ink-soft">Next: </span>
           <Link href={next.href} className="font-medium underline-offset-4 hover:underline">{next.label}</Link>
         </p>
@@ -148,7 +148,7 @@ export function SetupChecklist({ account, steps, prominent = false }: { account:
           aria-expanded={open}
           aria-controls="setup-steps"
           onClick={() => setOpen((v) => !v)}
-          className="min-h-11 rounded-lg px-2 text-sm text-ink-soft hover:bg-ink/5 hover:text-ink"
+          className="ml-auto min-h-11 rounded-xl px-3 text-sm font-semibold text-accent hover:bg-accent-soft"
         >
           {open ? "Hide steps" : "All steps"}
         </button>

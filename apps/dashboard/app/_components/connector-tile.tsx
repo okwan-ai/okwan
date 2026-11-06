@@ -47,7 +47,7 @@ function TenantTile({ c, tenantKey, onOpen }: { c: ConnectorView; tenantKey: str
   const corner = test?.status === "failed" ? "alert" : test?.status === "rows" || test?.status === "empty" ? "ok" : undefined;
   const action = complete ? "Manage" : "Connect";
   return (
-    <li className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-4">
+    <li className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4">
       <BrandMark name={c.name} label={label} tile size={40} muted={!complete} corner={corner} pop={pop} onAnimationEnd={onAnimationEnd} />
       <div className="min-w-0 flex-1">
         <p className="truncate font-semibold">{label}</p>

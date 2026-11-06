@@ -14,7 +14,7 @@ const ROWS: { shape: PathShape; verdict: string; note: string; signal?: boolean 
 
 export function SignedOutAside() {
   return (
-    <aside aria-label="What a check returns" className="hidden rounded-[20px] bg-night p-8 text-white lg:block">
+    <aside aria-label="What a check returns" className="hidden rounded-[28px] bg-hero p-8 text-white lg:block">
       <p className="flex items-center gap-2 font-mono text-[11px] tracking-[0.14em] text-night-soft uppercase">
         <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-signal" />
         What a check returns · example

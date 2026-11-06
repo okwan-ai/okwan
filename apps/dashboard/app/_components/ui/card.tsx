@@ -21,7 +21,7 @@ export function Card({
 } & AriaAttributes) {
   const Tag: ElementType = as;
   return (
-    <Tag className={`rounded-xl border border-line bg-surface${flush ? " overflow-hidden" : ""}${className ? ` ${className}` : ""}`} {...rest}>
+    <Tag className={`rounded-[22px] border border-line/80 bg-surface shadow-float${flush ? " overflow-hidden" : ""}${className ? ` ${className}` : ""}`} {...rest}>
       {children}
     </Tag>
   );

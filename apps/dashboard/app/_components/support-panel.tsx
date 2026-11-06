@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { SupportReply } from "../api/support/route";
-import { Button } from "./ui/button";
 import { useDialog } from "./ui/dialog";
-import { IconClose, IconHelp, IconSend } from "./ui/icons";
-import { Mark } from "./ui/mark";
+import { IconClose, IconHelp, IconPaperPlane } from "./ui/icons";
 import { Rich } from "./ui/rich-text";
 
 /**
@@ -26,7 +24,9 @@ const STARTERS = [
   "Why did I get a 402?",
 ];
 
-export function SupportPanel() {
+/** `topBar`: from 2xl the right column holds the account bar above the
+ *  panel, as in the owner's design; below that the page has it. */
+export function SupportPanel({ topBar }: { topBar?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState("");
@@ -87,64 +87,64 @@ export function SupportPanel() {
     setDraft("");
   }
 
+  const close = () => setOpen(false);
+
   return (
     <>
       {!open && (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed right-4 bottom-4 z-40 inline-flex min-h-12 items-center gap-2 rounded-full bg-ink px-5 text-sm font-medium text-white shadow-[0_6px_24px_rgba(0,0,0,0.18)] hover:bg-[#262626] sm:right-6 sm:bottom-6"
+          className="fixed right-4 bottom-4 z-40 inline-flex min-h-12 items-center gap-2 rounded-full bg-violet px-5 text-[15px] font-semibold text-white shadow-lift hover:brightness-110 sm:right-6 sm:bottom-6 2xl:hidden"
         >
           <IconHelp />
           Ask Okwan
         </button>
       )}
-      {open && (
-        <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-night/40" onClick={() => setOpen(false)} aria-hidden />
-          <div
-            ref={panel}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="support-title"
-            className="absolute inset-y-0 right-0 flex w-full max-w-[440px] flex-col border-l border-line bg-surface shadow-xl"
-          >
-            <header className="flex items-start justify-between gap-3 bg-night px-5 py-4 text-white">
-              <div className="flex min-w-0 items-center gap-3">
-                <Mark size={26} light />
-                <div className="min-w-0">
-                  <h2 id="support-title" className="text-base font-semibold">Okwan Support</h2>
-                  <p className="mt-0.5 text-[13px] text-night-soft">
-                    AI assistant · reads your account, changes nothing
-                  </p>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
+      {/* Below 2xl: a slide-over opened by the button. From 2xl: docked
+          beside the page, always there, as in the owner's design. */}
+      <div className={`${open ? "fixed inset-0 z-50" : "hidden"} 2xl:static 2xl:z-auto 2xl:mr-4 2xl:ml-7 2xl:block 2xl:w-[405px] 2xl:shrink-0`}>
+        <div className="absolute inset-0 bg-night/40 2xl:hidden" onClick={close} aria-hidden />
+        <div
+          ref={panel}
+          role={open ? "dialog" : "complementary"}
+          aria-modal={open ? true : undefined}
+          aria-labelledby="support-title"
+          className="absolute inset-y-0 right-0 flex w-full max-w-[440px] flex-col 2xl:sticky 2xl:top-0 2xl:h-screen 2xl:max-w-none 2xl:pt-[22px] 2xl:pb-5"
+        >
+          {topBar && <div className="hidden 2xl:block">{topBar}</div>}
+          <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white shadow-xl 2xl:mt-[25px] 2xl:rounded-[30px] 2xl:border 2xl:border-white/90 2xl:bg-white/80 2xl:shadow-float 2xl:backdrop-blur-xl">
+            <header className="px-[21px] pt-7 pb-4">
+              <div className="flex items-start justify-between gap-3">
+              <h2 id="support-title" className="text-[26px] leading-tight font-extrabold tracking-[-0.01em] 2xl:text-[30px]">Okwan Support</h2>
+              <div className="-mt-1 -mr-2 flex shrink-0 items-center gap-1">
                 {lines.length > 0 && (
                   <button
                     type="button"
                     onClick={restart}
-                    className="inline-flex min-h-11 items-center rounded-lg px-3 text-[13px] text-night-soft hover:bg-white/10 hover:text-white"
+                    className="inline-flex min-h-11 items-center rounded-xl px-2.5 text-[13px] font-medium text-ink-muted hover:bg-accent-soft hover:text-accent"
                   >
                     New chat
                   </button>
                 )}
                 <button
                   type="button"
-                  onClick={() => setOpen(false)}
+                  onClick={close}
                   aria-label="Close support"
-                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-night-soft hover:bg-white/10 hover:text-white"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-ink-soft hover:bg-accent-soft hover:text-accent 2xl:hidden"
                 >
                   <IconClose />
                 </button>
               </div>
+              </div>
+              <p className="mt-1 text-[15px] text-ink-soft 2xl:text-[16px]">AI assistant · reads your account, changes nothing</p>
             </header>
 
-            <div className="flex-1 overflow-y-auto bg-canvas px-5 py-5" aria-live="polite">
+            <div className="flex-1 overflow-y-auto px-[21px] pb-5" aria-live="polite">
               {lines.length === 0 ? (
                 <Intro onPick={(s) => void send(s)} />
               ) : (
-                <ol className="space-y-4">
+                <ol className="space-y-5">
                   {lines.map((line, i) => (
                     <li key={i}>
                       <Bubble line={line} />
@@ -156,7 +156,7 @@ export function SupportPanel() {
                         {[0, 1, 2].map((d) => (
                           <span
                             key={d}
-                            className="h-1.5 w-1.5 rounded-full bg-ink-muted motion-safe:animate-pulse"
+                            className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-pulse"
                             style={{ animationDelay: `${d * 160}ms` }}
                           />
                         ))}
@@ -170,18 +170,18 @@ export function SupportPanel() {
             </div>
 
             <form
-              className="border-t border-line bg-surface px-4 pt-3 pb-4"
+              className="pt-3 pr-[13px] pb-6 pl-[21px]"
               onSubmit={(e) => {
                 e.preventDefault();
                 void send(draft);
               }}
             >
               <label htmlFor="support-message" className="sr-only">Message Okwan Support</label>
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-3">
                 <textarea
                   id="support-message"
                   data-autofocus
-                  rows={2}
+                  rows={1}
                   maxLength={4000}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
@@ -191,20 +191,22 @@ export function SupportPanel() {
                       void send(draft);
                     }
                   }}
-                  placeholder="Ask about your connections, runs, keys or plan"
-                  className="max-h-40 min-h-11 flex-1 resize-none rounded-lg border border-line-strong/40 bg-surface px-3 py-2.5 text-sm text-ink placeholder:text-ink-muted focus:border-ink focus:outline-none"
+                  placeholder="Ask about your connections, runs, keys…"
+                  className="max-h-40 min-h-[50px] min-w-0 flex-1 resize-none rounded-[16px] border border-[#dcdcf2] bg-white px-4 py-[13px] text-[15px] leading-[22px] text-ink shadow-[0_6px_18px_-12px_rgba(52,40,160,0.35)] placeholder:text-ink-soft focus:border-accent focus:outline-none"
                 />
-                <Button type="submit" variant="primary" disabled={busy || !draft.trim()} aria-label="Send">
-                  <IconSend />
-                </Button>
+                <button
+                  type="submit"
+                  disabled={busy || !draft.trim()}
+                  aria-label="Send"
+                  className="inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[14px] bg-violet text-white shadow-lift hover:brightness-110 disabled:cursor-default disabled:hover:brightness-100"
+                >
+                  <IconPaperPlane />
+                </button>
               </div>
-              <p className="mt-2 text-xs text-ink-muted">
-                Never paste keys or passwords. A person at Okwan takes over anything the assistant can't settle.
-              </p>
             </form>
           </div>
         </div>
-      )}
+      </div>
     </>
   );
 }
@@ -212,17 +214,20 @@ export function SupportPanel() {
 function Intro({ onPick }: { onPick: (s: string) => void }) {
   return (
     <div>
-      <p className="text-[15px] leading-relaxed text-ink">
+      <p className="text-[16px] leading-[1.4] text-ink 2xl:text-[17px]">
         Ask about your account. The assistant checks your plan, connections, runs and keys as you ask,
         and explains the fix.
       </p>
-      <ul className="mt-5 space-y-2">
+      <p className="mt-3 text-[14px] leading-snug text-ink-muted">
+        Never paste keys or passwords. A person at Okwan takes over anything the assistant can&apos;t settle.
+      </p>
+      <ul className="mt-5 flex flex-col items-end gap-2.5">
         {STARTERS.map((s) => (
           <li key={s}>
             <button
               type="button"
               onClick={() => onPick(s)}
-              className="w-full rounded-lg border border-line bg-surface px-4 py-3 text-left text-sm text-ink hover:border-ink/40"
+              className="rounded-[16px] bg-accent-soft px-[18px] py-[11px] text-left text-[16px] leading-snug font-bold text-accent-ink hover:bg-[#dccdfc]"
             >
               {s}
             </button>
@@ -237,7 +242,7 @@ function Bubble({ line }: { line: Line }) {
   if (line.from === "you") {
     return (
       <div className="flex justify-end">
-        <p className="max-w-[85%] rounded-2xl rounded-br-md bg-ink px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap text-white">
+        <p className="max-w-[90%] rounded-[16px] bg-accent-soft px-[18px] py-[11px] text-[16px] leading-snug font-bold whitespace-pre-wrap text-accent-ink">
           {line.text}
         </p>
       </div>
@@ -252,9 +257,9 @@ function Bubble({ line }: { line: Line }) {
     return <p role="status" className={`rounded-lg border px-3 py-2 text-[13px] ${tone}`}>{line.text}</p>;
   }
   return (
-    <div className="max-w-[92%]">
-      <div className="rounded-2xl rounded-bl-md border border-line bg-surface px-4 py-3 text-sm leading-relaxed text-ink">
-        <Rich text={line.text} />
+    <div>
+      <div className="text-[16px] leading-[1.35] text-ink 2xl:text-[17px]">
+        <Rich text={line.text} numbered />
       </div>
       {line.ticket && (
         <p className="mt-2 rounded-lg border border-ok/30 bg-ok-soft px-3 py-2 text-[13px] text-ok">

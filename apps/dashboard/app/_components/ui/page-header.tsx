@@ -51,9 +51,9 @@ export function PageHeader({
         )}
         <div className="flex items-center gap-3">
           {icon}
-          <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.03em] sm:text-[32px]">{title}</h1>
+          <h1 className="text-[34px] leading-[1.1] font-extrabold tracking-[-0.02em] sm:text-[44px] 2xl:text-[49px]">{title}</h1>
         </div>
-        {description && <p className="mt-2 line-clamp-2 text-sm text-ink-soft">{description}</p>}
+        {description && <p className="mt-2 line-clamp-2 text-[16px] text-ink-soft sm:text-[17px] 2xl:text-[19px]">{description}</p>}
         {meta && <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-soft">{meta}</div>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-start gap-2 pt-1 max-sm:w-full">{actions}</div>}
@@ -68,22 +68,25 @@ export function Section({
   description,
   aside,
   id,
+  className = "mt-10",
   children,
 }: {
   title: string;
   description?: string;
   aside?: ReactNode;
   id?: string;
+  /** The space above, when a page wants more than the default. */
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section id={id} className="mt-10 scroll-mt-6 first:mt-0">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+    <section id={id} className={`${className} scroll-mt-6 first:mt-0`}>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold">{title}</h2>
-          {description && <p className="mt-0.5 text-sm text-ink-soft">{description}</p>}
+          <h2 className="text-[24px] leading-tight font-extrabold tracking-[-0.015em] sm:text-[30px] 2xl:text-[36px]">{title}</h2>
+          {description && <p className="mt-1 text-[16px] text-ink-soft 2xl:text-[19px]">{description}</p>}
         </div>
-        {aside && <div className="flex items-center gap-2 text-sm text-ink-soft">{aside}</div>}
+        {aside && <div className="flex items-center gap-2 self-center text-sm text-ink-soft">{aside}</div>}
       </div>
       {children}
     </section>

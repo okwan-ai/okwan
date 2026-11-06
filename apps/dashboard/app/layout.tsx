@@ -8,7 +8,8 @@ import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import { IdleGuard } from "./_components/idle-guard";
 import { SupportPanel } from "./_components/support-panel";
-import { Wordmark } from "./_components/ui/mark";
+import { TopBar } from "./_components/top-bar";
+import { OkwanLogo } from "./_components/ui/mark";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -33,13 +34,14 @@ export default async function RootLayout({
     const d = digest(r);
     if (d) verdicts[r.merchant.tenant.id] = d;
   }
+  const openFindings = Object.values(verdicts).filter((d) => d.ok).reduce((n, d) => n + d.open, 0);
   return (
     <html lang="en">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Figtree:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap"
           rel="stylesheet"
         />
       </head>
@@ -63,9 +65,14 @@ export default async function RootLayout({
               operator={op !== null}
             />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
-              <div className="mx-auto max-w-[1440px] px-4 py-8 sm:px-8 sm:py-10 xl:px-12">{children}</div>
+              {/* From 2xl the page sits between the sidebar and the docked
+                  support column, its title level with the panel's, as drawn. */}
+              <div className="mx-auto max-w-[1440px] px-4 pt-6 pb-12 sm:px-8 min-[900px]:pt-0 xl:px-10 2xl:max-w-none 2xl:px-0 2xl:pt-[104px] 2xl:pl-3">
+                <TopBar account={tree.self.name} openFindings={openFindings} />
+                {children}
+              </div>
             </main>
-            <SupportPanel />
+            <SupportPanel topBar={<TopBar account={tree.self.name} openFindings={openFindings} docked />} />
             <IdleGuard />
           </div>
         ) : (
@@ -79,10 +86,10 @@ export default async function RootLayout({
 function SignedOut({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <header className="border-b border-line bg-surface">
+      <header className="border-b border-white/70 bg-white/70 backdrop-blur">
         <div className="mx-auto flex max-w-[1120px] items-center px-4 py-3 sm:px-8">
           <a href="https://okwan.ai" className="flex min-h-11 items-center">
-            <Wordmark />
+            <OkwanLogo width={96} />
           </a>
         </div>
       </header>

@@ -66,7 +66,7 @@ export default async function SettingsPage({ searchParams }: {
                 <span suppressHydrationWarning>{new Date(tree.self.created_at).toLocaleDateString("en-US", { dateStyle: "long", timeZone: "UTC" })}</span>
               </KeyValueRow>
               <KeyValueRow label="Merchants">{tree.children.length}</KeyValueRow>
-              <KeyValueRow label="Sign-in">Email and password. You are signed out after 30 minutes without activity, and 12 hours after signing in; Sign out at the bottom of the sidebar ends it now.</KeyValueRow>
+              <KeyValueRow label="Sign-in">Email and password. You are signed out after 30 minutes without activity, and 12 hours after signing in; Sign out in the account menu ends it now.</KeyValueRow>
             </KeyValueList>
             <Section
               id="own-connections"
