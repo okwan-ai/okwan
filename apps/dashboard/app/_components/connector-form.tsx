@@ -39,9 +39,9 @@ export function isSuccess(r: Pick<SheetResult, "status" | "complete">): boolean 
 
 // Identifiers, not secrets: shown as typed. Everything else is masked.
 /** Fields that are not secrets: shown as typed, never masked. */
-const PLAIN = /_domain$|^environment$/;
+const PLAIN = /_domain$|^environment$|^merchant_id$/;
 /** What to type where a field takes one of a few words. */
-const HINT: Record<string, string> = { environment: "production or sandbox" };
+const HINT: Record<string, string> = { environment: "production or sandbox", merchant_id: "13 characters, from the dashboard" };
 
 /**
  * Test and Save for one connector. `tenantId` targets a merchant's tenant;
