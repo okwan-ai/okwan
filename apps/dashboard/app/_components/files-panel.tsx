@@ -29,7 +29,7 @@ export function FilesPanel({ tenantId, files, layouts, unavailable }: {
       <Section
         className="mt-0"
         title="Imported files"
-        description="Settlement reports and bank statements, read for this merchant's checks."
+        description="Settlement reports, delivery platform reports and bank statements, read for this merchant's checks."
         aside={<ButtonLink variant="primary" href={importHref}><IconFileUp className="h-4 w-4" />Import a file</ButtonLink>}
       >
         {unavailable ? (
@@ -39,7 +39,7 @@ export function FilesPanel({ tenantId, files, layouts, unavailable }: {
             icon={<IconSheet className="h-5 w-5" />}
             title="No files imported yet"
             benefits={[
-              "A processor's batch report or transaction export, or a bank statement",
+              "A processor's batch report or transaction export, a delivery platform's report, or a bank statement",
               "CSV, Excel (.xlsx) or OFX, up to 8 MB",
               "Only the columns you map are kept, for 13 months",
             ]}

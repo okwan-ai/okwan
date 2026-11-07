@@ -200,8 +200,10 @@ class GroupRef(Frozen):
     many: Literal["left", "right"] = "right"
     case_sensitive: bool = False
     max_members: int = Field(
-        default=20, ge=2, le=100,
-        description="More records than this under one reference is not one order: reported ambiguous",
+        default=20, ge=2, le=10_000,
+        description=(
+            "More records than this under one reference is not one order: reported ambiguous. "
+            "A payout's lines are one reference by design, so a payout check sets it high"),
     )
 
 

@@ -401,6 +401,80 @@ clover_payments_settlements = register(
     )
 )
 
-__all__ = ["batches_deposits", "clover_orders_payments", "clover_payments_settlements", "rails",
-           "shopify_orders", "shopify_paypal", "shopify_stripe", "square_payments_payouts",
-           "square_payouts_deposits"]
+#: Each delivery platform payout against the lines it says it pays, both
+#: from the platform's own reports (`files.delivery_payouts`,
+#: `files.delivery_lines`). A payout is the sum of its lines' nets: every
+#: order's sale less the platform's commission, fees, marketing, error
+#: charges and refunds, plus each charge and credit not tied to an order. A
+#: payout that is not its lines is money the platform's own statement does
+#: not account for; an instant payout's fee, which the payout report states
+#: and no line does, explains the gap it makes. Only lines a payout paid are
+#: read: one not paid out yet is waiting, not a finding. A line whose payout
+#: is not in the payout report reads as paid by a payout not imported yet. A week's
+#: payout covers hundreds of orders, all under one payout id, so the group
+#: is allowed to be large.
+delivery_payout_lines = register(
+    Reconciliation(
+        name="delivery_payout_lines",
+        title="Delivery payouts vs their order lines",
+        description=(
+            "Match each delivery platform payout against the order and charge lines that carry its "
+            "payout id, from imported reports, and compare the payout with the sum of the lines. An "
+            "instant payout fee explains the gap it makes. Reports payouts that are not their lines, "
+            "payouts with no lines, and lines whose payout was not imported."
+        ),
+        left=ResourceRef(connector="files", resource="delivery_payouts"),
+        right=ResourceRef(connector="files", resource="delivery_lines", params={"paid": True}),
+        keys=[GroupRef(left="payout_id", right="payout_id", many="right", case_sensitive=True,
+                       max_members=5_000)],
+        amount=AmountRef(left="net_minor", right="net_minor"),
+        explains=[Explains(path="payout_fee_minor", side="left", label="instant_payout_fee",
+                           sign="negative")],
+        lookback="60d",
+        max_records=10_000,
+    )
+)
+
+
+#: The names a bank prints for the platforms paying a store: only those
+#: deposits are a delivery payout's to explain, so a card processor's
+#: deposit on the same statement is not reported as one no payout explains.
+DELIVERY_PAYERS = ("doordash", "uber", "grubhub", "seamless")
+
+
+#: Each delivery platform payout against the bank deposit that should be
+#: it, from an imported statement (`files.bank_deposits`, money in, from a
+#: delivery platform by the name the bank prints). The
+#: platforms send on the payout date and the bank posts it that day or up
+#: to three US business days after, never before; a statement shares no
+#: reference with the platform, so it is the amount, the currency and that
+#: window, and two deposits that would both fit are ambiguous rather than
+#: guessed between. What it finds: payouts the bank never shows, and the
+#: deposits from a platform that no payout explains.
+delivery_payouts_deposits = register(
+    Reconciliation(
+        name="delivery_payouts_deposits",
+        title="Delivery payouts vs bank deposits",
+        description=(
+            "Match each delivery platform payout against the deposit on the imported bank "
+            "statement, by amount and currency, on its payout date or up to three US business days "
+            "after. Reads deposits whose statement text names a delivery platform. Reports payouts "
+            "the bank never shows and platform deposits no payout explains."
+        ),
+        left=ResourceRef(connector="files", resource="delivery_payouts"),
+        right=ResourceRef(connector="files", resource="bank_deposits",
+                          params={"direction": "in", "contains": list(DELIVERY_PAYERS)}),
+        keys=[
+            Fuzzy(
+                amount="net_minor", currency="currency", amount_right="amount_minor",
+                timestamp_left="paid_on", timestamp_right="posted_on",
+                lag=SettlementLag(max_days=3),
+            ),
+        ],
+        lookback="120d",
+    )
+)
+
+__all__ = ["batches_deposits", "clover_orders_payments", "clover_payments_settlements",
+           "delivery_payout_lines", "delivery_payouts_deposits", "rails", "shopify_orders",
+           "shopify_paypal", "shopify_stripe", "square_payments_payouts", "square_payouts_deposits"]

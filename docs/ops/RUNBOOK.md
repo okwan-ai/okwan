@@ -266,10 +266,32 @@ column names (or a saved mapping), and imports it. A 503 there reads
 "File imports aren't open for this workspace yet".
 
 **Reading them back.** Imported rows are the `files` connector:
-`POST /v1/files/{settlement_batches|settlement_transactions|bank_deposits}/list`,
+`POST /v1/files/{settlement_batches|settlement_transactions|bank_deposits|delivery_lines|delivery_payouts}/list`,
 the SQL tables `files.*`, and the reconciliations that read them:
-`batches_deposits` (batches against deposits), `square_payouts_deposits`
-and `clover_payments_settlements` (REST, `recon.<name>`, `okwan_reconcile`). A listing
+`batches_deposits` (batches against deposits), `square_payouts_deposits`,
+`clover_payments_settlements`, `delivery_payout_lines` and
+`delivery_payouts_deposits` (REST, `recon.<name>`, `okwan_reconcile`).
+
+**Delivery platforms.** DoorDash, Uber Eats and Grubhub reports import as
+*Delivery orders* (the transaction or payment-details report) and
+*Delivery payouts* (the payout report); `docs/samples/imports/delivery/`
+has a mapping for DoorDash and Uber Eats. A customer asking about one:
+
+- *A payout "is not its lines"*: the payout differs from the sum of the
+  lines carrying its payout id. An instant (Fast Pay) fee explains its own
+  gap when the payout report's fee column is mapped. Otherwise the lines
+  imported may not be the whole week (a transactions report cut at a date),
+  or the platform withheld something its report does not itemise: the
+  customer asks the platform, quoting the payout id.
+- *A payout "never reached the bank"*: no deposit naming DoorDash, Uber or
+  Grubhub (or Seamless) with its amount, on its payout date or up to three
+  business days after. Check that the statement covers those days and that
+  the bank's text names the platform. A deposit from a platform with no
+  payout means a payout report not imported yet.
+- *Commission or error charges look high*: `files.delivery_lines` keeps every
+  deduction apart, with `commission_rate_bps` and `withheld_minor` on each
+  line. The query in the samples README lists orders above a plan's rate.
+  The contracted rate itself is not stored yet (§10 item 35). A listing
 (`GET /v1/reconciliations`, `okwan_list_reconciliations`) says, per source,
 how many files cover which days, so "not runnable" with files of one kind
 only means the other kind has not been uploaded yet.

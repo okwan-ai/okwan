@@ -70,10 +70,11 @@ const parts: Part[] = [
             names or email addresses from those services, and we do not store SQL queries or their results.
           </li>
           <li>
-            <strong>Files you import.</strong> Settlement reports, transaction exports and bank statements you
-            upload (CSV, Excel or OFX, up to 8 MB). The file is read in memory while it uploads and is never
-            stored. From each row we keep only the fields you map to it: references, dates, amounts, a merchant ID,
-            the statement text, and at most the last four digits of a card or account number. With them we keep
+            <strong>Files you import.</strong> Settlement reports, transaction exports, delivery platform reports
+            and bank statements you upload (CSV, Excel or OFX, up to 8 MB). The file is read in memory while it
+            uploads and is never stored. From each row we keep only the fields you map to it: references, dates,
+            amounts, a merchant or store ID, an order&rsquo;s status, the statement text, and at most the last four
+            digits of a card or account number. With them we keep
             the file&rsquo;s name, the row each came from, the numbers of any rows that could not be read, and a
             fingerprint of the file (its SHA-256 hash) so the same file is not imported twice. Statement text is
             kept as your bank wrote it, so it can name the person or business that paid you. A file that holds a

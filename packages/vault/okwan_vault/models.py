@@ -116,7 +116,7 @@ class ImportFile:
 
     id: str
     tenant_id: str
-    #: settlement_batches | settlement_transactions | bank_deposits
+    #: settlement_batches | settlement_transactions | bank_deposits | delivery_lines | delivery_payouts
     kind: str
     filename: str
     #: csv | xlsx | ofx

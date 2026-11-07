@@ -88,23 +88,25 @@ async def _upload(client, shop, data, mapping, name="f.csv"):
 
 # ── the connector, defined once ─────────────────────────────────────
 
-def test_three_resources_each_a_read_and_nothing_that_writes():
+KINDS = {"settlement_batches", "settlement_transactions", "bank_deposits", "delivery_lines",
+         "delivery_payouts"}
+
+
+def test_one_resource_per_kind_each_a_read_and_nothing_that_writes():
     from okwan_query.catalog import tables_for
 
     files = get("files")
-    assert set(files.resources) == {"settlement_batches", "settlement_transactions", "bank_deposits"}
+    assert set(files.resources) == KINDS
     assert all(op.is_read_only for _, op in files.iter_operations())
     assert files.auth.required_fields == ()
-    assert {f"{t.connector}.{t.resource}" for t in tables_for(files)} == {
-        "files.settlement_batches", "files.settlement_transactions", "files.bank_deposits"}
+    assert {f"{t.connector}.{t.resource}" for t in tables_for(files)} == {f"files.{k}" for k in KINDS}
 
 
 async def test_the_generated_mcp_tools_include_the_files():
     from okwan_mcp.generator import list_tool_names
 
     names = set(await list_tool_names(get("files")))
-    assert names == {"files_settlement_batches_list", "files_settlement_transactions_list",
-                     "files_bank_deposits_list"}
+    assert names == {f"files_{k}_list" for k in KINDS}
 
 
 async def test_with_no_account_nothing_is_read():

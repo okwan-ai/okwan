@@ -277,8 +277,9 @@ END $$;
 CREATE TABLE IF NOT EXISTS import_files (
     id            text PRIMARY KEY,
     tenant_id     text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    kind          text NOT NULL CHECK (kind IN ('settlement_batches', 'settlement_transactions',
-                                                'bank_deposits')),
+    kind          text NOT NULL CONSTRAINT import_files_kind_check
+                  CHECK (kind IN ('settlement_batches', 'settlement_transactions', 'bank_deposits',
+                                  'delivery_lines', 'delivery_payouts')),
     filename      text NOT NULL,
     format        text NOT NULL CHECK (format IN ('csv', 'xlsx', 'ofx')),
     layout        text NOT NULL,
@@ -293,6 +294,23 @@ CREATE TABLE IF NOT EXISTS import_files (
     created_at    timestamptz NOT NULL DEFAULT now(),
     expires_at    timestamptz NOT NULL
 );
+
+-- A database made before delivery platforms knows three kinds; the check
+-- grows to five here. Read first, like parent_id above: ALTER TABLE would
+-- lock the table on every start.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'import_files'::regclass AND conname = 'import_files_kind_check'
+          AND pg_get_constraintdef(oid) LIKE '%delivery_payouts%'
+    ) THEN
+        ALTER TABLE import_files DROP CONSTRAINT IF EXISTS import_files_kind_check,
+            ADD CONSTRAINT import_files_kind_check
+            CHECK (kind IN ('settlement_batches', 'settlement_transactions', 'bank_deposits',
+                            'delivery_lines', 'delivery_payouts'));
+    END IF;
+END $$;
 
 -- The same file twice for the same kind is refused, not doubled.
 CREATE UNIQUE INDEX IF NOT EXISTS import_files_once_idx ON import_files (tenant_id, kind, sha256);

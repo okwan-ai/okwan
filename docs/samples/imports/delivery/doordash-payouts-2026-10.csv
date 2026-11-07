@@ -1,0 +1,3 @@
+Payout ID,Payout date,Payout status,Period start,Period end,Subtotal,Commission,Marketing fees,Error charges,Adjustments,Fast Pay fee,Net payout,Currency
+DD-PO-1012,10/13/2026,Paid,10/05/2026,10/11/2026,188.25,31.82,30.00,12.50,4.50,0.00,127.28,USD
+DD-PO-1019,10/20/2026,Paid,10/12/2026,10/18/2026,93.40,14.02,0.00,19.90,0.00,1.99,61.87,USD

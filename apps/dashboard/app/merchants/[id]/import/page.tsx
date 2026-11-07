@@ -17,7 +17,7 @@ export default async function ImportPage({ params }: { params: Promise<{ id: str
     <Section
       className="mt-0"
       title="Import a file"
-      description="A processor's settlement report or transaction export, or a bank statement, mapped column by column."
+      description="A processor's settlement report or transaction export, a delivery platform's report, or a bank statement, mapped column by column."
     >
       <ImportFlow tenantId={id} layouts={layouts.ok ? layouts.data.layouts : []} />
     </Section>
