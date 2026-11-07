@@ -38,7 +38,10 @@ export function isSuccess(r: Pick<SheetResult, "status" | "complete">): boolean 
 }
 
 // Identifiers, not secrets: shown as typed. Everything else is masked.
-const PLAIN = /_domain$/;
+/** Fields that are not secrets: shown as typed, never masked. */
+const PLAIN = /_domain$|^environment$/;
+/** What to type where a field takes one of a few words. */
+const HINT: Record<string, string> = { environment: "production or sandbox" };
 
 /**
  * Test and Save for one connector. `tenantId` targets a merchant's tenant;
@@ -173,7 +176,7 @@ export function ConnectorForm({ c, tenantId, tenantKey, onResult, next, autoFocu
             spellCheck={false}
             autoFocus={autoFocus && i === 0}
             className="field font-mono"
-            placeholder={c.stored.includes(f) ? "••••••••" : ""}
+            placeholder={c.stored.includes(f) ? "••••••••" : (HINT[f] ?? "")}
           />
         </label>
       ))}
