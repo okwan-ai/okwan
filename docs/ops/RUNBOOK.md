@@ -276,8 +276,12 @@ route whose message comes from the rail rather than Okwan, means the
 customer's own credential at that rail is wrong, expired or missing a
 permission. Okwan cannot fix it. Ask the customer to create a new
 credential at the rail (Stripe restricted key, Shopify token with
-`read_orders` and `read_all_orders`, PayPal client id and secret) and
-save it in the dashboard under *Settings*. Never ask them to send it to you.
+`read_orders` and `read_all_orders`, PayPal client id and secret, Square
+access token with `PAYMENTS_READ`, `PAYOUTS_READ`, `ORDERS_READ` and
+`MERCHANT_PROFILE_READ`) and save it in the dashboard under *Settings*.
+Never ask them to send it to you. A Square 401 with a token that looks
+right is most often `environment` set to the other one: a production
+token needs `production`, a sandbox token `sandbox`.
 
 ### A rail is down *(Tier 1)*
 

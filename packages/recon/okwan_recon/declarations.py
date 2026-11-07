@@ -275,4 +275,63 @@ batches_deposits = register(
     )
 )
 
-__all__ = ["batches_deposits", "rails", "shopify_orders", "shopify_paypal", "shopify_stripe"]
+
+
+#: Each Square payment against the payout line that settled it. Square
+#: pays a payment out a business day or so after it completes, as a CHARGE
+#: line naming the payment and Square's fee on it, so the join is exact
+#: (the payment id) and the difference between what the buyer paid and
+#: what the line adds to the payout is the fee. A payment with no line yet
+#: has not been paid out: recent ones are expected to read that way.
+#: Refunds are their own REFUND lines and are not read here.
+square_payments_payouts = register(
+    Reconciliation(
+        name="square_payments_payouts",
+        title="Square payments vs payouts",
+        description=(
+            "Match each completed Square payment against the payout line that settled it, by "
+            "payment id. Square's processing fee explains the gap between what the buyer paid and "
+            "what the payout carried. Reports payments not yet paid out, payout lines with no "
+            "payment, and lines whose amount the fee does not explain."
+        ),
+        left=ResourceRef(connector="square", resource="payments", params={"status": "COMPLETED"}),
+        right=ResourceRef(connector="square", resource="payout_entries", params={"type": "CHARGE"}),
+        keys=[ExactRef(left="id", right="payment_id", case_sensitive=True)],
+        amount=AmountRef(left="total_minor", right="net_minor"),
+        explains=[Explains(path="fee_minor", side="right", label="square_fee")],
+        lookback="60d",
+    )
+)
+
+
+#: Each Square payout against the deposit the bank statement shows, from an
+#: imported statement (`files.bank_deposits`). A payout names the day it
+#: arrives; the bank posts it that day or up to two US business days
+#: after, never before, and the amounts are equal to the cent. There is no
+#: shared reference a statement reliably carries, so it is amount, currency
+#: and that window, and two deposits that would both fit are ambiguous
+#: rather than guessed between.
+square_payouts_deposits = register(
+    Reconciliation(
+        name="square_payouts_deposits",
+        title="Square payouts vs bank deposits",
+        description=(
+            "Match each paid Square payout against the deposit on the imported bank statement, by "
+            "amount and currency, on its arrival date or up to two US business days after. Reports "
+            "payouts the bank never shows and deposits no payout explains."
+        ),
+        left=ResourceRef(connector="square", resource="payouts", params={"status": "PAID"}),
+        right=ResourceRef(connector="files", resource="bank_deposits", params={"direction": "in"}),
+        keys=[
+            Fuzzy(
+                amount="amount_minor", currency="currency", amount_right="amount_minor",
+                timestamp_left="arrival_date", timestamp_right="posted_on",
+                lag=SettlementLag(max_days=2),
+            ),
+        ],
+        lookback="120d",
+    )
+)
+
+__all__ = ["batches_deposits", "rails", "shopify_orders", "shopify_paypal", "shopify_stripe",
+           "square_payments_payouts", "square_payouts_deposits"]
