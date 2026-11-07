@@ -106,3 +106,11 @@ export const IconArrowRight = ({ className }: P) => (
 export const IconPaperPlane = () => (
   <svg {...base} width={24} height={24} strokeWidth={2}><path d="M21 3 10.2 13.8" /><path d="M21 3 14.2 21l-4-7.2L3 9.8Z" /></svg>
 );
+/** A document with an arrow rising out of it: importing a file. */
+export const IconFileUp = ({ className }: P) => (
+  <svg {...base} className={className}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M12 18v-6" /><path d="m9.5 14.5 2.5-2.5 2.5 2.5" /></svg>
+);
+/** A grid of rows and columns: an imported spreadsheet. */
+export const IconSheet = ({ className }: P) => (
+  <svg {...base} className={className}><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M3.5 9.5h17" /><path d="M3.5 14.5h17" /><path d="M9.5 9.5v10" /></svg>
+);

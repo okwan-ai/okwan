@@ -96,6 +96,26 @@ async function checkPage(page, w, h, path) {
   for (const hit of res.hits) await note(page, where, hit);
 }
 
+// The import page with a file chosen: the column-matching form, the
+// options and the first rows, which only exist once a file is read.
+const SAMPLE = [
+  "Batch ID,Close Date,Gross Sales,Fees,Chargebacks,Net Deposit,Merchant ID,Card Number,Terminal",
+  "B-1001,11/02/2026,1000.00,29.00,0.00,971.00,MID-1,************1111,T-01",
+  "B-1002,11/03/2026,250.50,7.27,0.00,243.23,MID-1,************2222,T-02",
+].join("\n");
+
+async function checkImport(page, w, h, merchant) {
+  const path = `${merchant}/import`;
+  await page.goto(BASE + path, { waitUntil: "networkidle" });
+  await page.locator('input[type="file"]').setInputFiles({ name: "batch-report.csv", mimeType: "text/csv", buffer: Buffer.from(SAMPLE) });
+  await page.getByText("3. Match the columns").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(250);
+  const res = await page.evaluate(inspect);
+  const where = `${w}x${h} ${path} (file chosen)`;
+  if (res.sideways) await note(page, where, "the page scrolls sideways");
+  for (const hit of res.hits) await note(page, where, hit);
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -132,7 +152,8 @@ try {
   const merchant = await lp.locator('a[href^="/merchants/ten_"]').first().getAttribute("href");
   await lp.goto(`${BASE}/integrations`, { waitUntil: "networkidle" });
   const connector = await lp.locator('a[href^="/integrations/"]').first().getAttribute("href");
-  const detail = [merchant, `${merchant}?tab=findings`, `${merchant}?tab=connections`, connector].filter(Boolean);
+  const detail = [merchant, `${merchant}?tab=findings`, `${merchant}?tab=connections`, `${merchant}?tab=files`,
+    `${merchant}/import`, connector].filter(Boolean);
   await login.close();
 
   for (const [w, h] of SIZES) {
@@ -144,6 +165,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", storageState: session });
     const page = await ctx.newPage();
     for (const path of [...SIGNED_IN, ...detail]) await checkPage(page, w, h, path);
+    if (merchant) await checkImport(page, w, h, merchant);
     if (w >= 900) await checkMenu(page, w, h);
     await ctx.close();
   }
@@ -151,7 +173,7 @@ try {
   await browser.close();
 }
 
-const pages = SIZES.length * (SIGNED_OUT.length + SIGNED_IN.length + 4);
+const pages = SIZES.length * (SIGNED_OUT.length + SIGNED_IN.length + 7);
 if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);

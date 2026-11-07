@@ -1,9 +1,12 @@
-/** The merchant page's two tabs. Shared by the server page and the client
- *  tab bar. Keys moved to Agents and Settings, usage to Settings › Plan
- *  (§9 2026-10-05); their old ?tab= values redirect in the page. */
+/** The merchant page's tabs. Shared by the server page and the client tab
+ *  bar. Keys moved to Agents and Settings, usage to Settings › Plan
+ *  (§9 2026-10-05); their old ?tab= values redirect in the page. Files is
+ *  the home of the merchant's imported files and saved mappings; the
+ *  import page (/merchants/[id]/import) sits under it. */
 export const MERCHANT_TABS = [
   { id: "findings", label: "Findings" },
   { id: "connections", label: "Connections" },
+  { id: "files", label: "Files" },
 ] as const;
 
 export type MerchantTab = (typeof MERCHANT_TABS)[number]["id"];

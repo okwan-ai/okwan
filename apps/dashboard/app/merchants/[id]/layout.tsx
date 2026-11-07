@@ -6,6 +6,7 @@ import { configured, connectors, railState } from "@/lib/merchants";
 import { ago, SURFACE_LABEL, toFinding } from "@/lib/finding";
 import { defaultTab } from "@/lib/merchant-tabs";
 import { latestRuns } from "@/lib/stored-runs";
+import { importedFiles } from "@/lib/merchant-files";
 import { myUsage } from "@/lib/usage";
 import { PlanStrip } from "../../_components/usage/plan-strip";
 import { FOLD_READS, missingFor } from "@/lib/finding";
@@ -37,7 +38,9 @@ export default async function MerchantLayout({
 }) {
   await requireTenant();
   const { id } = await params;
-  const [catalog, stored, tree, usage, latest] = await Promise.all([connectors(), configured(id), tenantTree(), myUsage(30), latestRuns(id)]);
+  const [catalog, stored, tree, usage, latest, files] = await Promise.all([
+    connectors(), configured(id), tenantTree(), myUsage(30), latestRuns(id), importedFiles(id),
+  ]);
   if (!stored.ok && stored.status === 404) notFound();
   if (!catalog.ok || !stored.ok) {
     return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
@@ -86,7 +89,13 @@ export default async function MerchantLayout({
         actions={<Suspense><RunButton /></Suspense>}
       />
       <PlanStrip usage={usage} />
-      <Suspense><MerchantTabs connected={rails.ready.filter((r) => (FOLD_READS as readonly string[]).includes(r)).length} findingsBadge={findingsBadge} /></Suspense>
+      <Suspense>
+        <MerchantTabs
+          connected={rails.ready.filter((r) => (FOLD_READS as readonly string[]).includes(r)).length}
+          files={files.ok ? files.data.imports.length : 0}
+          findingsBadge={findingsBadge}
+        />
+      </Suspense>
       <div className="pt-6">{children}</div>
     </MerchantRunProvider>
   );

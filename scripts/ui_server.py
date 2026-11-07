@@ -5,7 +5,9 @@ One workspace, *Acme ISV*, signs in as UI_CHECK_EMAIL with UI_CHECK_PASSWORD
 (a throwaway the job generates). It has two merchants: *Kofi's Store*, with
 every rail connected and one real cross-rail check whose rails are fixture
 rows (six orders, #1002 and #1004 collected twice), and *Accra Coffee Co.*,
-with only Stripe, so "needs you" states render too. The check runs through
+with only Stripe, so "needs you" states render too. Kofi's Store has
+also imported a processor batch report and a bank statement, with their
+mappings saved; Accra has no files. The check runs through
 the API's own route, so the stored run is exactly what production stores.
 Dummy credentials; nothing leaves the machine; nothing is written to disk.
 
@@ -14,6 +16,7 @@ Dummy credentials; nothing leaves the machine; nothing is written to disk.
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 from datetime import UTC, datetime, timedelta
 
@@ -61,6 +64,21 @@ ROWS = {
                stripe("#1004", 45000, "ch_layout_1004"), stripe("#1006", 7500, "ch_layout_1006")],
 }
 
+IMPORTS = [
+    ("Processor batches - October 2026.csv",
+     (b"Batch ID,Close Date,Gross,Fees,MID\n"
+      b"B-2001,10/02/2026,1840.00,53.36,MID-1\nB-2002,10/03/2026,920.50,26.69,MID-1\n"
+      b"B-2003,10/04/2026,410.00,11.89,MID-1\nB-2004,10/05/2026,1275.25,36.98,MID-1\n"),
+     {"kind": "settlement_batches", "name": "Processor batch report", "currency": "USD",
+      "columns": {"batch_id": "Batch ID", "closed_on": "Close Date", "gross_minor": "Gross",
+                  "fees_minor": "Fees", "mid": "MID"}}),
+    ("Operating account statement.csv",
+     (b"Date,Description,Amount\n10/05/2026,MERCHANT DEPOSIT,1786.64\n"
+      b"10/06/2026,MERCHANT DEPOSIT,1291.92\n10/07/2026,MONTHLY FEE,-25.00\n"),
+     {"kind": "bank_deposits", "name": "Operating account", "currency": "USD",
+      "columns": {"posted_on": "Date", "description": "Description", "amount_minor": "Amount"}}),
+]
+
 DUMMY = {"stripe": {"secret_key": "sk_test_dummy"},
          "paypal": {"client_id": "dummy", "client_secret": "dummy"},
          "shopify": {"access_token": "shpat_dummy", "shop_domain": "kofi.myshopify.com"}}
@@ -86,10 +104,19 @@ async def seed() -> None:
     token, token_hash = new_token(SESSION_PREFIX)
     await store.create_session(isv.id, token_hash, datetime.now(UTC) + timedelta(minutes=5))
     across.fetch_side = fixture_side
+    auth = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{PORT}", timeout=30) as client:
-        r = await client.post(f"/v1/tenants/{kofi.id}/reconciliations/across/rails",
-                              headers={"Authorization": f"Bearer {token}"})
+        r = await client.post(f"/v1/tenants/{kofi.id}/reconciliations/across/rails", headers=auth)
         r.raise_for_status()
+        # Kofi's Store has imported a batch report and a bank statement, and
+        # saved the statement's mapping; Accra has none, so both states render.
+        for name, data, mapping in IMPORTS:
+            r = await client.put(f"/v1/tenants/{kofi.id}/import-layouts/{mapping['name']}",
+                                 headers=auth, json=mapping)
+            r.raise_for_status()
+            r = await client.post(f"/v1/tenants/{kofi.id}/imports", headers=auth, json={
+                "filename": name, "content_base64": base64.b64encode(data).decode(), "layout": mapping["name"]})
+            r.raise_for_status()
     await store.delete_session(token_hash)
 
 
