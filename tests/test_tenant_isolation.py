@@ -32,6 +32,7 @@ tests/test_vault_postgres.py.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -270,6 +271,12 @@ KEY_DATA = {
     ("GET", "/v1/reconciliations/across/{name}"),
     ("GET", "/v1/query/tables"), ("POST", "/v1/query"),
 }
+INTRUDER_UPLOAD = {
+    "filename": "intruder.csv",
+    "content_base64": base64.b64encode(b"Date,Amount\n11/02/2026,1.00\n").decode(),
+    "mapping": {"kind": "bank_deposits", "currency": "USD",
+                "columns": {"posted_on": "Date", "amount_minor": "Amount"}},
+}
 #: Administration of a named tenant: the subtree guard decides, outsiders get 404.
 #: Each entry is the request the cross-tenant test sends.
 ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
@@ -287,6 +294,11 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
         ("/v1/tenants/{t}/reconciliations/across/rails", None),
     ("POST", "/v1/tenants/{tenant_id}/reconciliations/{name}"):
         ("/v1/tenants/{t}/reconciliations/shopify_stripe", None),
+    # File imports: an intruder's upload, and the victim's own file by id.
+    ("POST", "/v1/tenants/{tenant_id}/imports"): ("/v1/tenants/{t}/imports", INTRUDER_UPLOAD),
+    ("GET", "/v1/tenants/{tenant_id}/imports"): ("/v1/tenants/{t}/imports", None),
+    ("GET", "/v1/tenants/{tenant_id}/imports/{file_id}"): ("/v1/tenants/{t}/imports/{imp}", None),
+    ("DELETE", "/v1/tenants/{tenant_id}/imports/{file_id}"): ("/v1/tenants/{t}/imports/{imp}", None),
 }
 #: Administration without a tenant in the path, each tested on its own below.
 ADMIN_OTHER = {
@@ -380,6 +392,7 @@ async def _victim_state(world, victim) -> dict[str, Any]:
     return {
         "creds": await store.credentials_for(victim.id, "stripe", ("secret_key",)),
         "runs": [r.id for r in await store.list_runs(victim.id, limit=50)],
+        "imports": [f.id for f in await store.list_imports(victim.id)],
     }
 
 
@@ -397,13 +410,30 @@ async def victim_runs(world):
     return out
 
 
+@pytest.fixture
+async def victim_imports(world):
+    """An imported file for every tenant, stamped, so an import route has
+    something real to hide."""
+    out = {}
+    for key, tenant in world.t.items():
+        f = await world.store.add_import(
+            tenant.id, kind="bank_deposits", filename=f"{STAMPS[key]}.csv", format="csv",
+            layout="custom", mapping={}, sha256=f"sha-{STAMPS[key]}", skipped=[], card_columns=[],
+            rows=[(2, NOW.date(), {"fitid": f"{STAMPS[key]}-F1", "amount_minor": 100})],
+            first_date=NOW.date(), last_date=NOW.date())
+        out[key] = f.id
+    return out
+
+
 @pytest.mark.parametrize("route", sorted(ADMIN_BY_TENANT), ids=lambda r: f"{r[0]} {r[1]}")
 @pytest.mark.parametrize("who,whom", OUTSIDERS, ids=[f"{a}->{b}" for a, b in OUTSIDERS])
-async def test_an_outsider_gets_404_and_changes_nothing(client, world, victim_runs, rails, route, who, whom):
+async def test_an_outsider_gets_404_and_changes_nothing(
+    client, world, victim_runs, victim_imports, rails, route, who, whom
+):
     method, _ = route
     template, body = ADMIN_BY_TENANT[route]
     victim = world.t[whom]
-    path = template.format(t=victim.id, run=victim_runs[whom])
+    path = template.format(t=victim.id, run=victim_runs[whom], imp=victim_imports[whom])
     before = await _victim_state(world, victim)
 
     r = await client.request(method, path, json=body, headers=_caller(world, who))
@@ -421,10 +451,12 @@ async def test_a_foreign_id_reads_exactly_like_one_that_does_not_exist(client, w
     """404 for someone else's tenant, 404 for no tenant: nothing to enumerate."""
     method, _ = route
     template, body = ADMIN_BY_TENANT[route]
-    foreign = await client.request(method, template.format(t=world.t["isv_a"].id, run="run_nope"),
-                                   json=body, headers=_caller(world, "isv_b"))
-    missing = await client.request(method, template.format(t="ten_doesnotexist0", run="run_nope"),
-                                   json=body, headers=_caller(world, "isv_b"))
+    foreign = await client.request(
+        method, template.format(t=world.t["isv_a"].id, run="run_nope", imp="imp_nope"),
+        json=body, headers=_caller(world, "isv_b"))
+    missing = await client.request(
+        method, template.format(t="ten_doesnotexist0", run="run_nope", imp="imp_nope"),
+        json=body, headers=_caller(world, "isv_b"))
     assert foreign.status_code == missing.status_code == 404
 
 
@@ -435,6 +467,26 @@ async def test_the_owner_reaches_its_own_merchants(client, world, victim_runs, w
     r = await client.get(f"/v1/tenants/{t.id}/runs/{victim_runs[whom]}", headers=_caller(world, "isv_a"))
     assert r.status_code == 200
     _only(STAMPS[whom], r.text)
+
+
+@pytest.mark.parametrize("whom", ["a1", "a2"])
+async def test_the_owner_reaches_its_own_merchants_imports_and_no_one_elses(
+    client, world, victim_imports, whom
+):
+    t = world.t[whom]
+    listed = await client.get(f"/v1/tenants/{t.id}/imports", headers=_caller(world, "isv_a"))
+    one = await client.get(f"/v1/tenants/{t.id}/imports/{victim_imports[whom]}",
+                           headers=_caller(world, "isv_a"))
+    assert listed.status_code == one.status_code == 200
+    _only(STAMPS[whom], listed.text)
+    _only(STAMPS[whom], one.text)
+    # Another merchant's file, asked for under this one's id, does not exist.
+    other = "a2" if whom == "a1" else "a1"
+    crossed = await client.get(f"/v1/tenants/{t.id}/imports/{victim_imports[other]}",
+                               headers=_caller(world, "isv_a"))
+    assert crossed.status_code == 404
+    rows = await world.store.import_rows(t.id, "bank_deposits")
+    _only(STAMPS[whom], json.dumps(rows))
 
 
 async def test_the_tenant_list_shows_only_the_callers_subtree(client, world):

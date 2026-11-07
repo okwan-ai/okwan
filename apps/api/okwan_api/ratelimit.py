@@ -56,6 +56,9 @@ SUPPORT_TENANT = Rule("support:tenant", 40, 3600)
 #: system it reconciles, up to 5,000 records a side. A reused result does
 #: not count (recon_reuse.py).
 SQL_RECON_TENANT = Rule("sql:recon:tenant", 12, 60)
+#: File imports per target tenant: each one parses a file of up to 8 MB
+#: and writes up to 50,000 rows.
+IMPORT_TENANT = Rule("import:tenant", 30, 3600)
 #: Operator console unlock: a wrong authenticator code is a guess.
 OPS_UNLOCK = Rule("ops:unlock", 5, 900)
 OPS_UNLOCK_IP = Rule("ops:unlock:ip", 10, 900)
@@ -110,7 +113,7 @@ class Limiter:
 
 
 _RULES = (SIGNUP_IP, SIGNUP_ADDRESS, VERIFY_IP, SIGNIN_IP, SIGNIN_ADDRESS,
-          TEST_IP, TEST_TENANT, SQL_RECON_TENANT)
+          TEST_IP, TEST_TENANT, SQL_RECON_TENANT, IMPORT_TENANT)
 
 limiter = Limiter()
 

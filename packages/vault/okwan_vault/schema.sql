@@ -265,9 +265,55 @@ BEGIN
     END IF;
 END $$;
 
+-- ── imported files ──────────────────────────────────────────────────
+-- Settlement reports and bank statements a tenant uploaded (okwan_files).
+-- The file itself is never written: it is read in memory, refused or
+-- mapped, and only the mapped fields of each row are kept. A card number
+-- never is: a file holding one is refused whole (okwan_files.guard). Each
+-- file expires 13 months after upload; reads skip it from then, an upload
+-- prunes the tenant's expired files, and the API's hourly sweep deletes
+-- every tenant's. Deleting a file deletes its rows. Tenant data, under
+-- row-level security below.
+CREATE TABLE IF NOT EXISTS import_files (
+    id            text PRIMARY KEY,
+    tenant_id     text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    kind          text NOT NULL CHECK (kind IN ('settlement_batches', 'settlement_transactions',
+                                                'bank_deposits')),
+    filename      text NOT NULL,
+    format        text NOT NULL CHECK (format IN ('csv', 'xlsx', 'ofx')),
+    layout        text NOT NULL,
+    mapping       jsonb NOT NULL,
+    sha256        text NOT NULL,
+    row_count     integer NOT NULL,
+    skipped       integer NOT NULL DEFAULT 0,
+    skipped_rows  jsonb NOT NULL DEFAULT '[]',
+    card_columns  jsonb NOT NULL DEFAULT '[]',
+    first_date    date,
+    last_date     date,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    expires_at    timestamptz NOT NULL
+);
+
+-- The same file twice for the same kind is refused, not doubled.
+CREATE UNIQUE INDEX IF NOT EXISTS import_files_once_idx ON import_files (tenant_id, kind, sha256);
+CREATE INDEX IF NOT EXISTS import_files_expiry_idx ON import_files (expires_at);
+
+CREATE TABLE IF NOT EXISTS import_rows (
+    file_id    text NOT NULL REFERENCES import_files(id) ON DELETE CASCADE,
+    tenant_id  text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    kind       text NOT NULL,
+    n          integer NOT NULL,
+    row_date   date NOT NULL,
+    data       jsonb NOT NULL,
+    PRIMARY KEY (file_id, n)
+);
+
+-- Reads are one tenant's kind over a span of days, in a stable order.
+CREATE INDEX IF NOT EXISTS import_rows_read_idx ON import_rows (tenant_id, kind, row_date, file_id, n);
+
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
--- stored runs, support conversations and tickets) runs as okwan_tenant, inside one transaction that names
+-- stored runs, support conversations and tickets, imported files) runs as okwan_tenant, inside one transaction that names
 -- the tenants it may touch (PostgresStore._scoped). The policy below lets
 -- that role see, and write, only rows whose tenant_id is in that scope.
 -- With no scope it sees nothing and can write nothing. The WHERE
@@ -328,7 +374,8 @@ DECLARE
         $s$tenant_id = ANY (string_to_array(current_setting('okwan.tenant_ids', true), ','))$s$;
 BEGIN
     FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs',
-                             'support_conversations', 'support_tickets', 'support_replies'] LOOP
+                             'support_conversations', 'support_tickets', 'support_replies',
+                             'import_files', 'import_rows'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

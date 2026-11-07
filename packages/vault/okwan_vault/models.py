@@ -6,8 +6,9 @@ it. Neither the plaintext nor the master key is ever written down.
 from __future__ import annotations
 
 import base64
+import calendar
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 
 def _now() -> datetime:
@@ -75,6 +76,62 @@ RUNS_KEPT = 50
 
 #: A support conversation is kept this long after its last message.
 SUPPORT_KEPT_DAYS = 30
+
+#: An imported file is kept this long after upload: a card chargeback
+#: window and a year-over-year comparison (§9 2026-11-06).
+IMPORT_KEPT_MONTHS = 13
+
+#: Skipped row numbers kept on a file's record; the count is always whole.
+SKIPPED_ROWS_KEPT = 200
+
+
+def add_months(at: datetime, months: int) -> datetime:
+    """The same moment `months` later, on the month's last day if the day
+    does not exist there (31 January + 1 month is 28 or 29 February)."""
+    total = at.month - 1 + months
+    year, month = at.year + total // 12, total % 12 + 1
+    day = min(at.day, calendar.monthrange(year, month)[1])
+    return at.replace(year=year, month=month, day=day)
+
+
+class DuplicateImport(Exception):
+    """The same file, for the same kind, is already imported."""
+
+    def __init__(self, existing_id: str | None) -> None:
+        self.existing_id = existing_id
+        super().__init__(f"this file is already imported as {existing_id}" if existing_id
+                         else "this file is already imported")
+
+
+@dataclass(frozen=True, slots=True)
+class ImportFile:
+    """One uploaded file: what it was, how it was mapped, what it covers.
+
+    The file's bytes are never kept. Its rows hold only the mapped fields
+    (okwan_files), and both expire at `expires_at`.
+    """
+
+    id: str
+    tenant_id: str
+    #: settlement_batches | settlement_transactions | bank_deposits
+    kind: str
+    filename: str
+    #: csv | xlsx | ofx
+    format: str
+    #: The mapping's name, recorded on every row it produced.
+    layout: str
+    mapping: dict
+    sha256: str
+    row_count: int
+    skipped: int
+    skipped_rows: list
+    #: Card columns the file had. Never stored; at most four digits of a
+    #: masked one, through card_last4.
+    card_columns: list
+    first_date: date | None
+    last_date: date | None
+    created_at: datetime
+    expires_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

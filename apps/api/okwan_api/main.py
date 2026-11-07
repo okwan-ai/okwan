@@ -10,6 +10,7 @@ everything flows from the SDK definition.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 from contextlib import asynccontextmanager
@@ -37,6 +38,8 @@ import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.admin import build_router as build_admin_router
 from okwan_api.billing import build_router as build_billing_router
+from okwan_api.imports import build_router as build_imports_router
+from okwan_api.imports import sweeper as imports_sweeper
 from okwan_api.signup import build_router as build_signup_router
 from okwan_api.ops import build_router as build_ops_router
 from okwan_api.support import build_router as build_support_router
@@ -82,12 +85,17 @@ async def lifespan(_: FastAPI):
 
     Mounting an ASGI app does not run its lifespan, so the streamable
     HTTP transport's task group has to be entered here or every MCP
-    request fails before reaching a handler.
+    request fails before reaching a handler. The hourly sweep of expired
+    imports runs alongside, for the life of the process.
     """
     await open_store()
-    async with _mcp.session_manager.run():
-        yield
-    await close_store()
+    sweep = asyncio.create_task(imports_sweeper())
+    try:
+        async with _mcp.session_manager.run():
+            yield
+    finally:
+        sweep.cancel()
+        await close_store()
 
 
 app = FastAPI(
@@ -209,6 +217,7 @@ app.include_router(build_signup_router())
 app.include_router(build_support_router())
 app.include_router(build_ops_router())
 app.include_router(build_billing_router())
+app.include_router(build_imports_router())
 
 
 @app.exception_handler(RequestValidationError)

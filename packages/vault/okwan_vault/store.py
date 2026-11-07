@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
 from . import accounts, apikey
@@ -20,14 +20,19 @@ from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
+    IMPORT_KEPT_MONTHS,
     RUNS_KEPT,
+    SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
     ApiKey,
+    DuplicateImport,
+    ImportFile,
     RunRecord,
     SealedCredential,
     SupportConversation,
     SupportTicket,
     Tenant,
+    add_months,
 )
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
@@ -119,6 +124,25 @@ class Store(Protocol):
         self, operator: str, action: str, target: str | None, detail: dict | None
     ) -> None: ...
     async def operator_log(self, limit: int = 100) -> list[dict]: ...
+    async def add_import(
+        self, tenant_id: str, *, kind: str, filename: str, format: str, layout: str,
+        mapping: dict, sha256: str, rows: list[tuple[int, date, dict]], skipped: list[int],
+        card_columns: list[str], first_date: date | None, last_date: date | None,
+        now: datetime | None = None,
+    ) -> ImportFile: ...
+    async def list_imports(
+        self, tenant_id: str, kind: str | None = None, now: datetime | None = None
+    ) -> list[ImportFile]: ...
+    async def get_import(
+        self, tenant_id: str, file_id: str, now: datetime | None = None
+    ) -> ImportFile | None: ...
+    async def delete_import(self, tenant_id: str, file_id: str) -> bool: ...
+    async def import_rows(
+        self, tenant_id: str, kind: str, *, since: date | None = None,
+        until: date | None = None, after: tuple[date, str, int] | None = None,
+        limit: int = 500, now: datetime | None = None,
+    ) -> list[dict]: ...
+    async def sweep_imports(self, now: datetime | None = None) -> int: ...
 
 
 class MemoryStore:
@@ -147,6 +171,9 @@ class MemoryStore:
         self._factors: dict[str, SealedCredential] = {}
         self._operator_until: dict[str, datetime] = {}
         self._operator_log: list[dict] = []
+        self._imports: dict[str, ImportFile] = {}
+        #: file id → [(row number, row date, mapped fields)]
+        self._import_rows: dict[str, list[tuple[int, date, dict]]] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -186,6 +213,9 @@ class MemoryStore:
         self._tickets = {k: v for k, v in self._tickets.items() if v.tenant_id not in gone}
         self._replies = [r for r in self._replies if r["tenant_id"] not in gone]
         self._billing = {k: v for k, v in self._billing.items() if k not in gone}
+        for file_id in [k for k, v in self._imports.items() if v.tenant_id in gone]:
+            del self._imports[file_id]
+            self._import_rows.pop(file_id, None)
         return sorted(gone)
 
     async def save_billing(
@@ -605,6 +635,91 @@ class MemoryStore:
                 return logins[t.id]
             t = self._tenants.get(t.parent_id) if t.parent_id else None
         return None
+
+
+    # ── imported files ──────────────────────────────────────────────
+
+    async def add_import(
+        self, tenant_id: str, *, kind: str, filename: str, format: str, layout: str,
+        mapping: dict, sha256: str, rows: list[tuple[int, date, dict]], skipped: list[int],
+        card_columns: list[str], first_date: date | None, last_date: date | None,
+        now: datetime | None = None,
+    ) -> ImportFile:
+        """Store a mapped file's rows. The tenant's expired files go first,
+        so an upload never sits next to data it has outlived."""
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        now = now or datetime.now(UTC)
+        for old in [f for f in self._imports.values()
+                    if f.tenant_id == tenant_id and f.expires_at <= now]:
+            del self._imports[old.id]
+            self._import_rows.pop(old.id, None)
+        same = next((f for f in self._imports.values() if f.tenant_id == tenant_id
+                     and f.kind == kind and f.sha256 == sha256), None)
+        if same is not None:
+            raise DuplicateImport(same.id)
+        rec = ImportFile(
+            id=f"imp_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id, kind=kind,
+            filename=filename, format=format, layout=layout, mapping=dict(mapping),
+            sha256=sha256, row_count=len(rows), skipped=len(skipped),
+            skipped_rows=list(skipped[:SKIPPED_ROWS_KEPT]), card_columns=list(card_columns),
+            first_date=first_date, last_date=last_date, created_at=now,
+            expires_at=add_months(now, IMPORT_KEPT_MONTHS),
+        )
+        self._imports[rec.id] = rec
+        self._import_rows[rec.id] = [(n, d, dict(data)) for n, d, data in rows]
+        return rec
+
+    def _live_imports(self, tenant_id: str, now: datetime | None) -> list[ImportFile]:
+        now = now or datetime.now(UTC)
+        return [f for f in self._imports.values() if f.tenant_id == tenant_id and f.expires_at > now]
+
+    async def list_imports(
+        self, tenant_id: str, kind: str | None = None, now: datetime | None = None
+    ) -> list[ImportFile]:
+        found = [f for f in self._live_imports(tenant_id, now) if kind is None or f.kind == kind]
+        return sorted(found, key=lambda f: (f.created_at, f.id), reverse=True)
+
+    async def get_import(
+        self, tenant_id: str, file_id: str, now: datetime | None = None
+    ) -> ImportFile | None:
+        return next((f for f in self._live_imports(tenant_id, now) if f.id == file_id), None)
+
+    async def delete_import(self, tenant_id: str, file_id: str) -> bool:
+        f = self._imports.get(file_id)
+        if f is None or f.tenant_id != tenant_id:
+            return False
+        del self._imports[file_id]
+        self._import_rows.pop(file_id, None)
+        return True
+
+    async def import_rows(
+        self, tenant_id: str, kind: str, *, since: date | None = None,
+        until: date | None = None, after: tuple[date, str, int] | None = None,
+        limit: int = 500, now: datetime | None = None,
+    ) -> list[dict]:
+        """Mapped rows of one kind, oldest first, from files not expired.
+        `after` is the (row date, file id, row) of the last row already read."""
+        out = []
+        for f in self._live_imports(tenant_id, now):
+            if f.kind != kind:
+                continue
+            for n, d, data in self._import_rows.get(f.id, []):
+                key = (d, f.id, n)
+                if (since and d < since) or (until and d > until) or (after and key <= after):
+                    continue
+                out.append((key, {**data, "file_id": f.id, "row": n, "layout": f.layout}))
+        out.sort(key=lambda kv: kv[0])
+        return [row for _, row in out[:limit]]
+
+    async def sweep_imports(self, now: datetime | None = None) -> int:
+        """Delete every tenant's expired files and their rows."""
+        now = now or datetime.now(UTC)
+        gone = [k for k, f in self._imports.items() if f.expires_at <= now]
+        for file_id in gone:
+            del self._imports[file_id]
+            self._import_rows.pop(file_id, None)
+        return len(gone)
 
 
 async def resolver_for(store: Store, tenant_id: str, connectors=None):

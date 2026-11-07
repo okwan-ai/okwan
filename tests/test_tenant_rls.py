@@ -36,6 +36,9 @@ NO_TENANT_COLUMN = {"tenants", "signups", "operator_factors", "operator_actions"
 #: the login role. Each is reached only by the operator CLI, never by a
 #: route: `support list` shows the operator every escalation.
 OPERATOR_READS = {"list_tickets", "get_ticket"}
+#: Maintenance across every tenant, as the login role, like deleting a
+#: tenant: the hourly sweep deletes expired imports and reads nothing back.
+MAINTENANCE = {"sweep_imports"}
 
 
 # ── static: every query over tenant data enters a scope ────────────────
@@ -78,7 +81,7 @@ def test_every_store_method_over_tenant_data_runs_scoped():
     touching = {fn.name: fn for fn in _methods() if any(_DATA_SQL.search(s) for s in _sql_in(fn))}
     assert len(touching) >= 10, f"the check found too few methods to mean anything: {sorted(touching)}"
     unscoped = sorted(name for name, fn in touching.items()
-                      if not _enters_scope(fn) and name not in OPERATOR_READS)
+                      if not _enters_scope(fn) and name not in OPERATOR_READS | MAINTENANCE)
     assert not unscoped, (
         f"PostgresStore methods that read or write {TENANT_TABLES} as the login role, "
         f"outside row-level security: {unscoped}. Use `async with self._scoped(tenant_id)`."
@@ -144,6 +147,10 @@ async def two(store):
         ticket = await store.add_ticket(t.id, conversation_id=cid, severity="sev3", category="other",
                                         summary=f"{name} asked for help", notified=False)
         await store.add_reply(t.id, ticket.id, "owner@okwan.test", "We're on it.", True)
+        await store.add_import(
+            t.id, kind="bank_deposits", filename=f"{name}.csv", format="csv", layout="custom",
+            mapping={}, sha256=f"sha-{name}", rows=[(2, now.date(), {"fitid": name})], skipped=[],
+            card_columns=[], first_date=now.date(), last_date=now.date())
         out.append(t)
     return out
 
@@ -268,6 +275,13 @@ def _insert(table: str, tenant_id: str) -> tuple:
                             tenant_id),
         "support_replies": (("INSERT INTO support_replies (id, tenant_id, ticket_id, operator, body, "
                              "sent) VALUES ('rpl_rls_probe', $1, 't', 'o', 'b', true)"), tenant_id),
+        "import_files": (("INSERT INTO import_files (id, tenant_id, kind, filename, format, layout, "
+                          "mapping, sha256, row_count, expires_at) VALUES ('imp_rls_probe', $1, "
+                          "'bank_deposits', 'f.csv', 'csv', 'custom', '{}', 'probe', 0, $2)"),
+                         tenant_id, now),
+        "import_rows": (("INSERT INTO import_rows (file_id, tenant_id, kind, n, row_date, data) "
+                         "VALUES ('imp_rls_probe', $1, 'bank_deposits', 1, $2, '{}')"),
+                        tenant_id, now.date()),
     }[table]
 
 
