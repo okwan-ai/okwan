@@ -1,8 +1,8 @@
-"""The three shapes an imported file becomes.
+"""The shapes an imported file becomes.
 
 A tenant uploads a processor's batch report, a processor's transaction
-export or a bank statement, and a column mapping turns each row into one
-of these. Whatever processor or bank produced the file, the rows land in
+export, a bank statement, or a delivery platform's transaction or payout
+report, and a column mapping turns each row into one of these. Whatever processor or bank produced the file, the rows land in
 the same shape, so one reconciliation covers every source and a new
 processor is a mapping, not code (§9 2026-11-06, Tier 1 plan).
 
@@ -24,7 +24,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class _Provenance(BaseModel):
@@ -79,6 +79,79 @@ class BankDeposit(_Provenance):
     account_last4: str | None = Field(None, description="The last four digits of the account")
 
 
+class DeliveryLine(_Provenance):
+    """One line of a delivery platform's transaction report: an order, or a
+    charge or credit not tied to one (a marketing fee, an adjustment).
+
+    DoorDash, Uber Eats and Grubhub each export one; whatever the platform,
+    a line lands here. Every deduction is kept apart, as a positive amount,
+    so what the platform kept from a sale reads by kind of charge.
+    """
+
+    ordered_on: dt.date = Field(description="The day of the order or charge")
+    currency: str = Field(description="ISO 4217 code")
+    order_id: str | None = Field(None, description="The platform's order id; empty on a charge not tied to one")
+    transaction_id: str | None = Field(None, description="The platform's id for this line")
+    platform: str | None = Field(None, description="DoorDash, Uber Eats, Grubhub…, when the report names it")
+    store_id: str | None = Field(None, description="The platform's id for the store")
+    pos_order_ref: str | None = Field(
+        None, description="The point-of-sale order id the platform's integration passed, when it did")
+    status: str | None = Field(None, description="Delivered, cancelled…, as the report names it")
+    type: str | None = Field(None, description="Order, adjustment, marketing…, as the report names it")
+    subtotal_minor: int | None = Field(None, description="What the customer paid for the items, before tax")
+    tax_minor: int | None = Field(None, description="Tax the platform passed to the store")
+    tip_minor: int | None = Field(None, description="Tips to the store (not to the courier)")
+    commission_minor: int | None = Field(None, description="The platform's commission, a positive amount")
+    processing_fee_minor: int | None = Field(None, description="Payment processing fee, a positive amount")
+    marketing_minor: int | None = Field(
+        None, description="Marketing fees and store-funded promotions, a positive amount")
+    error_charges_minor: int | None = Field(
+        None, description="Charged back for a missing or wrong item, a positive amount")
+    refunds_minor: int | None = Field(None, description="Refunded to the customer at the store's cost, positive")
+    adjustments_minor: int | None = Field(None, description="Other adjustments, signed: a credit is positive")
+    net_minor: int | None = Field(
+        None, description="What this line adds to the payout; derived from the parts when the report has no column")
+    payout_id: str | None = Field(None, description="The payout that paid this line")
+    payout_on: dt.date | None = Field(None, description="The day of that payout")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def withheld_minor(self) -> int | None:
+        """What the platform kept from the sale: items, tax and tips, less what it paid."""
+        if self.subtotal_minor is None or self.net_minor is None:
+            return None
+        return self.subtotal_minor + (self.tax_minor or 0) + (self.tip_minor or 0) - self.net_minor
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def commission_rate_bps(self) -> int | None:
+        """Commission as a share of the subtotal, in basis points (2500 is 25%)."""
+        if not self.subtotal_minor or self.commission_minor is None:
+            return None
+        return round(self.commission_minor * 10_000 / self.subtotal_minor)
+
+
+class DeliveryPayout(_Provenance):
+    """One payout from a delivery platform to the store's bank account."""
+
+    payout_id: str = Field(description="The platform's payout id")
+    paid_on: dt.date = Field(description="The day the platform sent it")
+    net_minor: int = Field(description="What it paid")
+    currency: str = Field(description="ISO 4217 code")
+    platform: str | None = Field(None, description="DoorDash, Uber Eats, Grubhub…, when the report names it")
+    store_id: str | None = Field(None, description="The platform's id for the store")
+    status: str | None = Field(None, description="Paid, pending…, as the report names it")
+    period_start: dt.date | None = Field(None, description="The first day of sales it pays")
+    period_end: dt.date | None = Field(None, description="The last day of sales it pays")
+    sales_minor: int | None = Field(None, description="Sales in the payout, before deductions")
+    commission_minor: int | None = Field(None, description="Commission across the payout, a positive amount")
+    marketing_minor: int | None = Field(None, description="Marketing across the payout, a positive amount")
+    error_charges_minor: int | None = Field(None, description="Error charges across the payout, positive")
+    adjustments_minor: int | None = Field(None, description="Adjustments across the payout, signed")
+    payout_fee_minor: int | None = Field(
+        None, description="A fee on the payout itself (an instant payout), a positive amount")
+
+
 @dataclass(frozen=True, slots=True)
 class Kind:
     name: str
@@ -96,13 +169,21 @@ KINDS: dict[str, Kind] = {
              "Card transactions from a processor's export"),
         Kind("bank_deposits", BankDeposit, "posted_on",
              "Lines of a bank statement"),
+        Kind("delivery_lines", DeliveryLine, "ordered_on",
+             "Orders and charges from a delivery platform's transaction report"),
+        Kind("delivery_payouts", DeliveryPayout, "paid_on",
+             "Payouts from a delivery platform's payout report"),
     )
 }
 
 PROVENANCE = frozenset(_Provenance.model_fields)
 
 #: Deductions, stored as positive magnitudes whatever sign the file used.
-DEDUCTIONS = frozenset({"fees_minor", "chargebacks_minor", "fee_minor"})
+DEDUCTIONS = frozenset({
+    "fees_minor", "chargebacks_minor", "fee_minor",
+    "commission_minor", "processing_fee_minor", "marketing_minor", "error_charges_minor",
+    "refunds_minor", "payout_fee_minor",
+})
 
 #: Fields derived when the file has no column for them.
 DERIVED = frozenset({"fitid"})

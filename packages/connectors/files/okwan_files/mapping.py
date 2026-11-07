@@ -1,6 +1,6 @@
 """A column mapping: which column of a file fills which field.
 
-Generic only. A mapping names, for one of the three kinds, the column
+Generic only. A mapping names, for one kind, the column
 each field comes from, plus the few choices a file cannot state for
 itself: a currency when there is no column for it, whether dates are
 day-first, whether the decimal mark is a comma, which amounts the file
@@ -28,7 +28,8 @@ from .guard import is_card_column, last4
 from .parse import OFX_COLUMNS, Sheet
 from .schemas import DEDUCTIONS, DERIVED, KINDS, SPLIT_AMOUNT, fields_of
 
-KindName = Literal["settlement_batches", "settlement_transactions", "bank_deposits"]
+KindName = Literal["settlement_batches", "settlement_transactions", "bank_deposits",
+                   "delivery_lines", "delivery_payouts"]
 
 #: The most row errors a refusal lists.
 MAX_ERRORS = 10
@@ -226,7 +227,10 @@ def apply(mapping: Mapping, sheet: Sheet) -> Normalized:
         if not problems and mapping.kind == "bank_deposits" and not row.get("fitid"):
             row["fitid"] = _fitid(row, seen_fitids)
         if not problems and "net_minor" in specs and "net_minor" not in cols:
-            row["net_minor"] = _net(row)
+            row["net_minor"] = NET[mapping.kind](row)
+            if row["net_minor"] is None and mapping.kind in NET_REQUIRED:
+                problems.append("net is empty: map a net column, or the subtotal and the "
+                                "deductions it is derived from")
         if problems:
             bad_rows += 1
             if mapping.skip_invalid_rows:
@@ -336,6 +340,30 @@ def _net(row: dict) -> int | None:
         return None
     return (gross - (row.get("fees_minor") or 0) - (row.get("chargebacks_minor") or 0)
             + (row.get("adjustments_minor") or 0))
+
+
+#: What a delivery line adds to the payout when the report does not say:
+#: the sale (items, the tax and tips passed to the store) less every
+#: deduction, plus adjustments as signed. Which parts a platform reports
+#: differs, so a missing part counts as nothing; with none of them there
+#: is nothing to derive from.
+_LINE_ADDS = ("subtotal_minor", "tax_minor", "tip_minor")
+_LINE_TAKES = ("commission_minor", "processing_fee_minor", "marketing_minor",
+               "error_charges_minor", "refunds_minor")
+
+
+def _line_net(row: dict) -> int | None:
+    parts = (*_LINE_ADDS, *_LINE_TAKES, "adjustments_minor")
+    if all(row.get(p) is None for p in parts):
+        return None
+    return (sum(row.get(p) or 0 for p in _LINE_ADDS) - sum(row.get(p) or 0 for p in _LINE_TAKES)
+            + (row.get("adjustments_minor") or 0))
+
+
+#: How each kind that has a net derives it when the file has no column for it.
+NET = {"settlement_batches": _net, "delivery_lines": _line_net, "delivery_payouts": lambda row: None}
+#: Kinds whose rows mean nothing without a net: it must be mapped or derivable.
+NET_REQUIRED = frozenset({"delivery_lines"})
 
 
 def _fitid(row: dict, seen: dict[str, int]) -> str:

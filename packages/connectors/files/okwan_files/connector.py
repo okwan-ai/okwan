@@ -1,12 +1,13 @@
-"""Imported files as a connector: the three kinds, read back.
+"""Imported files as a connector: every kind, read back.
 
 What a tenant uploads (`okwan_api.imports`) is not an outside system, but
 reading it back is the same act as reading a rail: a paged list of
 records in a declared shape. So it is one connector, defined once here,
 and it gets REST routes, SQL tables (`files.settlement_batches`,
-`files.settlement_transactions`, `files.bank_deposits`) and MCP tools
-the way every connector does; a reconciliation reads it like any other
-side (`batches_deposits`). Every operation is a read. Upload and delete
+`files.settlement_transactions`, `files.bank_deposits`,
+`files.delivery_lines`, `files.delivery_payouts`) and MCP tools the way
+every connector does; a reconciliation reads it like any other side
+(`batches_deposits`, `delivery_payout_lines`). Every operation is a read. Upload and delete
 are Okwan's own administration, at `/v1/tenants/{id}/imports`, and never
 appear here.
 
@@ -36,7 +37,14 @@ from okwan_core.connector import ConnectorContext, OpType
 from okwan_core.pagination import CursorPage
 from pydantic import BaseModel, Field, field_validator
 
-from .schemas import KINDS, BankDeposit, SettlementBatch, SettlementTransaction
+from .schemas import (
+    KINDS,
+    BankDeposit,
+    DeliveryLine,
+    DeliveryPayout,
+    SettlementBatch,
+    SettlementTransaction,
+)
 
 _store: Callable[[], Any] | None = None
 
@@ -113,6 +121,10 @@ class ListImportedIn(BaseModel):
 class ListDepositsIn(ListImportedIn):
     direction: Literal["all", "in", "out"] = Field(
         default="all", description="`in`: money in only (deposits); `out`: money out only")
+    contains: list[str] | None = Field(
+        default=None, max_length=20,
+        description="Only lines whose statement text contains one of these words, any case "
+                    "(the payer's name a bank prints: DOORDASH, UBER)")
 
 
 class ListTransactionsIn(ListImportedIn):
@@ -171,5 +183,37 @@ async def list_transactions(
 @deposits.operation(OpType.LIST, ListDepositsIn, CursorPage[BankDeposit])
 async def list_deposits(ctx: ConnectorContext, body: ListDepositsIn) -> CursorPage[BankDeposit]:
     """List imported bank statement lines, oldest first, from files not expired."""
-    return CursorPage[BankDeposit].model_validate(
-        await _read("bank_deposits", ctx, body, body.direction))
+    page = await _read("bank_deposits", ctx, body, body.direction)
+    if body.contains:
+        # After the page is read, so the cursor still walks every line once.
+        words = [w.casefold() for w in body.contains if w.strip()]
+        page["items"] = [r for r in page["items"]
+                         if any(w in str(r.get("description") or "").casefold() for w in words)]
+    return CursorPage[BankDeposit].model_validate(page)
+
+
+delivery_lines = files.resource("delivery_lines", DeliveryLine, KINDS["delivery_lines"].description)
+delivery_payouts = files.resource("delivery_payouts", DeliveryPayout, KINDS["delivery_payouts"].description)
+
+
+class ListDeliveryLinesIn(ListImportedIn):
+    paid: bool | None = Field(
+        default=None, description="true: only lines a payout paid (a payout id); false: only lines not paid out yet")
+
+
+@delivery_lines.operation(OpType.LIST, ListDeliveryLinesIn, CursorPage[DeliveryLine])
+async def list_delivery_lines(ctx: ConnectorContext, body: ListDeliveryLinesIn) -> CursorPage[DeliveryLine]:
+    """List imported delivery platform lines (orders and charges), oldest first, from files not
+    expired. Each line keeps the platform's deductions apart; `withheld_minor` is what the platform
+    kept from the sale and `commission_rate_bps` its commission as a share of the subtotal."""
+    page = await _read("delivery_lines", ctx, body)
+    if body.paid is not None:
+        # After the page is read, so the cursor still walks every line once.
+        page["items"] = [r for r in page["items"] if bool(r.get("payout_id")) is body.paid]
+    return CursorPage[DeliveryLine].model_validate(page)
+
+
+@delivery_payouts.operation(OpType.LIST, ListImportedIn, CursorPage[DeliveryPayout])
+async def list_delivery_payouts(ctx: ConnectorContext, body: ListImportedIn) -> CursorPage[DeliveryPayout]:
+    """List imported delivery platform payouts, oldest first, from files not expired."""
+    return CursorPage[DeliveryPayout].model_validate(await _read("delivery_payouts", ctx, body))

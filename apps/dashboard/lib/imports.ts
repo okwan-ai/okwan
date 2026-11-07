@@ -5,17 +5,21 @@
  * /import-layouts, /imports/preview): what it holds, which fields a kind
  * has and which are required, and the mapping it suggests from the
  * column names. The words for a kind and a field are the dashboard's own.
- * Generic mapping only: no processor presets until real dealer files
+ * Generic mapping only: no processor or platform presets until real files
  * arrive (OKWAN_PROJECT.md §9 2026-11-07).
  */
 
-export const KINDS = ["settlement_batches", "settlement_transactions", "bank_deposits"] as const;
+export const KINDS = [
+  "settlement_batches", "settlement_transactions", "delivery_lines", "delivery_payouts", "bank_deposits",
+] as const;
 export type Kind = (typeof KINDS)[number];
 
 /** What each kind is, in a few words, and the file it comes from. */
 export const KIND_LABEL: Record<Kind, { short: string; long: string; from: string }> = {
   settlement_batches: { short: "Settlement batches", long: "Batches from a processor's settlement report", from: "Processor batch report" },
   settlement_transactions: { short: "Card transactions", long: "Transactions from a processor's export", from: "Processor transaction export" },
+  delivery_lines: { short: "Delivery orders", long: "Orders and charges from a delivery platform's report", from: "DoorDash, Uber Eats or Grubhub transactions" },
+  delivery_payouts: { short: "Delivery payouts", long: "Payouts from a delivery platform's report", from: "DoorDash, Uber Eats or Grubhub payouts" },
   bank_deposits: { short: "Bank statement", long: "Lines of a bank statement", from: "Bank statement (CSV, Excel or OFX)" },
 };
 
@@ -29,6 +33,8 @@ export function fieldLabel(field: string): string {
     mid: "Merchant ID (MID)", fitid: "Bank transaction id", card_last4: "Card, last 4 digits",
     account_last4: "Account, last 4 digits", order_ref: "Order or invoice number",
     credit: "Money in", debit: "Money out", auth_code: "Authorization code",
+    pos_order_ref: "POS order reference", payout_on: "Payout date", paid_on: "Paid on",
+    marketing_minor: "Marketing and promotions", payout_fee_minor: "Instant payout fee",
   };
   if (special[field]) return special[field];
   const words = field.replace(/_minor$/, "").replace(/_id$/, "_ID").replace(/_/g, " ");
