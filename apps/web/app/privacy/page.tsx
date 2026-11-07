@@ -70,6 +70,18 @@ const parts: Part[] = [
             names or email addresses from those services, and we do not store SQL queries or their results.
           </li>
           <li>
+            <strong>Files you import.</strong> Settlement reports, transaction exports and bank statements you
+            upload (CSV, Excel or OFX, up to 8 MB). The file is read in memory while it uploads and is never
+            stored. From each row we keep only the fields you map to it: references, dates, amounts, a merchant ID,
+            the statement text, and at most the last four digits of a card or account number. With them we keep
+            the file&rsquo;s name, the row each came from, the numbers of any rows that could not be read, and a
+            fingerprint of the file (its SHA-256 hash) so the same file is not imported twice. Statement text is
+            kept as your bank wrote it, so it can name the person or business that paid you. A file that holds a
+            full card number anywhere is refused before anything from it is stored; the refusal names the row and
+            column, never the number. Previewing a file stores nothing. A column mapping you save keeps only
+            column names and how to read them (currency, date order, decimal mark), never a value from a file.
+          </li>
+          <li>
             <strong>Usage.</strong> Hourly counts of requests for each account and surface (API, MCP, dashboard),
             used to apply your plan&rsquo;s limits.
           </li>
@@ -217,6 +229,8 @@ const parts: Part[] = [
             ["Sign-in sessions", "30 minutes without activity, 12 hours at most, or until you sign out"],
             ["Your Stripe ids and subscription state", "As long as your account exists. Stripe keeps its own payment records as the law requires"],
             ["Reconciliation results", "The newest 50 of each check, until your account is deleted"],
+            ["Files you import: their mapped rows and the file's record", "13 months from the upload, then deleted within the hour; at once if you delete the file"],
+            ["Column mappings you save", "Until you delete them or your account"],
             ["Usage counts", "As long as your account exists"],
             ["Support conversations", "30 days after the last message"],
             ["Support tickets and our replies", "As long as your account exists"],
@@ -238,6 +252,7 @@ const parts: Part[] = [
           <li>Passwords, session tokens and API keys stored only as hashes.</li>
           <li>Each account&rsquo;s data kept apart in the database by two independent controls, each tested on its own.</li>
           <li>Read-only access to your payment and commerce services: Okwan never moves money or changes your records there.</li>
+          <li>Files you import are read in memory and never stored; a file that holds a full card number is refused before anything from it is kept.</li>
           <li>Staff access only through the protected, logged console described above.</li>
         </ul>
         <p>
@@ -255,14 +270,18 @@ const parts: Part[] = [
         <ul>
           <li>You can remove saved connections and revoke API keys yourself in the dashboard at any time.</li>
           <li>
+            You can delete an imported file or a saved column mapping yourself, on the merchant&rsquo;s Files tab or
+            through the API. It is deleted at once.
+          </li>
+          <li>
             You can ask to see, correct, export or delete your information, or to object to or restrict how we use
             it. Email <Mail /> from your sign-in address. We will confirm the request is yours and answer within
             30 days.
           </li>
           <li>
             <strong>Delete your account.</strong> We delete the account, its merchants, its login, saved credentials,
-            API keys, check results, usage, support conversations, tickets and replies, within 30 days of your
-            request. The log of staff actions keeps only the entry recording that the deletion was made.
+            API keys, check results, imported files and saved mappings, usage, support conversations, tickets and
+            replies, within 30 days of your request. The log of staff actions keeps only the entry recording that the deletion was made.
           </li>
           <li>
             Depending on where you live (for example the EU, the UK, California, Ghana, Nigeria, Kenya or South
@@ -308,12 +327,14 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
+      updated="November 7, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>
           <ul className="mt-4">
             <li>Okwan only reads the services you connect. It never moves money or changes your records in them.</li>
             <li>Credentials you save are encrypted and used only to read your own records. Our staff tools never show them.</li>
+            <li>Files you import are read in memory. Only the columns you map are kept, for 13 months, and a file that holds a full card number is refused.</li>
             <li>We do not sell your information, show ads, or use tracking cookies.</li>
             <li>An AI assistant answers support questions first, with secrets removed, and a person handles what it cannot.</li>
             <li>Ask us to delete your account and we delete it, with everything in it, within 30 days.</li>

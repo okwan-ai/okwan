@@ -70,6 +70,11 @@ const parts: Part[] = [
           keeps the newest 50 results of each check.
         </li>
         <li>
+          Files you import are the one place records are kept, because you asked: the file is read in memory and
+          never stored, and only the columns you map are kept, for 13 months or until you delete the file. A file
+          that holds a full card number anywhere is refused before anything from it is kept.
+        </li>
+        <li>
           SQL you send runs in a sandbox held in memory: one read statement at a time, with no access to files,
           the network or extensions, and settings that cannot be changed from inside a query. Queries and their
           results are not stored.
@@ -177,7 +182,7 @@ const parts: Part[] = [
     body: (
       <p>
         The website, the dashboard, the API and the hosted MCP server are served only over HTTPS. Okwan reaches
-        Stripe, PayPal, Shopify, Paystack and WhatsApp over HTTPS, and its connection to our own database is
+        Stripe, PayPal, Shopify, Square, Clover, Paystack and WhatsApp over HTTPS, and its connection to our own database is
         encrypted; our database provider, Neon, accepts no other kind. If you connect your own Postgres database,
         the connection string you save decides whether that connection is encrypted, so include{" "}
         <code>sslmode=require</code>.
@@ -234,7 +239,7 @@ export default function Security() {
           <ul className="mt-4">
             <li>Okwan never writes to your payment, commerce or bank systems, so it cannot move money or change your records. The only thing it sends is alert messages you set up, through WhatsApp.</li>
             <li>Each saved credential is encrypted under its own key, which is in turn encrypted by one master key held in our host&rsquo;s encrypted settings. Moving that key to a cloud KMS is planned.</li>
-            <li>Your records are read in memory for each request. Only results are stored.</li>
+            <li>Records from your systems are read in memory for each request; only results are stored. From a file you import, only the columns you map are kept.</li>
             <li>Accounts are kept apart by two independent controls, each tested on its own.</li>
           </ul>
         </>
