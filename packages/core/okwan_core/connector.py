@@ -43,6 +43,11 @@ class ConnectorContext:
 
     client: Any
     credentials: dict[str, str]
+    #: The calling tenant, named by the platform from the key or session
+    #: that authenticated the request, never from a request body. Only a
+    #: connector over Okwan's own store (`files`) reads it; None where no
+    #: tenant is known (a local MCP server run from the environment).
+    tenant_id: str | None = None
 
 
 Handler = Callable[[ConnectorContext, BaseModel], Awaitable[BaseModel]]
@@ -127,16 +132,25 @@ class Connector:
         self.resources[name] = res
         return res
 
-    def context(self, credentials: dict[str, str]) -> ConnectorContext:
-        """Build a ready-to-call context with auth + rate limiting applied."""
+    def context(
+        self, credentials: dict[str, str], tenant_id: str | None = None
+    ) -> ConnectorContext:
+        """Build a ready-to-call context with auth + rate limiting applied.
+
+        `tenant_id` is the caller, set here and nowhere else, after any
+        factory has run, so no connector's factory can choose it.
+        """
         if self.context_factory is not None:
-            return self.context_factory(self, credentials)
-        client = OkwanClient(
-            base_url=self.base_url,
-            auth=self.auth.bind(credentials),
-            rate_limit=self.rate_limit,
-        )
-        return ConnectorContext(client=client, credentials=credentials)
+            ctx = self.context_factory(self, credentials)
+        else:
+            client = OkwanClient(
+                base_url=self.base_url,
+                auth=self.auth.bind(credentials),
+                rate_limit=self.rate_limit,
+            )
+            ctx = ConnectorContext(client=client, credentials=credentials)
+        ctx.tenant_id = tenant_id
+        return ctx
 
     def iter_operations(self) -> list[tuple[Resource, Operation]]:
         return [

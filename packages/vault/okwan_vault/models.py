@@ -84,6 +84,9 @@ IMPORT_KEPT_MONTHS = 13
 #: Skipped row numbers kept on a file's record; the count is always whole.
 SKIPPED_ROWS_KEPT = 200
 
+#: Saved column mappings per tenant.
+LAYOUTS_KEPT = 100
+
 
 def add_months(at: datetime, months: int) -> datetime:
     """The same moment `months` later, on the month's last day if the day

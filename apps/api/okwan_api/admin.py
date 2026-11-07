@@ -406,7 +406,7 @@ async def _probe(tenant_id: str, connector) -> dict[str, Any]:
                 "detail": f"not stored yet: {', '.join(missing)}"}
     secrets = [v for v in creds.values() if v]
     try:
-        ctx = connector.context(creds)
+        ctx = connector.context(creds, tenant_id=tenant_id)
         try:
             result = await op.handler(ctx, params)
         finally:

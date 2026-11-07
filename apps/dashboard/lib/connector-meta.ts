@@ -26,7 +26,7 @@ export type Declaration = {
 
 /** The order connectors are shown in: the orders, the payments a check
  *  reads, then the rest. A connector not listed sorts after these, by name. */
-export const ORDER = ["shopify", "paypal", "stripe", "paystack", "postgres", "whatsapp"] as const;
+export const ORDER = ["shopify", "paypal", "stripe", "paystack", "postgres", "whatsapp", "files"] as const;
 
 /** What each connector is, in a word. */
 export const ROLE: Record<string, string> = {
@@ -36,7 +36,15 @@ export const ROLE: Record<string, string> = {
   paystack: "Payments",
   postgres: "Database",
   whatsapp: "Messaging",
+  files: "Imported files",
 };
+
+/** A connector with credentials to save. One with none (`files`, which reads
+ *  each merchant's imported files as that merchant) is never "connected" or
+ *  "not connected": there is nothing to connect. */
+export function needsCredentials(c: { credential_fields: string[] }): boolean {
+  return c.credential_fields.length > 0;
+}
 
 /** Compare two connector names in ORDER, unknown names last and alphabetical. */
 export function byOrder(a: string, b: string): number {

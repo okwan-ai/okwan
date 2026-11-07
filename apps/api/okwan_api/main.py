@@ -27,6 +27,7 @@ import okwan_postgres.connector  # noqa: F401  (registers the connector)
 import okwan_shopify.connector  # noqa: F401  (registers the connector)
 import okwan_stripe.connector  # noqa: F401  (registers the connector)
 import okwan_whatsapp.connector  # noqa: F401  (registers the connector)
+import okwan_files.connector  # registers the connector; handed the store below
 from okwan_core import (
     CredentialError,
     OkwanError,
@@ -40,6 +41,7 @@ from okwan_api.admin import build_router as build_admin_router
 from okwan_api.billing import build_router as build_billing_router
 from okwan_api.imports import build_router as build_imports_router
 from okwan_api.imports import sweeper as imports_sweeper
+from okwan_api.auth import get_store as _get_store
 from okwan_api.signup import build_router as build_signup_router
 from okwan_api.ops import build_router as build_ops_router
 from okwan_api.support import build_router as build_support_router
@@ -163,7 +165,7 @@ def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
         credentials = await _credentials(connector, tenant)
         try:
             connector.auth.validate(credentials)
-            ctx = connector.context(credentials)
+            ctx = connector.context(credentials, tenant_id=tenant.id)
             try:
                 result = await op.handler(ctx, body)
             finally:
@@ -206,6 +208,9 @@ def _mount(connector: Connector, resource: Resource, op: Operation) -> None:
 for _connector in all_connectors():
     for _resource, _op in _connector.iter_operations():
         _mount(_connector, _resource, _op)
+
+# Imported files are read from the same store the vault uses.
+okwan_files.connector.use_store(_get_store)
 
 
 # Reconciliations span connectors, so they mount as one router rather

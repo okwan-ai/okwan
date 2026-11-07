@@ -77,7 +77,8 @@ async def fetch_side(
     op = connector.resources[ref.resource].operations[ref.operation]
     fields = op.input_model.model_fields
 
-    ctx = connector.context(resolver(connector.name, connector.auth.required_fields))
+    ctx = connector.context(resolver(connector.name, connector.auth.required_fields),
+                            tenant_id=getattr(resolver, "tenant_id", None))
     rows: list[Row] = []
     cursor: str | None = None
     last_page: Any = None

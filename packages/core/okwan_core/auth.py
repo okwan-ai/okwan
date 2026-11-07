@@ -82,3 +82,15 @@ class ConnectionStringAuth(AuthAdapter):
         raise NotImplementedError(
             "ConnectionStringAuth is transport-level; use a context_factory"
         )
+
+
+class NoCredentials(AuthAdapter):
+    """A connector that needs nothing from the vault: it reads Okwan's own
+    store for the calling tenant (`files`). Nothing to save, nothing to
+    send anywhere."""
+
+    required_fields: tuple[str, ...] = ()
+
+    def bind(self, credentials: dict[str, str]) -> httpx.Auth:
+        raise TypeError("NoCredentials is not an HTTP auth; use a context_factory")
+

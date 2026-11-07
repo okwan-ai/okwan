@@ -12,8 +12,10 @@ from .declaration import (
     ExactRef,
     Explains,
     Fuzzy,
+    GroupSum,
     Reconciliation,
     ResourceRef,
+    SettlementLag,
 )
 from .registry import register, register_across
 
@@ -237,4 +239,40 @@ rails = register_across(
     )
 )
 
-__all__ = ["rails", "shopify_orders", "shopify_paypal", "shopify_stripe"]
+
+
+#: A processor's batches against the bank deposits that paid them, both
+#: imported from files (Tier 1, `okwan_files`), whatever processor and bank
+#: produced them. A deposit pays the batches closed since the last one: a
+#: weekend's three land as one deposit, a holiday later still. So batches
+#: are grouped (E1), counted in US business days after they closed and
+#: never before (E2), and kept to one merchant id per deposit. The figure
+#: is each batch's net, which the importer derives as gross less fees and
+#: chargebacks plus adjustments when the report has no net column; a
+#: processor that deposits gross has its gross column mapped to net. Money
+#: out on the statement (a fee, a transfer) is not read at all.
+batches_deposits = register(
+    Reconciliation(
+        name="batches_deposits",
+        title="Processor batches vs bank deposits",
+        description=(
+            "Match a processor's settlement batches against the bank deposits that paid them, "
+            "both from imported files. Batches closed over a weekend or holiday are summed into "
+            "the one deposit that paid them, up to three US business days after they closed. "
+            "Reports batches never paid, deposits no batch explains, and deposits two groupings "
+            "of batches would both fit."
+        ),
+        left=ResourceRef(connector="files", resource="settlement_batches"),
+        right=ResourceRef(connector="files", resource="bank_deposits", params={"direction": "in"}),
+        keys=[
+            GroupSum(
+                many="left", amount="net_minor", amount_one="amount_minor",
+                timestamp_many="closed_on", timestamp_one="posted_on", share=("mid",),
+                lag=SettlementLag(max_days=3), ref_many="batch_id", ref_one="fitid",
+            ),
+        ],
+        lookback="120d",
+    )
+)
+
+__all__ = ["batches_deposits", "rails", "shopify_orders", "shopify_paypal", "shopify_stripe"]
