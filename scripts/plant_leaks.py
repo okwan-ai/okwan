@@ -68,6 +68,10 @@ LIST_NO_WHERE: Edit = (PG, '"WHERE tenant_id = $1 AND ($2::text IS NULL OR name 
                        '"WHERE $1::text IS NOT NULL AND ($2::text IS NULL OR name = $2) "')
 LATEST_NO_WHERE: Edit = (PG, '"WHERE tenant_id = ANY($1::text[]) AND kind = $2 AND name = $3 "',
                          '"WHERE $1::text[] IS NOT NULL AND kind = $2 AND name = $3 "')
+IMPORT_ROWS_NO_WHERE: Edit = (PG, '"WHERE r.tenant_id = $1 AND r.kind = $2 AND f.expires_at > $3 "',
+                              '"WHERE $1::text IS NOT NULL AND r.kind = $2 AND f.expires_at > $3 "')
+IMPORTS_NO_WHERE: Edit = (PG, 'import_files WHERE tenant_id = $1 AND id = $2 "\n                "AND expires_at',
+                          'import_files WHERE $1::text IS NOT NULL AND id = $2 "\n                "AND expires_at')
 ENGINE_OPEN: Edit = (SESSION, 'duckdb.connect(":memory:", config=SANDBOX)', 'duckdb.connect(":memory:")')
 #: The guard's reader names and its quoted-path rule, removed.
 GUARD_BLIND: Edit = (GUARD, "|\\b(read_\\w+|\\w+_scan|sniff_csv|query|query_table)\\s*\\(", "|(?!x)x")
@@ -112,6 +116,10 @@ BREAKS = [
     Break("Postgres get_run drops WHERE tenant_id", "held", (RUN_NO_WHERE,), WHERE_WALL),
     Break("Postgres list_runs drops WHERE tenant_id", "held", (LIST_NO_WHERE,), WHERE_WALL),
     Break("Postgres latest_runs drops WHERE tenant_id", "held", (LATEST_NO_WHERE,), WHERE_WALL),
+    Break("the memory store's imports ignore the tenant", "caught", ((STORE,
+          "if f.tenant_id == tenant_id and f.expires_at > now]", "if f.expires_at > now]"),)),
+    Break("Postgres import_rows drops WHERE tenant_id", "held", (IMPORT_ROWS_NO_WHERE,), WHERE_WALL),
+    Break("Postgres get_import drops WHERE tenant_id", "held", (IMPORTS_NO_WHERE,), WHERE_WALL),
     Break("the store never enters the restricted role", "held", (NO_SCOPE,), DB_WALL),
     Break("the query engine may read files and the network", "caught", (ENGINE_OPEN,)),
     Break("the statement guard misses the readers", "held", (GUARD_BLIND, GUARD_BLIND_PATHS),

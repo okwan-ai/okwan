@@ -223,6 +223,38 @@ If both are set and mail still does not arrive, Resend → *Domains*: the
 sending domain (`mail.okwan.ai`) must be verified, with click and open
 tracking off and TLS enforced.
 
+### File imports *(Tier 1)*
+
+**An upload answers 503** "file imports are not open yet": `OKWAN_IMPORTS_OPEN`
+is not `true` on the Render `okwan` service. That is deliberate until the
+privacy policy describes imported files (importer step 6); opening imports
+is the owner's call. Listing and deleting files work either way.
+
+**A customer says a file was refused.** The refusal says why, and it is
+one of:
+
+- *422, a card number*: some cell holds 12 to 19 digits that a card network
+  issues and that pass the Luhn check. The message names the row and the
+  column, never the number, and nothing from the file was kept. The
+  customer removes the column or masks it to the last four digits. Do not
+  ask them to send the file to us.
+- *400, the file*: not CSV, XLSX or OFX (an older `.xls` must be saved as
+  `.xlsx`), larger than 8 MB or 50,000 rows, or two columns with one name.
+- *400, the mapping*: `detail.problems` lists every field that does not fit
+  and, for rows that cannot be read, up to ten rows by number. Setting
+  `skip_invalid_rows` skips them instead and lists them on the file's record.
+- *409*: the same file is already imported for that kind; `existing_id`
+  names it. Delete it first to import it again.
+
+**Retention.** Each file and its rows expire 13 months after upload. Reads
+skip an expired file at once; the API deletes every tenant's expired
+files hourly (a warning "import sweep failed" in the logs means it will
+retry next hour). To delete them now:
+
+```bash
+python -m okwan_vault imports sweep
+```
+
 ### A customer's connection test fails *(Tier 1)*
 
 The dashboard's *Test* on a connection, or a 401 or 403 from a connector

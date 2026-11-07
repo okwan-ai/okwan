@@ -407,7 +407,19 @@ USAGE = """usage:
   python -m okwan_vault key issue <tenant_id>
   python -m okwan_vault key revoke <key_id>
   python -m okwan_vault cred set <tenant_id> <connector> <field>
-  python -m okwan_vault cred delete <tenant_id> <connector> <field>"""
+  python -m okwan_vault cred delete <tenant_id> <connector> <field>
+  python -m okwan_vault imports sweep"""
+
+
+async def imports_sweep() -> None:
+    """Delete every tenant's expired imports now. The API does this hourly;
+    this is for an operator who wants it done before the next round."""
+    store = await _store()
+    try:
+        gone = await store.sweep_imports()
+    finally:
+        await store.close()
+    print(f"deleted {gone} expired import{'s' if gone != 1 else ''}")
 
 
 def main(argv: list[str]) -> None:
@@ -440,6 +452,7 @@ def main(argv: list[str]) -> None:
         ("key", "revoke"): (key_revoke, 1),
         ("cred", "set"): (cred_set, 3),
         ("cred", "delete"): (cred_delete, 3),
+        ("imports", "sweep"): (imports_sweep, 0),
     }
     route = routes.get((verb, action))
     if route is None:

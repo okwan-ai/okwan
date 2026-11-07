@@ -49,6 +49,13 @@ STATIC_TAGS: list[tuple[str, str, str]] = [
     ("tenants", "Merchants & keys",
      ("Your merchants, their keys, connections, usage and saved checks. Takes a key or a dashboard "
      "session. Reading is free.")),
+    ("imports", "File imports",
+     ("Upload a processor's settlement report or transaction export, or a bank statement (CSV, XLSX "
+      "or OFX), with a column mapping into one of three kinds: settlement batches, settlement "
+      "transactions, bank deposits. The file is read in memory and never kept; only the mapped "
+      "fields of each row are stored, for 13 months. A file holding a full card number anywhere "
+      "is refused whole, and the refusal names the row and column, never the number. Takes a key "
+      "or a dashboard session. Not metered.")),
     ("accounts", "Accounts",
      "Sign-up, email verification and dashboard sessions."),
     ("support", "Support",
@@ -165,7 +172,7 @@ def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
         {"name": "Start here", "tags": ["reconciliations"]},
         {"name": "Connectors", "tags": connector_tags},
         {"name": "SQL", "tags": ["query"]},
-        {"name": "Your workspace", "tags": ["tenants", "accounts", "support"]},
+        {"name": "Your workspace", "tags": ["tenants", "imports", "accounts", "support"]},
         {"name": "Reference", "tags": ["catalog", "system"]},
     ]
 
@@ -192,6 +199,10 @@ TITLES: dict[tuple[str, str], str] = {
     ("get", "/v1/tenants/{tenant_id}/runs/{run_id}"): "Read a saved check",
     ("post", "/v1/tenants/{tenant_id}/reconciliations/across/{name}"): "Run the check for a merchant",
     ("post", "/v1/tenants/{tenant_id}/reconciliations/{name}"): "Run a reconciliation for a merchant",
+    ("post", "/v1/tenants/{tenant_id}/imports"): "Import a file",
+    ("get", "/v1/tenants/{tenant_id}/imports"): "List imported files",
+    ("get", "/v1/tenants/{tenant_id}/imports/{file_id}"): "Read an imported file's record",
+    ("delete", "/v1/tenants/{tenant_id}/imports/{file_id}"): "Delete an imported file",
     ("post", "/v1/signup"): "Sign up",
     ("post", "/v1/signup/verify"): "Verify an email address",
     ("post", "/v1/sessions"): "Sign in",

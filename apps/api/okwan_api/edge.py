@@ -3,12 +3,14 @@
 One pure ASGI middleware in front of every route, the hosted MCP mount
 included.
 
-**Size.** No request Okwan serves needs more than a few kilobytes: a SQL
-string, a credential, a sign-in. Anything over MAX_BODY_BYTES is refused
-with 413 before a handler, a JSON parser or the vault sees it, whether
-it declares its length or streams it in chunks. One uvicorn worker
-serves everyone, so a single oversized upload must not be able to hold
-it.
+**Size.** Almost no request Okwan serves needs more than a few kilobytes:
+a SQL string, a credential, a sign-in. Anything over MAX_BODY_BYTES is
+refused with 413 before a handler, a JSON parser or the vault sees it,
+whether it declares its length or streams it in chunks. One uvicorn
+worker serves everyone, so a single oversized upload must not be able to
+hold it. The one exception is a file import (`imports.py`), which carries
+a file of up to 8 MB as base64 and gets UPLOAD_MAX_BODY_BYTES, on that
+route only.
 
 **Headers.** Every response says: only over HTTPS (HSTS), never inside a
 frame, never sniff the type, send no referrer, and do not cache, since
@@ -20,12 +22,16 @@ A header a route sets itself is never overwritten.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
 from starlette.exceptions import HTTPException
 
 MAX_BODY_BYTES = 1024 * 1024
+#: An 8 MB file as base64 is 10.7 MB; the rest is the mapping and JSON.
+UPLOAD_MAX_BODY_BYTES = 12 * 1024 * 1024
+_UPLOAD = re.compile(r"^/v1/tenants/[^/]+/imports$")
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -63,7 +69,10 @@ class Edge:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        page = scope.get("path", "").startswith(PAGES)
+        path = scope.get("path", "")
+        page = path.startswith(PAGES)
+        limit = (UPLOAD_MAX_BODY_BYTES if scope.get("method") == "POST" and _UPLOAD.match(path)
+                 else self.max_body)
         started = False
 
         async def send_with_headers(message: Message) -> None:
@@ -78,8 +87,8 @@ class Edge:
             await send(message)
 
         declared = _content_length(scope)
-        if declared is not None and declared > self.max_body:
-            await self._refuse(send_with_headers)
+        if declared is not None and declared > limit:
+            await self._refuse(send_with_headers, limit)
             return
 
         seen = 0
@@ -89,8 +98,8 @@ class Edge:
             message = await receive()
             if message["type"] == "http.request":
                 seen += len(message.get("body", b""))
-                if seen > self.max_body:
-                    raise _TooLarge(self.max_body)
+                if seen > limit:
+                    raise _TooLarge(limit)
             return message
 
         try:
@@ -98,10 +107,10 @@ class Edge:
         except _TooLarge:
             if started:
                 raise
-            await self._refuse(send_with_headers)
+            await self._refuse(send_with_headers, limit)
 
-    async def _refuse(self, send: Send) -> None:
-        body = b'{"detail":"request body too large: the limit is %d bytes"}' % self.max_body
+    async def _refuse(self, send: Send, limit: int) -> None:
+        body = b'{"detail":"request body too large: the limit is %d bytes"}' % limit
         await send({"type": "http.response.start", "status": 413, "headers": [
             (b"content-type", b"application/json"), (b"content-length", str(len(body)).encode()),
             (b"connection", b"close"),

@@ -24,7 +24,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import asyncpg
@@ -34,14 +34,19 @@ from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
+    IMPORT_KEPT_MONTHS,
     RUNS_KEPT,
+    SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
     ApiKey,
+    DuplicateImport,
+    ImportFile,
     RunRecord,
     SealedCredential,
     SupportConversation,
     SupportTicket,
     Tenant,
+    add_months,
 )
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
@@ -58,6 +63,7 @@ TENANT_ROLE = "okwan_tenant"
 TENANT_TABLES = (
     "credentials", "usage", "plans", "reconciliation_runs",
     "support_conversations", "support_tickets", "support_replies",
+    "import_files", "import_rows",
 )
 
 
@@ -882,6 +888,114 @@ class PostgresStore:
             tenant_id,
         )
 
+    # ── imported files ──────────────────────────────────────────────
+
+    async def add_import(
+        self, tenant_id: str, *, kind: str, filename: str, format: str, layout: str,
+        mapping: dict, sha256: str, rows: list[tuple[int, date, dict]], skipped: list[int],
+        card_columns: list[str], first_date: date | None, last_date: date | None,
+        now: datetime | None = None,
+    ) -> ImportFile:
+        """Store a mapped file and its rows in one transaction, after pruning
+        the tenant's expired files. Rows go in by INSERT … SELECT FROM
+        unnest in chunks: COPY does not run under row-level security."""
+        now = now or datetime.now(UTC)
+        file_id = f"imp_{uuid.uuid4().hex[:16]}"
+        expires = add_months(now, IMPORT_KEPT_MONTHS)
+        try:
+            async with self._scoped(tenant_id) as con:
+                await con.execute(
+                    "DELETE FROM import_files WHERE tenant_id = $1 AND expires_at <= $2",
+                    tenant_id, now)
+                same = await con.fetchval(
+                    "SELECT id FROM import_files WHERE tenant_id = $1 AND kind = $2 AND sha256 = $3",
+                    tenant_id, kind, sha256)
+                if same is not None:
+                    raise DuplicateImport(same)
+                row = await con.fetchrow(
+                    "INSERT INTO import_files (id, tenant_id, kind, filename, format, layout, "
+                    "mapping, sha256, row_count, skipped, skipped_rows, card_columns, first_date, "
+                    "last_date, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, "
+                    "$8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15, $16) "
+                    f"RETURNING {_IMPORT_COLS}",
+                    file_id, tenant_id, kind, filename, format, layout, _dumps(mapping), sha256,
+                    len(rows), len(skipped), _dumps(skipped[:SKIPPED_ROWS_KEPT]),
+                    _dumps(card_columns), first_date, last_date, now, expires,
+                )
+                for start in range(0, len(rows), _IMPORT_CHUNK):
+                    chunk = rows[start:start + _IMPORT_CHUNK]
+                    await con.execute(
+                        "INSERT INTO import_rows (file_id, tenant_id, kind, n, row_date, data) "
+                        "SELECT $1, $2, $3, u.n, u.d, u.j::jsonb "
+                        "FROM unnest($4::int[], $5::date[], $6::text[]) AS u(n, d, j)",
+                        file_id, tenant_id, kind, [n for n, _, _ in chunk],
+                        [d for _, d, _ in chunk], [json.dumps(data) for _, _, data in chunk],
+                    )
+        except asyncpg.UniqueViolationError:
+            raise DuplicateImport(None) from None
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+        return _import(row)
+
+    async def list_imports(
+        self, tenant_id: str, kind: str | None = None, now: datetime | None = None
+    ) -> list[ImportFile]:
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                f"SELECT {_IMPORT_COLS} FROM import_files WHERE tenant_id = $1 "
+                "AND ($2::text IS NULL OR kind = $2) AND expires_at > $3 "
+                "ORDER BY created_at DESC, id DESC",
+                tenant_id, kind, now or datetime.now(UTC))
+        return [_import(r) for r in rows]
+
+    async def get_import(
+        self, tenant_id: str, file_id: str, now: datetime | None = None
+    ) -> ImportFile | None:
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                f"SELECT {_IMPORT_COLS} FROM import_files WHERE tenant_id = $1 AND id = $2 "
+                "AND expires_at > $3", tenant_id, file_id, now or datetime.now(UTC))
+        return None if row is None else _import(row)
+
+    async def delete_import(self, tenant_id: str, file_id: str) -> bool:
+        """The file and, by cascade, every row it produced."""
+        async with self._scoped(tenant_id) as con:
+            gone = await con.fetchval(
+                "DELETE FROM import_files WHERE tenant_id = $1 AND id = $2 RETURNING id",
+                tenant_id, file_id)
+        return gone is not None
+
+    async def import_rows(
+        self, tenant_id: str, kind: str, *, since: date | None = None,
+        until: date | None = None, after: tuple[date, str, int] | None = None,
+        limit: int = 500, now: datetime | None = None,
+    ) -> list[dict]:
+        """Mapped rows of one kind, oldest first, from files not expired.
+        `after` is the (row date, file id, row) of the last row already read."""
+        a_date, a_file, a_n = after if after else (None, None, None)
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                "SELECT r.file_id, r.n, r.data, f.layout FROM import_rows r "
+                "JOIN import_files f ON f.id = r.file_id AND f.tenant_id = r.tenant_id "
+                "WHERE r.tenant_id = $1 AND r.kind = $2 AND f.expires_at > $3 "
+                "AND ($4::date IS NULL OR r.row_date >= $4) "
+                "AND ($5::date IS NULL OR r.row_date <= $5) "
+                "AND ($6::date IS NULL OR (r.row_date, r.file_id, r.n) > ($6, $7::text, $8::int)) "
+                "ORDER BY r.row_date, r.file_id, r.n LIMIT $9",
+                tenant_id, kind, now or datetime.now(UTC), since, until, a_date, a_file, a_n, limit)
+        return [{**_loads(r["data"]), "file_id": r["file_id"], "row": r["n"], "layout": r["layout"]}
+                for r in rows]
+
+    async def sweep_imports(self, now: datetime | None = None) -> int:
+        """Delete every tenant's expired files, and by cascade their rows.
+
+        Across tenants on purpose, so as the login role, like deleting a
+        tenant: it reads nothing back and touches only what has expired.
+        """
+        status = await self.pool.execute(
+            "DELETE FROM import_files WHERE expires_at <= $1", now or datetime.now(UTC))
+        return int(status.split()[-1])
+
 async def _subtree(con, root_id: str) -> list[str]:
     """A tenant and everything below it. Recursive rather than a join on
     parent_id: the hierarchy is two levels today but this should not be
@@ -948,3 +1062,23 @@ def _run(row) -> RunRecord:
         finished_at=row["finished_at"], summary=_loads(row["summary"]),
         rows=_loads(row["rows"]), error=row["error"],
     )
+
+
+# ── imported files: row shapes ──────────────────────────────────────
+
+_IMPORT_COLS = ("id, tenant_id, kind, filename, format, layout, mapping, sha256, row_count, "
+                "skipped, skipped_rows, card_columns, first_date, last_date, created_at, expires_at")
+#: Rows per INSERT: six arrays of this length stay well inside one message.
+_IMPORT_CHUNK = 5000
+
+
+def _import(row) -> ImportFile:
+    return ImportFile(
+        id=row["id"], tenant_id=row["tenant_id"], kind=row["kind"], filename=row["filename"],
+        format=row["format"], layout=row["layout"], mapping=_loads(row["mapping"]) or {},
+        sha256=row["sha256"], row_count=row["row_count"], skipped=row["skipped"],
+        skipped_rows=_loads(row["skipped_rows"]) or [], card_columns=_loads(row["card_columns"]) or [],
+        first_date=row["first_date"], last_date=row["last_date"], created_at=row["created_at"],
+        expires_at=row["expires_at"],
+    )
+
