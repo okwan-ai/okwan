@@ -104,12 +104,17 @@ redeploy. SEV1 while it lasts.
 ### Wrong build
 
 *Looks like:* `/healthz` reports a different number of connectors than the
-monitor expects.
+code on `main` registers.
 
-Either a deploy shipped a build that failed to register a connector, or
-a connector was added or removed on purpose. In the second case, update
-`OKWAN_MONITOR_CONNECTORS` in the monitor workflow. In the first case,
-[roll back a deploy](#roll-back-a-deploy).
+The monitor counts the `import okwan_<name>.connector` lines in
+`apps/api/okwan_api/main.py`, which is how the API registers a connector,
+so adding or removing one needs no monitor change. For 20 minutes after a
+commit to `main`, a different count reads as that commit still deploying
+and passes. Past that, the running build is not `main`: check the Render
+deploy log for a failed or stuck deploy and redeploy, or, if the build
+itself fails to register a connector, [roll back a deploy](#roll-back-a-deploy).
+`OKWAN_MONITOR_CONNECTORS` in the monitor workflow pins a number when one
+must be forced.
 
 ### Slow
 
@@ -225,10 +230,18 @@ tracking off and TLS enforced.
 
 ### File imports *(Tier 1)*
 
-**An upload answers 503** "file imports are not open yet": `OKWAN_IMPORTS_OPEN`
-is not `true` on the Render `okwan` service. That is deliberate until the
-privacy policy describes imported files (importer step 6); opening imports
-is the owner's call. Listing and deleting files work either way.
+**Imports are open in production** since 7 November 2026: the owner set
+`OKWAN_IMPORTS_OPEN=true` on the Render `okwan` service once the privacy
+policy described imported files (importer step 6). **An upload answering
+503** "file imports are not open yet" therefore means the variable is gone
+or not `true` on that service (a new service, a changed environment group):
+put it back. Listing and deleting files work either way.
+
+**Sample files.** `docs/samples/imports/` holds a week of a café's
+processor batches, card transactions and bank statement (CSV and OFX), the
+mapping each needs and what the checks find in them. Use them to demo the
+importer, to reproduce a customer's question without their file, or to show
+a dealer the export shape that works.
 
 **A customer says a file was refused.** The refusal says why, and it is
 one of:
@@ -254,8 +267,9 @@ column names (or a saved mapping), and imports it. A 503 there reads
 
 **Reading them back.** Imported rows are the `files` connector:
 `POST /v1/files/{settlement_batches|settlement_transactions|bank_deposits}/list`,
-the SQL tables `files.*`, and the `batches_deposits` reconciliation (REST,
-`recon.batches_deposits`, `okwan_reconcile`). A listing
+the SQL tables `files.*`, and the reconciliations that read them:
+`batches_deposits` (batches against deposits), `square_payouts_deposits`
+and `clover_payments_settlements` (REST, `recon.<name>`, `okwan_reconcile`). A listing
 (`GET /v1/reconciliations`, `okwan_list_reconciliations`) says, per source,
 how many files cover which days, so "not runnable" with files of one kind
 only means the other kind has not been uploaded yet.

@@ -34,8 +34,33 @@ def _health(body: dict, status: int = 200):
 ])
 def test_the_api_check_names_the_failure(body, status, ok, anchor, monkeypatch):
     monkeypatch.setattr(monitor, "EXPECTED_CONNECTORS", 6)
+    monkeypatch.setattr(monitor, "commit_age", lambda: None)  # no deploy under way
     r = monitor.check_api(_client(_health(body, status)))
     assert (r.ok, r.runbook) == (ok, anchor)
+
+
+def test_the_expected_count_is_what_the_api_registers(monkeypatch):
+    """Counted in a fresh process: the API's own registry, not this test run's."""
+    import subprocess
+
+    monkeypatch.delenv("OKWAN_MONITOR_CONNECTORS", raising=False)
+    count = "import okwan_api.main; from okwan_core import all_connectors; print(len(all_connectors()))"
+    out = subprocess.run([sys.executable, "-c", count], capture_output=True, text=True, check=True)
+    assert monitor.expected_connectors() == int(out.stdout.strip().splitlines()[-1])
+
+
+def test_a_pinned_count_wins(monkeypatch):
+    monkeypatch.setenv("OKWAN_MONITOR_CONNECTORS", "4")
+    assert monitor.expected_connectors() == 4
+
+
+@pytest.mark.parametrize("age,ok", [(5 * 60, True), (45 * 60, False), (None, False)])
+def test_a_lower_count_just_after_a_commit_is_that_commit_deploying(age, ok, monkeypatch):
+    monkeypatch.setattr(monitor, "EXPECTED_CONNECTORS", 9)
+    monkeypatch.setattr(monitor, "commit_age", lambda: age)
+    r = monitor.check_api(_client(_health({"status": "ok", "vault": "postgres", "connectors": 8})))
+    assert (r.ok, r.runbook) == (ok, "#wrong-build")
+    assert "main registers 9" in r.detail and (("deploying" in r.detail) is ok)
 
 
 def test_an_unreachable_api_is_api_down():

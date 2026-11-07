@@ -1,0 +1,6 @@
+Transaction Date,Amount,Card,Card Brand,Auth Code,Transaction ID,Type,Fee
+10/09/2026,12.50,************1111,Visa,0A1B2C,T-20091,Sale,0.39
+10/09/2026,12.50,************2222,Mastercard,7Q8R9S,T-20092,Sale,0.39
+10/09/2026,46.00,************3333,Amex,4D5E6F,T-20093,Sale,1.61
+10/09/2026,8.75,************4444,Discover,1G2H3I,T-20094,Sale,0.28
+10/09/2026,-12.50,************1111,Visa,,T-20095,Refund,0.00

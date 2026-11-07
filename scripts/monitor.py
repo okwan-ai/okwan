@@ -12,7 +12,10 @@ from the symptom.
 Checks:
 
 * the API answers /healthz with the Postgres vault (not the in-memory
-  fallback) and the expected number of connectors;
+  fallback) and the number of connectors the code on main registers,
+  read from the API's own entry point, so adding a connector needs no
+  change here (a lower count within DEPLOY_GRACE_SECONDS of the last
+  commit is that commit still deploying, not a failure);
 * the dashboard and the site answer;
 * the hosted MCP endpoint completes an MCP handshake;
 * an authenticated call works end to end, when OKWAN_MONITOR_KEY is set:
@@ -29,19 +32,50 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import ssl
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 
 API = os.environ.get("OKWAN_MONITOR_API", "https://api.okwan.ai")
 DASHBOARD = os.environ.get("OKWAN_MONITOR_DASHBOARD", "https://app.okwan.ai")
 SITE = os.environ.get("OKWAN_MONITOR_SITE", "https://okwan.ai")
-EXPECTED_CONNECTORS = int(os.environ.get("OKWAN_MONITOR_CONNECTORS", "6"))
+ROOT = Path(__file__).resolve().parent.parent
+#: The API registers a connector by importing it in its entry point, one
+#: `import okwan_<name>.connector` each; the count of those is the count
+#: /healthz must report once the code on main is what runs.
+_REGISTERS = re.compile(r"^import okwan_\w+\.connector\b", re.MULTILINE)
+#: A Render deploy takes a few minutes; a commit younger than this whose
+#: count production does not show yet is deploying, not broken.
+DEPLOY_GRACE_SECONDS = 20 * 60
+
+
+def expected_connectors() -> int:
+    """`OKWAN_MONITOR_CONNECTORS` when it pins a number, else what the code registers."""
+    pinned = os.environ.get("OKWAN_MONITOR_CONNECTORS")
+    if pinned:
+        return int(pinned)
+    return len(_REGISTERS.findall((ROOT / "apps" / "api" / "okwan_api" / "main.py").read_text()))
+
+
+def commit_age() -> float | None:
+    """Seconds since the checked-out commit was made, or None outside a checkout."""
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), "log", "-1", "--format=%ct"],
+                             capture_output=True, text=True, timeout=10, check=True).stdout
+        return time.time() - int(out.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+EXPECTED_CONNECTORS = expected_connectors()
 CERT_WARN_DAYS = 14
 SLOW_SECONDS = 5.0
 TIMEOUT = httpx.Timeout(20.0)
@@ -77,8 +111,12 @@ def check_api(client: httpx.Client) -> Result:
     if body.get("vault") != "postgres":
         return Result("api", False, f"vault is {body.get('vault')!r}, not postgres", "#in-memory-vault", s)
     if body.get("connectors") != EXPECTED_CONNECTORS:
-        return Result("api", False, f"{body.get('connectors')} connectors, expected "
-                      f"{EXPECTED_CONNECTORS}", "#wrong-build", s)
+        seen = f"{body.get('connectors')} connectors, main registers {EXPECTED_CONNECTORS}"
+        age = commit_age()
+        if age is not None and age < DEPLOY_GRACE_SECONDS:
+            return Result("api", True, f"{seen}: the last commit is {int(age // 60)} min old, "
+                          "still deploying", "#wrong-build", s)
+        return Result("api", False, seen, "#wrong-build", s)
     return Result("api", s < SLOW_SECONDS, f"ok in {s:.2f}s" if s < SLOW_SECONDS else f"slow: {s:.2f}s",
                   "#slow", s)
 
