@@ -106,6 +106,27 @@ class SettlementLag(Frozen):
         return n is not None and self.min_days <= n <= self.max_days
 
 
+class Agree(Frozen):
+    """A field both sides of a fuzzy pair must not contradict.
+
+    Amount and day are weak alone: a café rings up two 12.50 coffees on
+    the same morning, and both sit in the processor's export. The card's
+    last four digits, or the authorization code, tell them apart. A
+    candidate whose value differs is no candidate at all; one where
+    either side lacks the field stays a candidate, because a column a
+    file does not carry is not evidence of a mismatch. Where both carry
+    it and agree, the pair's evidence says so.
+    """
+
+    left: str
+    right: str | None = Field(default=None, description="Path on the right side; defaults to `left`")
+    case_sensitive: bool = False
+
+    @property
+    def right_path(self) -> str:
+        return self.right or self.left
+
+
 class Fuzzy(Frozen):
     """Amount + currency inside a time window. Fallback after exact refs.
 
@@ -137,6 +158,10 @@ class Fuzzy(Frozen):
     lag: SettlementLag | None = Field(
         default=None,
         description="Settlement lag in business days; replaces `window` when set",
+    )
+    agree: tuple[Agree, ...] = Field(
+        default=(),
+        description="Fields a candidate must not contradict (a card's last four digits)",
     )
 
     @property

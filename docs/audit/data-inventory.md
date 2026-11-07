@@ -42,6 +42,7 @@ rails.
 | An uploaded file's bytes and every cell in it | The upload request (`okwan_api.imports`), at most 8 MB | The request ends; only the mapped fields of each row are stored, or nothing when the file is refused |
 | Rate-limit counters (IP, address, tenant) | Process memory, fixed windows | The window ends, or the process restarts |
 | PayPal access tokens | Process memory, keyed by SHA-256 of client id, secret and token URL | Expiry minus 60 seconds |
+| A Clover merchant's timezone and default currency | Process memory, one entry per connection, held weakly by that connection's transport and never shared between two | The connection closes |
 
 ## Where else data goes
 

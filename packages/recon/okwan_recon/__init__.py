@@ -1,5 +1,6 @@
 from .declaration import (
     MSISDN,
+    Agree,
     AmountRef,
     ExactRef,
     Explains,
@@ -18,6 +19,7 @@ from .runner import run
 
 __all__ = [
     "MSISDN",
+    "Agree",
     "Ambiguity",
     "AmountRef",
     "ExactRef",

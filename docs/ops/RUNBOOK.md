@@ -278,10 +278,17 @@ permission. Okwan cannot fix it. Ask the customer to create a new
 credential at the rail (Stripe restricted key, Shopify token with
 `read_orders` and `read_all_orders`, PayPal client id and secret, Square
 access token with `PAYMENTS_READ`, `PAYOUTS_READ`, `ORDERS_READ` and
-`MERCHANT_PROFILE_READ`) and save it in the dashboard under *Settings*.
-Never ask them to send it to you. A Square 401 with a token that looks
-right is most often `environment` set to the other one: a production
-token needs `production`, a sandbox token `sandbox`.
+`MERCHANT_PROFILE_READ`, Clover merchant API token with read permission
+on Merchant, Orders and Payments) and save it in the dashboard under
+*Settings*. Never ask them to send it to you. A Square 401 with a token
+that looks right is most often `environment` set to the other one: a
+production token needs `production`, a sandbox token `sandbox`. The same
+holds for Clover, plus two Clover-only causes: a `merchant_id` that is not
+the merchant the token was made for (Clover answers both as a bare 401),
+and an *emulator* token from the developer dashboard's Test Merchants key
+icon, which is for Clover's Android emulator and never works on the REST
+API. The right token comes from the merchant dashboard: *Settings*, *View
+all settings*, *API tokens*, *Create new token*.
 
 ### A rail is down *(Tier 1)*
 

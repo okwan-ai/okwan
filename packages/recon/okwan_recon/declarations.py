@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from .across import AcrossRails, Rail
 from .declaration import (
+    Agree,
     AmountRef,
     ExactRef,
     Explains,
     Fuzzy,
+    GroupRef,
     GroupSum,
     Reconciliation,
     ResourceRef,
@@ -333,5 +335,72 @@ square_payouts_deposits = register(
     )
 )
 
-__all__ = ["batches_deposits", "rails", "shopify_orders", "shopify_paypal", "shopify_stripe",
-           "square_payments_payouts", "square_payouts_deposits"]
+#: Each Clover ticket against the payments recorded on it. A ticket is paid
+#: when the `amount` of its successful payments sums to its total, both
+#: before the tip; a split check is several payments on one order, summed.
+#: What it finds: tickets with nothing taken (a walkout, a payment voided
+#: after the ticket was closed), tickets paid short or twice, and payments
+#: on no ticket in the window. A ticket still open now is unpaid because it
+#: is open: the most recent ones are expected to read that way.
+clover_orders_payments = register(
+    Reconciliation(
+        name="clover_orders_payments",
+        title="Clover orders vs payments",
+        description=(
+            "Match each Clover order against the successful payments recorded on it, by order id; "
+            "a split check's payments are summed. Reports orders with no payment, orders paid "
+            "short or over their total, and payments on no order in the window."
+        ),
+        left=ResourceRef(connector="clover", resource="orders", params={"skip_empty": True}),
+        right=ResourceRef(connector="clover", resource="payments", params={"result": "SUCCESS"}),
+        keys=[GroupRef(left="id", right="order_id", many="right", case_sensitive=True)],
+        amount=AmountRef(left="total_minor", right="amount_minor"),
+        lookback="60d",
+    )
+)
+
+
+#: Each Clover card payment against the processor's export of what it
+#: settled, from an imported file (`files.settlement_transactions`). Clover
+#: reports neither the processor nor the bank, and no reference is common
+#: to every processor's export, so it is the charge (amount plus tip), the
+#: currency and the business day: the export dates a transaction on the
+#: sale's own day in the merchant's timezone, or the next business day
+#: where it dates by batch. Amount and day cannot tell two same-sized
+#: sales apart, so the card's last four digits and the authorization code
+#: must not disagree where both sides carry them; two candidates that
+#: still both fit are ambiguous, never guessed between. What it finds:
+#: card sales the processor never settled (a batch that did not close, an
+#: offline sale declined when the device reconnected), and settled
+#: transactions with no Clover payment. Refunds are their own export rows
+#: and are not read here.
+clover_payments_settlements = register(
+    Reconciliation(
+        name="clover_payments_settlements",
+        title="Clover card payments vs processor settlement",
+        description=(
+            "Match each successful Clover card payment against the processor's settled "
+            "transactions from an imported export, by the amount charged and the currency, on the "
+            "sale's day or the next business day, where the card's last four digits and the "
+            "authorization code do not disagree. Reports card sales the processor never settled "
+            "and settled transactions with no Clover payment."
+        ),
+        left=ResourceRef(connector="clover", resource="payments",
+                         params={"result": "SUCCESS", "card_only": True}),
+        right=ResourceRef(connector="files", resource="settlement_transactions",
+                          params={"direction": "in"}),
+        keys=[
+            Fuzzy(
+                amount="total_minor", currency="currency", amount_right="amount_minor",
+                timestamp_left="created_on", timestamp_right="transacted_on",
+                lag=SettlementLag(max_days=1),
+                agree=(Agree(left="card_last4"), Agree(left="auth_code")),
+            ),
+        ],
+        lookback="120d",
+    )
+)
+
+__all__ = ["batches_deposits", "clover_orders_payments", "clover_payments_settlements", "rails",
+           "shopify_orders", "shopify_paypal", "shopify_stripe", "square_payments_payouts",
+           "square_payouts_deposits"]

@@ -26,7 +26,7 @@ export type Declaration = {
 
 /** The order connectors are shown in: the orders, the payments a check
  *  reads, then the rest. A connector not listed sorts after these, by name. */
-export const ORDER = ["shopify", "paypal", "stripe", "square", "paystack", "postgres", "whatsapp", "files"] as const;
+export const ORDER = ["shopify", "paypal", "stripe", "square", "clover", "paystack", "postgres", "whatsapp", "files"] as const;
 
 /** What each connector is, in a word. */
 export const ROLE: Record<string, string> = {
@@ -34,6 +34,7 @@ export const ROLE: Record<string, string> = {
   paypal: "Payments",
   stripe: "Payments",
   square: "Point of sale",
+  clover: "Point of sale",
   paystack: "Payments",
   postgres: "Database",
   whatsapp: "Messaging",

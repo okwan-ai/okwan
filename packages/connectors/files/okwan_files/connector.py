@@ -115,6 +115,11 @@ class ListDepositsIn(ListImportedIn):
         default="all", description="`in`: money in only (deposits); `out`: money out only")
 
 
+class ListTransactionsIn(ListImportedIn):
+    direction: Literal["all", "in", "out"] = Field(
+        default="all", description="`in`: sales only (a positive amount); `out`: refunds only")
+
+
 def _span(since: date | None, until: date | None) -> dict[str, datetime | None]:
     return {
         "span_start": datetime.combine(since, time.min, UTC) if since else None,
@@ -154,13 +159,13 @@ async def list_batches(ctx: ConnectorContext, body: ListImportedIn) -> CursorPag
     return CursorPage[SettlementBatch].model_validate(await _read("settlement_batches", ctx, body))
 
 
-@transactions.operation(OpType.LIST, ListImportedIn, CursorPage[SettlementTransaction])
+@transactions.operation(OpType.LIST, ListTransactionsIn, CursorPage[SettlementTransaction])
 async def list_transactions(
-    ctx: ConnectorContext, body: ListImportedIn
+    ctx: ConnectorContext, body: ListTransactionsIn
 ) -> CursorPage[SettlementTransaction]:
     """List imported settlement transactions, oldest first, from files not expired."""
     return CursorPage[SettlementTransaction].model_validate(
-        await _read("settlement_transactions", ctx, body))
+        await _read("settlement_transactions", ctx, body, body.direction))
 
 
 @deposits.operation(OpType.LIST, ListDepositsIn, CursorPage[BankDeposit])

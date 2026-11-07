@@ -12,7 +12,15 @@ from itertools import combinations
 from typing import Any
 
 from .coverage import Coverage
-from .declaration import MSISDN, ExactRef, Fuzzy, GroupRef, GroupSum, Reconciliation
+from .declaration import (
+    MSISDN,
+    Agree,
+    ExactRef,
+    Fuzzy,
+    GroupRef,
+    GroupSum,
+    Reconciliation,
+)
 from .paths import dig
 
 Row = dict[str, Any]
@@ -313,6 +321,21 @@ def _identity_disagrees(spec: MSISDN | None, left: Row, right: Row) -> bool:
     return verdict is False
 
 
+def _agreement(rules: tuple[Agree, ...], left: Row, right: Row) -> list[str] | None:
+    """The fields both records carry and agree on, or None when one of
+    them contradicts. A field either side lacks says nothing either way."""
+    agreed: list[str] = []
+    for rule in rules:
+        l_key = _ref_key(dig(left, rule.left), rule.case_sensitive)
+        r_key = _ref_key(dig(right, rule.right_path), rule.case_sensitive)
+        if l_key is None or r_key is None:
+            continue
+        if l_key != r_key:
+            return None
+        agreed.append(rule.left)
+    return agreed
+
+
 def _apply_exact(
     rule: ExactRef, left: list[Row], right: list[Row], out: ReconResult
 ) -> tuple[list[Row], list[Row]]:
@@ -392,13 +415,17 @@ def _apply_fuzzy(
                 continue
             if _identity_disagrees(identity, l, r):
                 continue
+            agreed = _agreement(rule.agree, l, r)
+            if agreed is None:
+                continue  # same money, same day, a different card
+            corroborated = {"agreed": agreed} if agreed else {}
             if rule.lag is not None:
                 # Settlement runs one way, in business days (E2).
                 days = rule.lag.days(dig(l, rule.timestamp_left), dig(r, rule.timestamp_right))
                 if days is None or not rule.lag.min_days <= days <= rule.lag.max_days:
                     continue
                 gap = days / (rule.lag.max_days + 1) * span
-                candidates.append((r, gap, {"lag": _lag_evidence(rule.lag, days)}))
+                candidates.append((r, gap, {"lag": _lag_evidence(rule.lag, days), **corroborated}))
                 continue
             r_ts = _as_dt(dig(r, rule.timestamp_right))
             if l_ts and r_ts:
@@ -407,7 +434,8 @@ def _apply_fuzzy(
                     continue
             else:
                 gap = span
-            candidates.append((r, gap, {"window": rule.window, "gap_seconds": int(gap) if l_ts and r_ts else None}))
+            candidates.append((r, gap, {"window": rule.window, "gap_seconds": int(gap) if l_ts and r_ts else None,
+                                        **corroborated}))
 
         if not candidates:
             still_left.append(l)
