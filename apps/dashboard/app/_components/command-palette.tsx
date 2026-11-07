@@ -101,6 +101,7 @@ export function CommandPalette({ merchants, connectors, verdicts, findings }: {
         { id: `m-${m.id}`, group: "Merchants", label: m.name, hint, href: base, keywords: m.id },
         { id: `m-${m.id}-f`, group: "Merchant tabs", label: `${m.name}: Findings`, href: `${base}?tab=findings`, keywords: `${m.id} findings result check` },
         { id: `m-${m.id}-c`, group: "Merchant tabs", label: `${m.name}: Connections`, href: `${base}?tab=connections`, keywords: `${m.id} rails credentials connect` },
+        { id: `m-${m.id}-i`, group: "Merchant tabs", label: `${m.name}: Files`, href: `${base}?tab=files`, keywords: `${m.id} import upload statement batches deposits csv` },
         { id: `m-${m.id}-a`, group: "Merchant tabs", label: `${m.name}: Agent setup`, href: `/agents?merchant=${encodeURIComponent(m.id)}`, keywords: `${m.id} key mcp agent` },
         { id: `m-${m.id}-u`, group: "Merchant tabs", label: `${m.name}: Usage`, href: `/settings?tab=plan&merchant=${encodeURIComponent(m.id)}`, keywords: `${m.id} usage requests plan` },
       ];

@@ -19,6 +19,8 @@ export type ApiResult<T> = { ok: true; status: number; data: T } | {
   ok: false;
   status: number;
   detail: string;
+  /** Every problem, when the API lists them (an import's mapping). */
+  problems?: string[];
 };
 
 export async function api<T>(
@@ -43,7 +45,7 @@ export async function api<T>(
   }
   if (res.status === 204) return { ok: true, status: 204, data: undefined as T };
   const payload = await res.json().catch(() => ({}));
-  if (!res.ok) return { ok: false, status: res.status, detail: describe(payload) };
+  if (!res.ok) return { ok: false, status: res.status, detail: describe(payload), problems: problemsOf(payload) };
   return { ok: true, status: res.status, data: payload as T };
 }
 
@@ -86,11 +88,15 @@ function address(value: string | null): string {
   return v4 || v6 ? v : "";
 }
 
-/** FastAPI errors are a string or a list of {loc, msg}. Never an input value:
- * the API's 422 handler strips those before they leave. */
+/** FastAPI errors are a string or a list of {loc, msg}, or an object with a
+ * message (an import's refusal). Never an input value: the API's 422
+ * handler strips those before they leave. */
 function describe(payload: { detail?: unknown }): string {
   const d = payload?.detail;
   if (typeof d === "string") return d;
+  if (d && typeof d === "object" && !Array.isArray(d) && typeof (d as { message?: unknown }).message === "string") {
+    return (d as { message: string }).message;
+  }
   if (Array.isArray(d)) {
     return d
       .map((e: { loc?: unknown[]; msg?: string }) =>
@@ -162,4 +168,10 @@ export function sameOrigin(req: Request): boolean {
   } catch {
     return false;
   }
+}
+
+/** The list an import's refusal carries (`detail.problems`), if any. */
+function problemsOf(payload: { detail?: unknown }): string[] | undefined {
+  const d = payload?.detail as { problems?: unknown } | undefined;
+  return d && typeof d === "object" && Array.isArray(d.problems) ? d.problems.map(String) : undefined;
 }

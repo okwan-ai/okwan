@@ -246,6 +246,12 @@ one of:
 - *409*: the same file is already imported for that kind; `existing_id`
   names it. Delete it first to import it again.
 
+**In the dashboard.** A merchant's *Files* tab lists its imported files
+and saved mappings, each deletable; *Import a file* reads the file in the
+browser, shows its columns and first rows, starts the mapping from the
+column names (or a saved mapping), and imports it. A 503 there reads
+"File imports aren't open for this workspace yet".
+
 **Reading them back.** Imported rows are the `files` connector:
 `POST /v1/files/{settlement_batches|settlement_transactions|bank_deposits}/list`,
 the SQL tables `files.*`, and the `batches_deposits` reconciliation (REST,
@@ -521,12 +527,14 @@ issue.
 Part of `web (dashboard)`, so required. The owner's rule (§9 2026-11-06):
 nothing on a page may overlap. The job builds the dashboard, starts the
 API with an in-memory workspace (`scripts/ui_server.py`: *Acme ISV* with
-*Kofi's Store*, every rail connected and one real check over fixture
-rows, and *Accra Coffee Co.* with only Stripe), and runs
-`apps/dashboard/scripts/layout-check.mjs`. It opens the sign-in pages and
-every signed-in page, a merchant and a connector included, at 1670, 1366,
-1024 and 390px, and fails if any visible text overlaps other text, a page
-scrolls sideways, or anything covers an item of the open account menu.
+*Kofi's Store*, every rail connected, one real check over fixture rows,
+and two imported files with their mappings saved, and *Accra Coffee Co.*
+with only Stripe), and runs `apps/dashboard/scripts/layout-check.mjs`. It
+opens the sign-in pages and every signed-in page, a merchant's three tabs,
+its import page (also with a file chosen, so the column-matching form is
+checked) and a connector included, at 1670, 1366, 1024 and 390px, and
+fails if any visible text overlaps other text, a page scrolls sideways, or
+anything covers an item of the open account menu.
 
 **When it fails:** the job's summary has a `layout-check` artifact with a
 full-page screenshot of each failing page, named by width and path, and

@@ -3,8 +3,10 @@ import { apiUrl } from "@/lib/api";
 import { ATTENTION, missingFor, rowKey, toFinding } from "@/lib/finding";
 import { configured, connectors, railState } from "@/lib/merchants";
 import { defaultTab, tabOf } from "@/lib/merchant-tabs";
+import { importedFiles, savedLayouts } from "@/lib/merchant-files";
 import { latestRuns, runHistory, storedRun } from "@/lib/stored-runs";
 import { ConnectionsGrid } from "../../_components/connections-grid";
+import { FilesPanel } from "../../_components/files-panel";
 import { FindingsPanel } from "../../_components/findings-panel";
 import { RunHistory } from "../../_components/run-history";
 
@@ -30,6 +32,18 @@ export default async function MerchantPage({
   const [catalog, stored, latest] = await Promise.all([connectors(), configured(id), latestRuns(id)]);
   const ready = catalog.ok && stored.ok ? missingFor(railState(catalog.data, stored.data.configured)).length === 0 : true;
   const active = tabOf(tab, defaultTab(ready, Boolean(latest?.[id])), Boolean(order || runParam));
+
+  if (active === "files") {
+    const [files, layouts] = await Promise.all([importedFiles(id), savedLayouts(id)]);
+    return (
+      <FilesPanel
+        tenantId={id}
+        files={files.ok ? files.data.imports : []}
+        layouts={layouts.ok ? layouts.data.layouts : []}
+        unavailable={!files.ok || !layouts.ok}
+      />
+    );
+  }
 
   if (active === "connections") {
     if (!catalog.ok || !stored.ok) return null;
