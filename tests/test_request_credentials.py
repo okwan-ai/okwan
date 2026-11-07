@@ -253,19 +253,30 @@ async def test_hosted_reconcile_is_metered(store, keyed, instant_run):
     assert await _usage(store, tenant) == {"mcp:reconcile": 1}
 
 
-async def test_hosted_query_is_metered(store, keyed, monkeypatch):
+async def test_hosted_query_is_metered_when_it_reads_a_provider(store, keyed, monkeypatch):
+    """A query counts when it read upstream (a connector table, a live
+    run). One answered from a reused run, or naming no table, read
+    nothing and is free, like reading a stored result (§3.4)."""
     from okwan_api.auth import set_store
-    from okwan_query import mcp_http
+    from okwan_query.session import QuerySession
 
     set_store(store)
     tenant, key = keyed
 
-    async def answered(self, sql):
+    async def read_upstream(self, sql):
+        self.upstream_reads = 1
         return {"rows": [], "row_count": 0}
 
-    monkeypatch.setattr(mcp_http.QuerySession, "query", answered)
-    await _hosted("okwan_query")(ctx=_ctx(key), sql="SELECT 1")
+    async def read_nothing(self, sql):
+        return {"rows": [], "row_count": 0}
+
+    monkeypatch.setattr(QuerySession, "query", read_upstream)
+    await _hosted("okwan_query")(ctx=_ctx(key), sql="SELECT * FROM stripe.charges")
     await _hosted("okwan_describe_tables")(ctx=_ctx(key))
+    assert await _usage(store, tenant) == {"mcp:query": 1}
+
+    monkeypatch.setattr(QuerySession, "query", read_nothing)
+    await _hosted("okwan_query")(ctx=_ctx(key), sql="SELECT 1")
     assert await _usage(store, tenant) == {"mcp:query": 1}
 
 
