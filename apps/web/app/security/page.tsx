@@ -20,7 +20,7 @@ function KeyPlan({ label, rows }: { label: string; rows: [string, string][] }) {
 
 export const metadata: Metadata = {
   title: "Security — Okwan",
-  description: "How Okwan reads your services, encrypts the credentials you save, keeps accounts apart, and what is not in place yet.",
+  description: "How Okwan reads your systems without writing to them, encrypts the credentials you save, keeps accounts apart, and what is not in place yet.",
   alternates: { canonical: "/security" },
 };
 
@@ -34,20 +34,22 @@ export const metadata: Metadata = {
 const parts: Part[] = [
   {
     id: "read-only",
-    title: "Read-only to your payment and commerce services",
+    title: "Read-only to your payment, commerce and bank systems",
     body: (
       <>
         <p>
-          Okwan never moves money, issues a refund, or changes a record in a service you connect. This is not a
-          setting: every operation a connector offers is declared once, and a reconciliation built on anything but
-          a read is refused before it can run. No operation in Okwan can write to a payment or commerce service.
+          Okwan never writes to your payment, commerce or bank systems. The only thing it sends is alert messages
+          you set up, through WhatsApp.
         </p>
         <p>
-          The one connector that can send anything is WhatsApp, a messaging service: its two operations that send a
-          message are marked as writes in the API catalog. Neither can move money or touch your records.
+          This is not a setting. Every operation a connector offers is declared once, and a reconciliation built on
+          anything but a read is refused before it can run, so Okwan cannot move money, issue a refund or change a
+          record in a system you connect. A WhatsApp message goes out only when your own request to the API sends
+          one; those two send operations are the only ones in Okwan that write, and the API catalog marks them as
+          writes.
         </p>
         <p>
-          Where a service lets you, save a key that can only read, such as a Stripe restricted key with read
+          Where a system lets you, save a key that can only read, such as a Stripe restricted key with read
           permissions. Okwan needs nothing more.
         </p>
       </>
@@ -59,7 +61,7 @@ const parts: Part[] = [
     body: (
       <ul>
         <li>
-          Okwan reads records from your services when you run a check or call the API or MCP server, and holds them
+          Okwan reads records from your systems when you run a check or call the API or MCP server, and holds them
           in memory for that request only.
         </li>
         <li>
@@ -84,7 +86,7 @@ const parts: Part[] = [
         <ul>
           <li>
             <strong>Its own key.</strong> It is encrypted with AES-256-GCM under a random 256-bit key made for that
-            credential alone. The encryption is bound to your account, the service and the field, so a sealed value
+            credential alone. The encryption is bound to your account, the system and the field, so a sealed value
             moved to another account or field cannot be opened.
           </li>
           <li>
@@ -115,8 +117,8 @@ const parts: Part[] = [
           use yet; this page will say so when it is.
         </p>
         <p>
-          A credential is decrypted only while a request that reads your records runs, and only to send it to the
-          service it belongs to. It is never shown again: not in the dashboard, not by the API, and not in our staff
+          A credential is decrypted only while a request that needs it runs, and only to send it to the system it
+          belongs to. It is never shown again: not in the dashboard, not by the API, and not in our staff
           tools, which show which fields are saved but never their values.
         </p>
       </>
@@ -225,12 +227,12 @@ export default function Security() {
   return (
     <LegalPage
       title="Security"
-      updated="November 6, 2026"
+      updated="November 7, 2026"
       intro={
         <>
           <p>How Okwan handles the access you give it, and what it does not do yet. In short:</p>
           <ul className="mt-4">
-            <li>Okwan only reads your payment and commerce services. It cannot move money or change your records.</li>
+            <li>Okwan never writes to your payment, commerce or bank systems, so it cannot move money or change your records. The only thing it sends is alert messages you set up, through WhatsApp.</li>
             <li>Each saved credential is encrypted under its own key, which is in turn encrypted by one master key held in our host&rsquo;s encrypted settings. Moving that key to a cloud KMS is planned.</li>
             <li>Your records are read in memory for each request. Only results are stored.</li>
             <li>Accounts are kept apart by two independent controls, each tested on its own.</li>
