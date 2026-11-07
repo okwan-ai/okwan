@@ -6,12 +6,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _fresh_rate_limits():
-    """Limits are process-wide; one test's attempts must not spend another's."""
+    """Limits and reused runs are process-wide; one test's attempts must
+    not spend another's, nor its runs answer another's queries."""
     from okwan_api.ratelimit import limiter
+    from okwan_api.recon_reuse import cache
 
     limiter.reset()
+    cache.clear()
     yield
     limiter.reset()
+    cache.clear()
 
 
 @pytest.fixture

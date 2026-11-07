@@ -488,7 +488,9 @@ HTTP_SURFACES = [
     ("POST", "/v1/shopify/orders/list", {}),
     ("POST", "/v1/paypal/transactions/list", {}),
     ("POST", "/v1/query", {"sql": "SELECT * FROM stripe.charges"}),
-    ("POST", "/v1/query", {"sql": "SELECT * FROM recon.across_rails"}),
+    # fresh: each request runs live, so the rails' credentials are checked
+    # every time; reused runs are checked below.
+    ("POST", "/v1/query", {"sql": "SELECT * FROM recon.across_rails", "fresh": True}),
     ("POST", "/v1/query", {"sql": "SELECT o.name, c.id FROM shopify.orders o "
                                   "JOIN stripe.charges c ON c.order_ref = o.name"}),
     ("GET", "/v1/reconciliations/shopify_stripe", None),
@@ -646,6 +648,17 @@ async def test_back_to_back_callers_never_see_each_other(client, world, rails, s
         assert r.status_code == 200
         _only(STAMPS[who], r.text)
         assert {stamp for _, stamp in rails} == {STAMPS[who]}
+
+
+async def test_reused_runs_answer_only_the_tenant_that_ran_them(client, world, rails):
+    """recon.* tables reuse a run from the last five minutes. Alternating
+    tenants, each answer carries only its own stamp: a reused run is keyed
+    by the tenant, never shared."""
+    sql = {"sql": "SELECT * FROM recon.across_rails"}
+    for who in ("isv_a", "b1", "isv_a", "a2", "b1", "a2"):
+        r = await client.post("/v1/query", json=sql, headers=_auth(world.keys[who]))
+        assert r.status_code == 200, r.text[:300]
+        _only(STAMPS[who], r.text)
 
 
 async def test_back_to_back_mcp_callers_never_see_each_other(store, world, rails):

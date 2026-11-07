@@ -52,6 +52,10 @@ TEST_TENANT = Rule("test:tenant", 20, 600)
 #: The support assistant: each message is a model call that costs money.
 SUPPORT_IP = Rule("support:ip", 60, 3600)
 SUPPORT_TENANT = Rule("support:tenant", 40, 3600)
+#: Live reconciliation runs through SQL (`recon.*`): each reads every
+#: system it reconciles, up to 5,000 records a side. A reused result does
+#: not count (recon_reuse.py).
+SQL_RECON_TENANT = Rule("sql:recon:tenant", 12, 60)
 #: Operator console unlock: a wrong authenticator code is a guess.
 OPS_UNLOCK = Rule("ops:unlock", 5, 900)
 OPS_UNLOCK_IP = Rule("ops:unlock:ip", 10, 900)
@@ -62,12 +66,14 @@ class Limiter:
         self._clock = clock
         self._hits: dict[tuple[str, str], tuple[float, int]] = {}
 
-    def take(self, *checks: tuple[Rule, str]) -> float | None:
-        """Count one attempt against every check, or none of them.
+    def take(self, *checks: tuple[Rule, str], cost: int = 1) -> float | None:
+        """Count `cost` attempts against every check, or none of them.
 
         Returns seconds until the earliest refusing window resets, or None
         when the attempt is allowed. A refused attempt is not counted, so a
-        client that backs off is not punished for the refusal itself.
+        client that backs off is not punished for the refusal itself. A
+        cost above one is one request that does several units of work (a
+        query that runs two reconciliations).
         """
         now = self._clock()
         current: list[tuple[tuple[str, str], float, int]] = []
@@ -77,13 +83,13 @@ class Limiter:
             start, n = self._hits.get(key, (now, 0))
             if now - start >= rule.window:
                 start, n = now, 0
-            if n >= rule.limit:
+            if n + cost > rule.limit:
                 wait = max(wait, start + rule.window - now)
             current.append((key, start, n))
         if wait:
             return wait
         for key, start, n in current:
-            self._hits[key] = (start, n + 1)
+            self._hits[key] = (start, n + cost)
         if len(self._hits) > MAX_KEYS:
             self._sweep(now)
         return None
@@ -104,7 +110,7 @@ class Limiter:
 
 
 _RULES = (SIGNUP_IP, SIGNUP_ADDRESS, VERIFY_IP, SIGNIN_IP, SIGNIN_ADDRESS,
-          TEST_IP, TEST_TENANT)
+          TEST_IP, TEST_TENANT, SQL_RECON_TENANT)
 
 limiter = Limiter()
 

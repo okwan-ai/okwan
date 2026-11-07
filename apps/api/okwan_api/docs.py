@@ -128,13 +128,16 @@ verdict per order: {outcomes}. Filter with `outcome`; page with `limit` (up to {
 from the previous page. Every run is saved, and reading saved runs under `/v1/tenants/{{id}}/runs` is free.
 
 Each reconciliation is also a SQL table: `recon.shopify_stripe`, `recon.shopify_paypal` and, for the check,
-`recon.across_rails`. Naming one in `POST /v1/query` (or the MCP tool `okwan_query`) runs it live with the same
-result as its REST route, so its verdicts join with any other table in one statement.
+`recon.across_rails`. Naming one in `POST /v1/query` (or the MCP tool `okwan_query`) runs it with the same result
+as its REST route, so its verdicts join with any other table in one statement. A run of the same table from the
+last five minutes is read again rather than repeated (the response names it under `runs`, with its age); send
+`"fresh": true` to run it now. Live runs through SQL are limited to 12 a minute per account (`429` with
+`Retry-After` past that).
 
 ## Requests and plans
 
-A successful call that reads a provider (a connector route, a SQL statement, a check) counts as one request
-against your plan. Reading the catalog, saved runs and usage is free. Past the monthly limit, calls answer `402`.
+A successful call that reads a provider (a connector route, a SQL statement that fetched a table or ran a
+reconciliation, a check) counts as one request against your plan. Reading the catalog, saved runs and usage is free. Past the monthly limit, calls answer `402`.
 
 ## Errors
 

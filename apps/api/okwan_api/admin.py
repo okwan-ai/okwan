@@ -25,8 +25,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
-
 from okwan_core import OkwanError, UpstreamError, all_connectors
 from okwan_core import get as get_connector
 from okwan_recon.across import OUTCOMES, run_across
@@ -39,6 +37,7 @@ from okwan_recon.registry import get_across
 from okwan_recon.runner import run
 from okwan_vault.authz import Forbidden, require_administer
 from okwan_vault.usage import month_start
+from pydantic import BaseModel, Field
 
 from .auth import admin_actor, check_quota, get_store, meter, quota_for
 from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
@@ -146,6 +145,10 @@ def build_router() -> APIRouter:
         await get_store().put_credential(
             tenant_id, body.connector, body.field, body.value
         )
+        # A reused reconciliation result was read with the old credential.
+        from .recon_reuse import cache
+
+        cache.forget(tenant_id)
 
     @router.get("/{tenant_id}/credentials")
     async def list_credentials(

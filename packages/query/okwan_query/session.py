@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,6 +50,24 @@ SANDBOX: dict[str, Any] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class ReusedRun:
+    """A recent run of a reconciliation this caller may read again."""
+
+    result: Any
+    run_id: str | None
+    age_seconds: int
+
+
+class TooManyRuns(Exception):
+    """A query needs more live reconciliation runs than the caller may
+    start now; `retry_after` seconds until it may."""
+
+    def __init__(self, message: str, retry_after: float) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class QuerySession:
     """One DuckDB connection plus the connector tables it has loaded."""
 
@@ -57,6 +76,9 @@ class QuerySession:
         resolver: CredentialResolver = env_credentials,
         max_records: int = DEFAULT_LIMIT,
         on_run: Callable[..., Awaitable[Any]] | None = None,
+        reuse: Callable[[Any], ReusedRun | None] | None = None,
+        admit: Callable[[int], None] | None = None,
+        fresh: bool = False,
     ) -> None:
         self._con = duckdb.connect(":memory:", config=SANDBOX)
         self._resolver = resolver
@@ -65,6 +87,17 @@ class QuerySession:
         #: `recon.*` table runs, so the surface stores the run like any
         #: other (§3.4, "every run is stored").
         self._on_run = on_run
+        #: A recent run of a declaration to read instead of running it
+        #: again, unless `fresh` (recon_reuse.py); and the gate a query's
+        #: live runs must pass, raising TooManyRuns.
+        self._reuse = None if fresh else reuse
+        self._admit = admit
+        self._planned: dict[str, ReusedRun] = {}
+        #: Per `recon.*` table: the run read, and whether it was reused.
+        self.runs: dict[str, dict[str, Any]] = {}
+        #: Reads that went upstream (connector tables, live runs). A query
+        #: answered from reused runs alone read nothing.
+        self.upstream_reads = 0
         self._loaded: set[str] = set()
         self._catalog = {t.qualified: t for t in catalog()}
 
@@ -117,6 +150,7 @@ class QuerySession:
         connector = "postgres" if table.connector == "rail" else table.connector
         resource = "sql" if table.connector == "rail" else table.resource
 
+        self.upstream_reads += 1
         rows = await fetch_rows(
             ResourceRef(
                 connector=connector,
@@ -152,7 +186,17 @@ class QuerySession:
         from okwan_recon.runner import run
 
         spec = recon_spec(table)
+        planned = self._planned.get(table.qualified)
+        if planned is not None:
+            materialise = materialize_across_view if isinstance(spec, AcrossRails) else materialize_view
+            materialise(self._con, spec, planned.result)
+            self.runs[table.qualified] = {
+                "run_id": planned.run_id, "reused": True, "age_seconds": planned.age_seconds,
+            }
+            return len(planned.result.rows())
+
         started = datetime.now(UTC)
+        self.upstream_reads += 1
         try:
             if isinstance(spec, AcrossRails):
                 result = await run_across(spec, self._resolver)
@@ -164,9 +208,34 @@ class QuerySession:
             if self._on_run is not None:
                 await self._on_run(spec, started, error=exc)
             raise
+        run_id = None
         if self._on_run is not None:
-            await self._on_run(spec, started, result=result)
+            run_id = await self._on_run(spec, started, result=result)
+        self.runs[table.qualified] = {"run_id": run_id, "reused": False}
         return len(result.rows())
+
+    def _plan_runs(self, tables: list[Table]) -> None:
+        """Before anything is fetched: which `recon.*` tables read a recent
+        run, and whether the caller may start the rest. A table missing a
+        connection fails here as it would in `load`, before it can count
+        against the limit."""
+        live = 0
+        for table in tables:
+            if table.connector != RECON or table.qualified in self._loaded:
+                continue
+            reused = self._reuse(recon_spec(table)) if self._reuse is not None else None
+            if reused is not None:
+                self._planned[table.qualified] = reused
+                continue
+            missing = missing_credentials(table, self._resolver)
+            if missing:
+                raise CredentialError(
+                    f"{table.qualified} needs {', '.join(missing)} — "
+                    "not configured in this deployment"
+                )
+            live += 1
+        if live and self._admit is not None:
+            self._admit(live)
 
     async def query(self, sql: str) -> dict[str, Any]:
         """Load whatever the SQL references, then execute it.
@@ -176,6 +245,7 @@ class QuerySession:
         """
         sql = check_statement(sql)
         tables = self.referenced_tables(sql)
+        self._plan_runs(tables)
         loaded: dict[str, int] = {}
         for table in tables:
             count = await self.load(table)
@@ -189,6 +259,7 @@ class QuerySession:
             "rows": rows,
             "row_count": len(rows),
             "sources": loaded or {t: 0 for t in self.loaded},
+            **({"runs": self.runs} if self.runs else {}),
         }
 
     def close(self) -> None:
