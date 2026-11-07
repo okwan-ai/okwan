@@ -1,4 +1,10 @@
-from .auth import ApiKeyAuth, AuthAdapter, BearerTokenAuth, ConnectionStringAuth
+from .auth import (
+    ApiKeyAuth,
+    AuthAdapter,
+    BearerTokenAuth,
+    ConnectionStringAuth,
+    NoCredentials,
+)
 from .client import OkwanClient, RateLimitProfile
 from .connector import (
     Connector,
@@ -21,6 +27,7 @@ __all__ = [
     "CredentialError",
     "CursorPage",
     "CursorPageIn",
+    "NoCredentials",
     "OkwanClient",
     "OkwanError",
     "OpType",

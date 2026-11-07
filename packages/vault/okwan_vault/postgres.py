@@ -35,6 +35,7 @@ from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
     IMPORT_KEPT_MONTHS,
+    LAYOUTS_KEPT,
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
@@ -63,7 +64,7 @@ TENANT_ROLE = "okwan_tenant"
 TENANT_TABLES = (
     "credentials", "usage", "plans", "reconciliation_runs",
     "support_conversations", "support_tickets", "support_replies",
-    "import_files", "import_rows",
+    "import_files", "import_rows", "import_layouts",
 )
 
 
@@ -968,10 +969,11 @@ class PostgresStore:
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,
         until: date | None = None, after: tuple[date, str, int] | None = None,
-        limit: int = 500, now: datetime | None = None,
+        limit: int = 500, now: datetime | None = None, direction: str | None = None,
     ) -> list[dict]:
         """Mapped rows of one kind, oldest first, from files not expired.
-        `after` is the (row date, file id, row) of the last row already read."""
+        `after` is the (row date, file id, row) of the last row already read;
+        `direction` "in" or "out" keeps rows whose amount is above or below 0."""
         a_date, a_file, a_n = after if after else (None, None, None)
         async with self._scoped(tenant_id) as con:
             rows = await con.fetch(
@@ -981,10 +983,66 @@ class PostgresStore:
                 "AND ($4::date IS NULL OR r.row_date >= $4) "
                 "AND ($5::date IS NULL OR r.row_date <= $5) "
                 "AND ($6::date IS NULL OR (r.row_date, r.file_id, r.n) > ($6, $7::text, $8::int)) "
+                "AND ($10::text IS NULL OR ($10 = 'in' AND (r.data->>'amount_minor')::bigint > 0) "
+                "     OR ($10 = 'out' AND (r.data->>'amount_minor')::bigint < 0)) "
                 "ORDER BY r.row_date, r.file_id, r.n LIMIT $9",
-                tenant_id, kind, now or datetime.now(UTC), since, until, a_date, a_file, a_n, limit)
+                tenant_id, kind, now or datetime.now(UTC), since, until, a_date, a_file, a_n, limit,
+                direction)
         return [{**_loads(r["data"]), "file_id": r["file_id"], "row": r["n"], "layout": r["layout"]}
                 for r in rows]
+
+    async def import_summary(
+        self, tenant_id: str, now: datetime | None = None
+    ) -> dict[str, dict]:
+        """Per kind, what the tenant's live files cover: how many files and
+        rows, and the first and last day of them."""
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                "SELECT kind, count(*) AS files, sum(row_count) AS rows, min(first_date) AS first, "
+                "max(last_date) AS last FROM import_files WHERE tenant_id = $1 AND expires_at > $2 "
+                "GROUP BY kind", tenant_id, now or datetime.now(UTC))
+        return {r["kind"]: {"files": r["files"], "rows": int(r["rows"] or 0),
+                            "first_date": r["first"], "last_date": r["last"]} for r in rows}
+
+    async def save_layout(self, tenant_id: str, name: str, mapping: dict) -> dict:
+        """Create or replace a saved mapping by name."""
+        try:
+            async with self._scoped(tenant_id) as con:
+                count = await con.fetchval(
+                    "SELECT count(*) FROM import_layouts WHERE tenant_id = $1 AND name <> $2",
+                    tenant_id, name)
+                if count >= LAYOUTS_KEPT:
+                    raise ValueError(f"at most {LAYOUTS_KEPT} saved mappings; delete one first")
+                row = await con.fetchrow(
+                    "INSERT INTO import_layouts (tenant_id, name, kind, mapping) "
+                    "VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (tenant_id, name) DO UPDATE "
+                    "SET kind = EXCLUDED.kind, mapping = EXCLUDED.mapping, updated_at = now() "
+                    f"RETURNING {_LAYOUT_COLS}",
+                    tenant_id, name, mapping["kind"], _dumps(mapping))
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+        return _layout(row)
+
+    async def list_layouts(self, tenant_id: str) -> list[dict]:
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                f"SELECT {_LAYOUT_COLS} FROM import_layouts WHERE tenant_id = $1 ORDER BY name",
+                tenant_id)
+        return [_layout(r) for r in rows]
+
+    async def get_layout(self, tenant_id: str, name: str) -> dict | None:
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                f"SELECT {_LAYOUT_COLS} FROM import_layouts WHERE tenant_id = $1 AND name = $2",
+                tenant_id, name)
+        return None if row is None else _layout(row)
+
+    async def delete_layout(self, tenant_id: str, name: str) -> bool:
+        async with self._scoped(tenant_id) as con:
+            gone = await con.fetchval(
+                "DELETE FROM import_layouts WHERE tenant_id = $1 AND name = $2 RETURNING name",
+                tenant_id, name)
+        return gone is not None
 
     async def sweep_imports(self, now: datetime | None = None) -> int:
         """Delete every tenant's expired files, and by cascade their rows.
@@ -1081,4 +1139,12 @@ def _import(row) -> ImportFile:
         first_date=row["first_date"], last_date=row["last_date"], created_at=row["created_at"],
         expires_at=row["expires_at"],
     )
+
+
+_LAYOUT_COLS = "name, kind, mapping, created_at, updated_at"
+
+
+def _layout(row) -> dict:
+    return {"name": row["name"], "kind": row["kind"], "mapping": _loads(row["mapping"]) or {},
+            "created_at": row["created_at"], "updated_at": row["updated_at"]}
 

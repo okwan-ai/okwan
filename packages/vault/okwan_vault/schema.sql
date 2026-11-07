@@ -311,6 +311,19 @@ CREATE TABLE IF NOT EXISTS import_rows (
 -- Reads are one tenant's kind over a span of days, in a stable order.
 CREATE INDEX IF NOT EXISTS import_rows_read_idx ON import_rows (tenant_id, kind, row_date, file_id, n);
 
+-- A tenant's saved column mappings, by name: how one processor's report or
+-- one bank's statement maps into a kind, picked again at the next upload.
+-- Column names and choices only, never a value from a file. Tenant data.
+CREATE TABLE IF NOT EXISTS import_layouts (
+    tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name        text NOT NULL,
+    kind        text NOT NULL,
+    mapping     jsonb NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, name)
+);
+
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
 -- stored runs, support conversations and tickets, imported files) runs as okwan_tenant, inside one transaction that names
@@ -375,7 +388,7 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs',
                              'support_conversations', 'support_tickets', 'support_replies',
-                             'import_files', 'import_rows'] LOOP
+                             'import_files', 'import_rows', 'import_layouts'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

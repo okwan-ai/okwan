@@ -25,7 +25,7 @@ from okwan_core.currency import money_to_minor
 from pydantic import BaseModel, Field, field_validator
 
 from .guard import is_card_column, last4
-from .parse import Sheet
+from .parse import OFX_COLUMNS, Sheet
 from .schemas import DEDUCTIONS, DERIVED, KINDS, SPLIT_AMOUNT, fields_of
 
 KindName = Literal["settlement_batches", "settlement_transactions", "bank_deposits"]
@@ -225,6 +225,8 @@ def apply(mapping: Mapping, sheet: Sheet) -> Normalized:
         row, problems = _row(mapping, specs, cols, cells)
         if not problems and mapping.kind == "bank_deposits" and not row.get("fitid"):
             row["fitid"] = _fitid(row, seen_fitids)
+        if not problems and "net_minor" in specs and "net_minor" not in cols:
+            row["net_minor"] = _net(row)
         if problems:
             bad_rows += 1
             if mapping.skip_invalid_rows:
@@ -325,6 +327,17 @@ def _row(mapping: Mapping, specs, cols: dict[str, int], cells: list[str]) -> tup
     return row, problems
 
 
+def _net(row: dict) -> int | None:
+    """What a batch paid out when the report does not say: gross less fees
+    and chargebacks, plus adjustments as signed. A report that deposits
+    gross maps its gross column to net_minor instead."""
+    gross = row.get("gross_minor")
+    if gross is None:
+        return None
+    return (gross - (row.get("fees_minor") or 0) - (row.get("chargebacks_minor") or 0)
+            + (row.get("adjustments_minor") or 0))
+
+
 def _fitid(row: dict, seen: dict[str, int]) -> str:
     """A bank line with no id of its own: one derived from what it says,
     stable across uploads of overlapping statements. Two identical lines
@@ -351,3 +364,40 @@ def describe(kind: str) -> list[dict]:
 def when(rows: list[tuple[int, date, dict]]) -> tuple[date | None, date | None]:
     days = [d for _, d, _ in rows]
     return (min(days), max(days)) if days else (None, None)
+
+
+#: OFX is a standard, not a processor: its columns mean one thing.
+OFX_LAYOUT = {"type": "TRNTYPE", "posted_on": "DTPOSTED", "amount_minor": "TRNAMT",
+              "fitid": "FITID", "description": "NAME", "currency": "CURRENCY",
+              "account_last4": "ACCTID_LAST4"}
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def suggest(kind: str, header: list[str]) -> dict[str, str]:
+    """A starting mapping from column names alone: a column whose name is a
+    field's name ("Batch ID" for batch_id), or starts with it at a word
+    boundary ("Gross Sales" for gross). Never a processor's layout, and
+    never a guess between two columns that could both be the field."""
+    if kind == "bank_deposits" and header == OFX_COLUMNS:
+        return dict(OFX_LAYOUT)
+    specs = fields_of(kind)
+    names = list(specs) + (list(SPLIT_AMOUNT) if "amount_minor" in specs else [])
+    out: dict[str, str] = {}
+    used: set[str] = set()
+    for name in names:
+        if name in SPLIT_AMOUNT and "amount_minor" in out:
+            continue
+        want = name.removesuffix("_minor").replace("_", "")
+        exact = [h for h in header if h not in used and "".join(_words(h)) == want]
+        prefix = [h for h in header if h not in used and h not in exact and any(
+            "".join(_words(h)[:k]) == want for k in range(1, len(_words(h))))]
+        found = exact if exact else prefix
+        if name == "card_last4" and not found:
+            found = [h for h in header if h not in used and is_card_column(h)]
+        if len(found) == 1:
+            out[name] = found[0]
+            used.add(found[0])
+    return out

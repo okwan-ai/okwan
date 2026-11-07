@@ -1,5 +1,5 @@
 import { tenantTree } from "@/lib/api";
-import { type Declaration, defineOnce, groups, plural } from "@/lib/connector-meta";
+import { type Declaration, defineOnce, groups, needsCredentials, plural } from "@/lib/connector-meta";
 import { requireTenant } from "@/lib/guard";
 import { HOSTED_TOOLS } from "@/lib/hosted-tools";
 import { configured, connectors, merchantsWithRails, railState } from "@/lib/merchants";
@@ -43,6 +43,8 @@ export default async function IntegrationsPage() {
 
   /** "Connected for 3 of 5 merchants and your workspace". */
   const coverage = (name: string): string => {
+    const c = list.find((x) => x.name === name);
+    if (c && !needsCredentials(c)) return "Nothing to connect: reads each merchant's imported files";
     const self = selfReady.includes(name);
     if (!merchants) return self ? "Connected for your workspace" : "";
     const n = merchants.filter((m) => m.ready.includes(name)).length;

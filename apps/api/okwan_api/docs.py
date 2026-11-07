@@ -54,8 +54,11 @@ STATIC_TAGS: list[tuple[str, str, str]] = [
       "or OFX), with a column mapping into one of three kinds: settlement batches, settlement "
       "transactions, bank deposits. The file is read in memory and never kept; only the mapped "
       "fields of each row are stored, for 13 months. A file holding a full card number anywhere "
-      "is refused whole, and the refusal names the row and column, never the number. Takes a key "
-      "or a dashboard session. Not metered.")),
+      "is refused whole, and the refusal names the row and column, never the number. A preview "
+      "reads a file without storing it and suggests a mapping from the column names; mappings can "
+      "be saved by name and picked at upload. The rows are read back through the `files` "
+      "connector, SQL (`files.*`) and the `batches_deposits` reconciliation. Takes a key or a "
+      "dashboard session. Not metered.")),
     ("accounts", "Accounts",
      "Sign-up, email verification and dashboard sessions."),
     ("support", "Support",
@@ -203,6 +206,10 @@ TITLES: dict[tuple[str, str], str] = {
     ("get", "/v1/tenants/{tenant_id}/imports"): "List imported files",
     ("get", "/v1/tenants/{tenant_id}/imports/{file_id}"): "Read an imported file's record",
     ("delete", "/v1/tenants/{tenant_id}/imports/{file_id}"): "Delete an imported file",
+    ("post", "/v1/tenants/{tenant_id}/imports/preview"): "Preview a file before importing it",
+    ("get", "/v1/tenants/{tenant_id}/import-layouts"): "List saved mappings",
+    ("put", "/v1/tenants/{tenant_id}/import-layouts/{name}"): "Save a mapping",
+    ("delete", "/v1/tenants/{tenant_id}/import-layouts/{name}"): "Delete a saved mapping",
     ("post", "/v1/signup"): "Sign up",
     ("post", "/v1/signup/verify"): "Verify an email address",
     ("post", "/v1/sessions"): "Sign in",

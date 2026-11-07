@@ -151,6 +151,7 @@ async def two(store):
             t.id, kind="bank_deposits", filename=f"{name}.csv", format="csv", layout="custom",
             mapping={}, sha256=f"sha-{name}", rows=[(2, now.date(), {"fitid": name})], skipped=[],
             card_columns=[], first_date=now.date(), last_date=now.date())
+        await store.save_layout(t.id, f"{name}-layout", {"kind": "bank_deposits", "columns": {}})
         out.append(t)
     return out
 
@@ -282,6 +283,8 @@ def _insert(table: str, tenant_id: str) -> tuple:
         "import_rows": (("INSERT INTO import_rows (file_id, tenant_id, kind, n, row_date, data) "
                          "VALUES ('imp_rls_probe', $1, 'bank_deposits', 1, $2, '{}')"),
                         tenant_id, now.date()),
+        "import_layouts": (("INSERT INTO import_layouts (tenant_id, name, kind, mapping) "
+                            "VALUES ($1, 'rls-probe', 'bank_deposits', '{}')"), tenant_id),
     }[table]
 
 

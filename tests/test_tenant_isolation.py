@@ -235,7 +235,11 @@ def _install(monkeypatch, answer: bool) -> list[tuple[str, str]]:
         return factory
 
     for c in all_connectors():
-        monkeypatch.setattr(c, "context_factory", factory_for(c.name))
+        # A connector with nothing in the vault (`files`) reads Okwan's own
+        # store for the tenant the platform names; it keeps its real
+        # transport and is proven by its own surfaces below.
+        if c.auth.required_fields:
+            monkeypatch.setattr(c, "context_factory", factory_for(c.name))
     return reached
 
 
@@ -299,6 +303,13 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
     ("GET", "/v1/tenants/{tenant_id}/imports"): ("/v1/tenants/{t}/imports", None),
     ("GET", "/v1/tenants/{tenant_id}/imports/{file_id}"): ("/v1/tenants/{t}/imports/{imp}", None),
     ("DELETE", "/v1/tenants/{tenant_id}/imports/{file_id}"): ("/v1/tenants/{t}/imports/{imp}", None),
+    ("POST", "/v1/tenants/{tenant_id}/imports/preview"):
+        ("/v1/tenants/{t}/imports/preview", {k: INTRUDER_UPLOAD[k] for k in ("filename", "content_base64")}),
+    ("GET", "/v1/tenants/{tenant_id}/import-layouts"): ("/v1/tenants/{t}/import-layouts", None),
+    ("PUT", "/v1/tenants/{tenant_id}/import-layouts/{name}"):
+        ("/v1/tenants/{t}/import-layouts/victim-layout", INTRUDER_UPLOAD["mapping"]),
+    ("DELETE", "/v1/tenants/{tenant_id}/import-layouts/{name}"):
+        ("/v1/tenants/{t}/import-layouts/victim-layout", None),
 }
 #: Administration without a tenant in the path, each tested on its own below.
 ADMIN_OTHER = {
@@ -393,6 +404,7 @@ async def _victim_state(world, victim) -> dict[str, Any]:
         "creds": await store.credentials_for(victim.id, "stripe", ("secret_key",)),
         "runs": [r.id for r in await store.list_runs(victim.id, limit=50)],
         "imports": [f.id for f in await store.list_imports(victim.id)],
+        "layouts": await store.list_layouts(victim.id),
     }
 
 
@@ -419,8 +431,13 @@ async def victim_imports(world):
         f = await world.store.add_import(
             tenant.id, kind="bank_deposits", filename=f"{STAMPS[key]}.csv", format="csv",
             layout="custom", mapping={}, sha256=f"sha-{STAMPS[key]}", skipped=[], card_columns=[],
-            rows=[(2, NOW.date(), {"fitid": f"{STAMPS[key]}-F1", "amount_minor": 100})],
+            rows=[(2, NOW.date(), {"fitid": f"{STAMPS[key]}-F1", "posted_on": NOW.date().isoformat(),
+                                   "amount_minor": 100, "currency": "USD",
+                                   "description": f"{STAMPS[key]} deposit"})],
             first_date=NOW.date(), last_date=NOW.date())
+        await world.store.save_layout(tenant.id, "victim-layout", {
+            "kind": "bank_deposits", "name": "victim-layout", "currency": "USD",
+            "columns": {"posted_on": f"{STAMPS[key]} Date", "amount_minor": "Amount"}})
         out[key] = f.id
     return out
 
@@ -578,6 +595,8 @@ def _connector_requests() -> list[tuple[str, dict[str, Any]]]:
               "phone_number_id": "1", "template_name": "hello_world", "waba_id": "1"}
     out = []
     for c in all_connectors():
+        if not c.auth.required_fields:
+            continue  # nothing in a vault to read: test_imported_files_answer_only_the_caller
         for rname, res in c.resources.items():
             for oname, op in res.operations.items():
                 required = [n for n, f in op.input_model.model_fields.items() if f.is_required()]
@@ -596,6 +615,39 @@ async def test_every_connector_operation_reads_only_the_callers_vault(client, wo
     assert r.status_code != 422, f"{path} refused the generated body: {r.text[:300]}"
     assert stopped, f"{path} never reached its connector: the check would prove nothing"
     assert {stamp for _, stamp in stopped} == {STAMPS[who]}
+
+
+#: Imported files on every surface a connector gets, and the reconciliation
+#: over them. Nothing here touches a vault: the tenant is the caller's key.
+FILE_SURFACES = [
+    ("POST", "/v1/files/bank_deposits/list", {}),
+    ("POST", "/v1/files/bank_deposits/list", {"direction": "in", "limit": 500}),
+    ("POST", "/v1/query", {"sql": "SELECT * FROM files.bank_deposits"}),
+    ("POST", "/v1/query", {"sql": "SELECT * FROM recon.batches_deposits", "fresh": True}),
+    ("GET", "/v1/reconciliations/batches_deposits", None),
+]
+
+
+@pytest.mark.parametrize("who", CALLERS)
+@pytest.mark.parametrize("surface", FILE_SURFACES, ids=lambda s: f"{s[0]} {s[1]} {json.dumps(s[2]) if s[2] else ''}")
+async def test_imported_files_answer_only_the_caller(client, world, victim_imports, surface, who):
+    method, path, body = surface
+    r = await client.request(method, path, json=body, headers=_auth(world.keys[who]))
+    assert r.status_code == 200, f"{method} {path}: {r.status_code} {r.text[:300]}"
+    _only(STAMPS[who], r.text)
+
+
+@pytest.mark.parametrize("who", CALLERS)
+@pytest.mark.parametrize("call", [("okwan_query", {"sql": "SELECT * FROM files.bank_deposits"}),
+                                  ("okwan_reconcile", {"name": "batches_deposits"})],
+                         ids=lambda c: f"{c[0]} {c[1]}")
+async def test_imported_files_answer_only_the_caller_over_hosted_mcp(store, world, victim_imports, call, who):
+    from okwan_api.auth import set_store
+
+    set_store(store)
+    name, args = call
+    ctx = SimpleNamespace(headers={"authorization": f"Bearer {world.keys[who]}"})
+    _only(STAMPS[who], json.dumps(await _tool(name)(ctx=ctx, **args), default=str))
 
 
 def _tool(name: str):

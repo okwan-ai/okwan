@@ -40,8 +40,11 @@ export const configured = cache((tenantId: string) =>
   ),
 );
 
+/** Which connectors a tenant has connected, fully or in part. A connector
+ *  with no credentials (`files`) is neither: there is nothing to connect. */
 export function railState(catalog: Connector[], fields: Record<string, string[]>) {
   const ready = catalog
+    .filter((c) => c.credential_fields.length > 0)
     .filter((c) => c.credential_fields.every((f) => fields[c.name]?.includes(f)))
     .map((c) => c.name);
   const partial = catalog

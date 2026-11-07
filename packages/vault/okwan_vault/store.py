@@ -21,6 +21,7 @@ from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
     IMPORT_KEPT_MONTHS,
+    LAYOUTS_KEPT,
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
@@ -140,8 +141,15 @@ class Store(Protocol):
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,
         until: date | None = None, after: tuple[date, str, int] | None = None,
-        limit: int = 500, now: datetime | None = None,
+        limit: int = 500, now: datetime | None = None, direction: str | None = None,
     ) -> list[dict]: ...
+    async def import_summary(
+        self, tenant_id: str, now: datetime | None = None
+    ) -> dict[str, dict]: ...
+    async def save_layout(self, tenant_id: str, name: str, mapping: dict) -> dict: ...
+    async def list_layouts(self, tenant_id: str) -> list[dict]: ...
+    async def get_layout(self, tenant_id: str, name: str) -> dict | None: ...
+    async def delete_layout(self, tenant_id: str, name: str) -> bool: ...
     async def sweep_imports(self, now: datetime | None = None) -> int: ...
 
 
@@ -174,6 +182,8 @@ class MemoryStore:
         self._imports: dict[str, ImportFile] = {}
         #: file id → [(row number, row date, mapped fields)]
         self._import_rows: dict[str, list[tuple[int, date, dict]]] = {}
+        #: (tenant id, name) → saved mapping
+        self._layouts: dict[tuple[str, str], dict] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -216,6 +226,7 @@ class MemoryStore:
         for file_id in [k for k, v in self._imports.items() if v.tenant_id in gone]:
             del self._imports[file_id]
             self._import_rows.pop(file_id, None)
+        self._layouts = {k: v for k, v in self._layouts.items() if k[0] not in gone}
         return sorted(gone)
 
     async def save_billing(
@@ -696,10 +707,11 @@ class MemoryStore:
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,
         until: date | None = None, after: tuple[date, str, int] | None = None,
-        limit: int = 500, now: datetime | None = None,
+        limit: int = 500, now: datetime | None = None, direction: str | None = None,
     ) -> list[dict]:
         """Mapped rows of one kind, oldest first, from files not expired.
-        `after` is the (row date, file id, row) of the last row already read."""
+        `after` is the (row date, file id, row) of the last row already read;
+        `direction` "in" or "out" keeps rows whose amount is above or below 0."""
         out = []
         for f in self._live_imports(tenant_id, now):
             if f.kind != kind:
@@ -708,9 +720,52 @@ class MemoryStore:
                 key = (d, f.id, n)
                 if (since and d < since) or (until and d > until) or (after and key <= after):
                     continue
+                amount = data.get("amount_minor") or 0
+                if (direction == "in" and amount <= 0) or (direction == "out" and amount >= 0):
+                    continue
                 out.append((key, {**data, "file_id": f.id, "row": n, "layout": f.layout}))
         out.sort(key=lambda kv: kv[0])
         return [row for _, row in out[:limit]]
+
+    async def import_summary(
+        self, tenant_id: str, now: datetime | None = None
+    ) -> dict[str, dict]:
+        """Per kind, what the tenant's live files cover: how many files and
+        rows, and the first and last day of them."""
+        out: dict[str, dict] = {}
+        for f in self._live_imports(tenant_id, now):
+            k = out.setdefault(f.kind, {"files": 0, "rows": 0, "first_date": None, "last_date": None})
+            k["files"] += 1
+            k["rows"] += f.row_count
+            if f.first_date and (k["first_date"] is None or f.first_date < k["first_date"]):
+                k["first_date"] = f.first_date
+            if f.last_date and (k["last_date"] is None or f.last_date > k["last_date"]):
+                k["last_date"] = f.last_date
+        return out
+
+    async def save_layout(self, tenant_id: str, name: str, mapping: dict) -> dict:
+        """Create or replace a saved mapping by name."""
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        others = [k for k in self._layouts if k[0] == tenant_id and k[1] != name]
+        if len(others) >= LAYOUTS_KEPT:
+            raise ValueError(f"at most {LAYOUTS_KEPT} saved mappings; delete one first")
+        now = datetime.now(UTC)
+        old = self._layouts.get((tenant_id, name))
+        rec = {"name": name, "kind": mapping["kind"], "mapping": dict(mapping),
+               "created_at": old["created_at"] if old else now, "updated_at": now}
+        self._layouts[(tenant_id, name)] = rec
+        return dict(rec)
+
+    async def list_layouts(self, tenant_id: str) -> list[dict]:
+        return [dict(v) for k, v in sorted(self._layouts.items()) if k[0] == tenant_id]
+
+    async def get_layout(self, tenant_id: str, name: str) -> dict | None:
+        found = self._layouts.get((tenant_id, name))
+        return dict(found) if found else None
+
+    async def delete_layout(self, tenant_id: str, name: str) -> bool:
+        return self._layouts.pop((tenant_id, name), None) is not None
 
     async def sweep_imports(self, now: datetime | None = None) -> int:
         """Delete every tenant's expired files and their rows."""
@@ -746,4 +801,7 @@ async def resolver_for(store: Store, tenant_id: str, connectors=None):
     def resolve(connector_name: str, fields: tuple[str, ...]) -> dict[str, str]:
         return {f: loaded.get((connector_name, f), "") for f in fields}
 
+    # Who the resolver answers for, so a connector over Okwan's own store
+    # (`files`) reads this tenant's data and no other (Connector.context).
+    resolve.tenant_id = tenant_id  # type: ignore[attr-defined]
     return resolve

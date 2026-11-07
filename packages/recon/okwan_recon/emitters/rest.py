@@ -67,9 +67,13 @@ def build_router() -> APIRouter:
     router = APIRouter(prefix="/v1/reconciliations", tags=["reconciliations"])
 
     @router.get("")
-    async def list_reconciliations(_=Depends(current_tenant)) -> dict[str, Any]:
+    async def list_reconciliations(tenant=Depends(current_tenant)) -> dict[str, Any]:
+        """Each reconciliation, and what its sources hold for the caller."""
+        from okwan_api.status import recon_status
+
+        status = await recon_status(tenant, await vault_resolver(tenant))
         return {
-            "data": [tool_metadata(s) for s in all_reconciliations()],
+            "data": [{**tool_metadata(s), "status": status[s.name]} for s in all_reconciliations()],
             "across": [across_metadata(s) for s in all_across()],
         }
 

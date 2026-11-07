@@ -246,6 +246,14 @@ one of:
 - *409*: the same file is already imported for that kind; `existing_id`
   names it. Delete it first to import it again.
 
+**Reading them back.** Imported rows are the `files` connector:
+`POST /v1/files/{settlement_batches|settlement_transactions|bank_deposits}/list`,
+the SQL tables `files.*`, and the `batches_deposits` reconciliation (REST,
+`recon.batches_deposits`, `okwan_reconcile`). A listing
+(`GET /v1/reconciliations`, `okwan_list_reconciliations`) says, per source,
+how many files cover which days, so "not runnable" with files of one kind
+only means the other kind has not been uploaded yet.
+
 **Retention.** Each file and its rows expire 13 months after upload. Reads
 skip an expired file at once; the API deletes every tenant's expired
 files hourly (a warning "import sweep failed" in the logs means it will

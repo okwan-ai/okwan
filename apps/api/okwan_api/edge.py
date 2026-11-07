@@ -10,7 +10,7 @@ whether it declares its length or streams it in chunks. One uvicorn
 worker serves everyone, so a single oversized upload must not be able to
 hold it. The one exception is a file import (`imports.py`), which carries
 a file of up to 8 MB as base64 and gets UPLOAD_MAX_BODY_BYTES, on that
-route only.
+route and its preview only.
 
 **Headers.** Every response says: only over HTTPS (HSTS), never inside a
 frame, never sniff the type, send no referrer, and do not cache, since
@@ -31,7 +31,7 @@ from starlette.exceptions import HTTPException
 MAX_BODY_BYTES = 1024 * 1024
 #: An 8 MB file as base64 is 10.7 MB; the rest is the mapping and JSON.
 UPLOAD_MAX_BODY_BYTES = 12 * 1024 * 1024
-_UPLOAD = re.compile(r"^/v1/tenants/[^/]+/imports$")
+_UPLOAD = re.compile(r"^/v1/tenants/[^/]+/imports(?:/preview)?$")
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]

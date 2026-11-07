@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, type ReactNode } from "react";
 import { apiUrl } from "@/lib/api";
-import { defineOnce, firstSentence, inCheck, plural, ROLE, writeLabel } from "@/lib/connector-meta";
+import { defineOnce, firstSentence, inCheck, needsCredentials, plural, ROLE, writeLabel } from "@/lib/connector-meta";
 import { railLabel } from "@/lib/finding";
 import { requireTenant } from "@/lib/guard";
 import { type Connector, configured, connectors, merchantsWithRails, railState } from "@/lib/merchants";
@@ -146,6 +146,14 @@ export default async function ConnectorPage({ params }: { params: Promise<{ name
         </Card>
       </Section>
 
+      {!needsCredentials(c) ? (
+        <Section title="Connections">
+          <Card as="div" className="px-5 py-4 text-sm text-ink-soft">
+            Nothing to connect. {label} reads the files imported for each merchant, as that merchant, and
+            needs no credentials.
+          </Card>
+        </Section>
+      ) : (
       <Section
         title="Connections"
         description={
@@ -193,14 +201,17 @@ export default async function ConnectorPage({ params }: { params: Promise<{ name
           </CardBody>
         </Card>
       </Section>
+      )}
 
       <Section title="Details">
         <KeyValueList>
           <KeyValueRow label="Full description">{c.description}</KeyValueRow>
           <KeyValueRow label="Credentials it needs">
-            <span className="flex flex-wrap gap-x-3 gap-y-1">
-              {c.credential_fields.map((f) => <code key={f} className="font-mono text-[13px]">{f}</code>)}
-            </span>
+            {needsCredentials(c) ? (
+              <span className="flex flex-wrap gap-x-3 gap-y-1">
+                {c.credential_fields.map((f) => <code key={f} className="font-mono text-[13px]">{f}</code>)}
+              </span>
+            ) : "None: it reads the merchant's own imported files"}
           </KeyValueRow>
           <KeyValueRow label="Connection test">
             {c.probe ? <code className="font-mono text-[13px]">{c.probe}</code> : "No blind read; saved without a live test"}

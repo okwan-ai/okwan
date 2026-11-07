@@ -148,15 +148,21 @@ def _list_recon_tool():
         against one order ledger into one verdict per order, which is how
         to find an order collected twice. Either runs through
         okwan_reconcile by name. One not runnable needs credentials this
-        account has not configured; the response names the fields.
+        account has not configured, or files it has not imported; the
+        response names the fields, and each source says what it holds
+        (for imported files: how many, and the first and last day) along
+        with the last run and the last good one.
         """
+        from okwan_api.status import recon_status
+
         try:
-            resolver = await _tenant_resolver(ctx)
+            tenant, resolver = await _caller(ctx)
         except Unauthenticated as exc:
             return {"error": str(exc), "reconciliations": [], "across": []}
+        status = await recon_status(tenant, resolver)
         return {
             "reconciliations": [
-                _recon_metadata(s, resolver) for s in all_reconciliations()
+                {**_recon_metadata(s, resolver), **status[s.name]} for s in all_reconciliations()
             ],
             "across": [_fold_metadata(s, resolver) for s in all_across()],
         }

@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { andList, groups, isComplete, missingForCheck } from "@/lib/connector-meta";
+import { andList, groups, isComplete, missingForCheck, needsCredentials } from "@/lib/connector-meta";
 import { railLabel } from "@/lib/finding";
 import { setSheetOpen, useTabTests } from "@/lib/tab-results";
 import { ConnectorForm, type ConnectorView, isSuccess, type SheetResult } from "./connector-form";
@@ -29,13 +29,15 @@ const SHEET_POP_MS = 700;
  * read succeeds; the grid tile and the merchant header pop once each when
  * the sheet closes, because nothing behind an open sheet pops.
  */
-export function ConnectionsGrid({ connectors, tenantId, tenantKey, fold = false }: {
+export function ConnectionsGrid({ connectors: all, tenantId, tenantKey, fold = false }: {
   connectors: ConnectorView[];
   tenantId?: string;
   tenantKey: string;
   /** Show what a check still needs (a merchant's page). */
   fold?: boolean;
 }) {
+  // Only what can be connected: a connector with no credentials has no tile.
+  const connectors = all.filter(needsCredentials);
   // ?connect=paypal (from "Connect PayPal" anywhere) opens that sheet directly.
   const asked = useSearchParams().get("connect");
   const [managing, setManaging] = useState<string | null>(

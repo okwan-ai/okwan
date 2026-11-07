@@ -69,6 +69,7 @@ async def _fill(store, name: str) -> dict:
         shop.id, kind="bank_deposits", filename="statement.csv", format="csv", layout="custom",
         mapping={}, sha256=f"sha-{os.urandom(4).hex()}", rows=[(2, NOW.date(), {"fitid": "F1"})],
         skipped=[], card_columns=[], first_date=NOW.date(), last_date=NOW.date())
+    await store.save_layout(shop.id, "bank-csv", {"kind": "bank_deposits", "columns": {}})
     return {"root": root, "shop": shop, "email": email, "token_hash": token_hash,
             "key": key, "conv": conv, "ticket": ticket}
 
@@ -82,6 +83,7 @@ async def _gone(store, w: dict) -> None:
     assert await store.connectors_configured(shop) == {}
     assert await store.list_imports(shop) == []
     assert await store.import_rows(shop, "bank_deposits") == []
+    assert await store.list_layouts(shop) == []
     assert await store.list_runs(shop) == []
     assert await store.get_conversation(root, w["conv"]) is None
     assert await store.get_ticket(w["ticket"].id) is None
