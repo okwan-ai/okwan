@@ -21,6 +21,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import okwan_avalara.connector  # noqa: F401  (registers the connector)
 import okwan_clover.connector  # noqa: F401  (registers the connector)
 import okwan_paystack.connector  # noqa: F401  (registers the connector)
 import okwan_paypal.connector  # noqa: F401  (registers the connector)

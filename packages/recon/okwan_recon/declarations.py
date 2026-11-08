@@ -15,6 +15,7 @@ from .declaration import (
     Fuzzy,
     GroupRef,
     GroupSum,
+    PeriodGroup,
     Reconciliation,
     ResourceRef,
     SettlementLag,
@@ -475,6 +476,41 @@ delivery_payouts_deposits = register(
     )
 )
 
-__all__ = ["batches_deposits", "clover_orders_payments", "clover_payments_settlements",
-           "delivery_payout_lines", "delivery_payouts_deposits", "rails", "shopify_orders",
-           "shopify_paypal", "shopify_stripe", "square_payments_payouts", "square_payouts_deposits"]
+#: Each sales tax return against the tax AvaTax committed for the same state
+#: over the same days (E6, period sums). AvaTax holds a document per sale;
+#: a return reports one figure per jurisdiction per period; the sales the
+#: engine committed inside the return's first and last day, for the
+#: return's state, should add up to what the return reported. Committed
+#: sales and returns (refunds) are read, never a quote saved and left. What
+#: it finds: a return that reported less tax than the engine committed (or
+#: more), committed sales in a period no imported return covers, and a
+#: return with nothing committed behind it. Corrections to earlier periods
+#: that a return carries explain the gap they make. A year of returns is
+#: read, so an annual return finds its whole year.
+avatax_collected_filed = register(
+    Reconciliation(
+        name="avatax_collected_filed",
+        title="Sales tax: recorded vs filed",
+        description=(
+            "Match each imported sales tax return against every document AvaTax committed for the "
+            "same state between the return's first and last day, and compare the tax the return "
+            "reported with the tax committed. A return's corrections to earlier periods explain the "
+            "gap they make. Reports returns that do not match, committed sales in a period no return "
+            "covers, and returns with nothing committed behind them."
+        ),
+        left=ResourceRef(connector="files", resource="tax_filings"),
+        right=ResourceRef(connector="avalara", resource="transactions",
+                          params={"status": "Committed", "type": "SalesInvoice,ReturnInvoice"}),
+        keys=[PeriodGroup(one="left", start="period_start", end="period_end", timestamp_many="date",
+                          share=(("jurisdiction", "region"),))],
+        amount=AmountRef(left="tax_minor", right="total_tax_minor"),
+        explains=[Explains(path="adjustments_minor", side="left", label="return_adjustment", sign="either")],
+        lookback="400d",
+        max_records=10_000,
+    )
+)
+
+__all__ = ["avatax_collected_filed", "batches_deposits", "clover_orders_payments",
+           "clover_payments_settlements", "delivery_payout_lines", "delivery_payouts_deposits", "rails",
+           "shopify_orders", "shopify_paypal", "shopify_stripe", "square_payments_payouts",
+           "square_payouts_deposits"]

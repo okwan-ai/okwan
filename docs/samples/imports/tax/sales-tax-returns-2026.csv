@@ -1,0 +1,4 @@
+State,Period start,Period end,Taxable sales,Tax collected,Prior period adjustments,Vendor discount,Amount paid,Filed on,Confirmation
+WY,08/01/2026,08/31/2026,575.00,25.00,2.00,0.00,25.00,09/18/2026,WY-2026-08-3381
+WY,09/01/2026,09/30/2026,1000.00,40.00,0.00,0.00,40.00,10/19/2026,WY-2026-09-4410
+WY,10/01/2026,10/31/2026,787.50,31.50,0.00,0.00,31.50,11/06/2026,WY-2026-10-5127

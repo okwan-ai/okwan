@@ -269,8 +269,9 @@ column names (or a saved mapping), and imports it. A 503 there reads
 `POST /v1/files/{settlement_batches|settlement_transactions|bank_deposits|delivery_lines|delivery_payouts}/list`,
 the SQL tables `files.*`, and the reconciliations that read them:
 `batches_deposits` (batches against deposits), `square_payouts_deposits`,
-`clover_payments_settlements`, `delivery_payout_lines` and
-`delivery_payouts_deposits` (REST, `recon.<name>`, `okwan_reconcile`).
+`clover_payments_settlements`, `delivery_payout_lines`,
+`delivery_payouts_deposits` and `avatax_collected_filed` (REST,
+`recon.<name>`, `okwan_reconcile`).
 
 **Delivery platforms.** DoorDash, Uber Eats and Grubhub reports import as
 *Delivery orders* (the transaction or payment-details report) and
@@ -291,7 +292,25 @@ has a mapping for DoorDash and Uber Eats. A customer asking about one:
 - *Commission or error charges look high*: `files.delivery_lines` keeps every
   deduction apart, with `commission_rate_bps` and `withheld_minor` on each
   line. The query in the samples README lists orders above a plan's rate.
-  The contracted rate itself is not stored yet (§10 item 35). A listing
+  The contracted rate itself is not stored yet (§10 item 35).
+
+**Sales tax.** A merchant imports its returns as *Tax returns* (one row per
+jurisdiction per period; `docs/samples/imports/tax/` has a mapping) and
+connects Avalara AvaTax. `avatax_collected_filed` compares each return with
+the tax AvaTax committed for that state over the return's days. A customer
+asking about one:
+
+- *A return "does not match"*: the return reported more or less tax than
+  AvaTax committed for its state and days. A correction to an earlier
+  period, when the return's adjustment column is mapped, explains its own
+  gap. Otherwise the customer's filing service or accountant compares the
+  return with AvaTax's liability report for the period; Okwan reports the
+  difference and never says what is owed.
+- *Sales "in no return's period"*: a month between two imported returns had
+  none imported, or a state has committed sales and no return at all. Sales
+  after the latest return are waiting, not findings.
+- *A return "with nothing behind it"*: it reported tax and AvaTax committed
+  none for that state and period, often sales taxed outside AvaTax. A listing
 (`GET /v1/reconciliations`, `okwan_list_reconciliations`) says, per source,
 how many files cover which days, so "not runnable" with files of one kind
 only means the other kind has not been uploaded yet.
@@ -315,7 +334,8 @@ credential at the rail (Stripe restricted key, Shopify token with
 `read_orders` and `read_all_orders`, PayPal client id and secret, Square
 access token with `PAYMENTS_READ`, `PAYOUTS_READ`, `ORDERS_READ` and
 `MERCHANT_PROFILE_READ`, Clover merchant API token with read permission
-on Merchant, Orders and Payments) and save it in the dashboard under
+on Merchant, Orders and Payments, Avalara account ID and license key) and
+save it in the dashboard under
 *Settings*. Never ask them to send it to you. A Square 401 with a token
 that looks right is most often `environment` set to the other one: a
 production token needs `production`, a sandbox token `sandbox`. The same
@@ -324,7 +344,13 @@ the merchant the token was made for (Clover answers both as a bare 401),
 and an *emulator* token from the developer dashboard's Test Merchants key
 icon, which is for Clover's Android emulator and never works on the REST
 API. The right token comes from the merchant dashboard: *Settings*, *View
-all settings*, *API tokens*, *Create new token*.
+all settings*, *API tokens*, *Create new token*. Avalara takes the account
+ID and a license key (*Settings*, *License and API keys* in AvaTax, or
+*Integrations*, *License key and client secrets* on app.avalara.com), the
+company code and `production` or `sandbox` (a free trial is
+`production`). A new license key takes a few minutes to start working, so
+a 401 right after creating one clears itself; a trial account allows about
+six requests a minute, and Okwan waits out its 429s.
 
 ### A rail is down *(Tier 1)*
 

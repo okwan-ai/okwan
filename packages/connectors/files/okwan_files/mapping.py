@@ -29,7 +29,7 @@ from .parse import OFX_COLUMNS, Sheet
 from .schemas import DEDUCTIONS, DERIVED, KINDS, SPLIT_AMOUNT, fields_of
 
 KindName = Literal["settlement_batches", "settlement_transactions", "bank_deposits",
-                   "delivery_lines", "delivery_payouts"]
+                   "delivery_lines", "delivery_payouts", "tax_filings"]
 
 #: The most row errors a refusal lists.
 MAX_ERRORS = 10
