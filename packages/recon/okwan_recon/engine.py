@@ -7,7 +7,7 @@ records it already paired.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from itertools import combinations
 from typing import Any
 
@@ -19,6 +19,7 @@ from .declaration import (
     Fuzzy,
     GroupRef,
     GroupSum,
+    PeriodGroup,
     Reconciliation,
 )
 from .paths import dig
@@ -70,6 +71,11 @@ class MatchedPair:
         record = self.left if side == "left" else self.right
         if self.members is None or self.grouped != side:
             return dig(record, path)
+        if not self.members:
+            # A period with nothing in it (E6): its amounts sum to zero, and
+            # amounts are the `*_minor` fields by convention; nothing else
+            # has a value.
+            return 0 if path.endswith("_minor") else None
         values = [dig(m, path) for m in self.members]
         if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
             return sum(values)
@@ -132,6 +138,10 @@ class ReconResult:
     ambiguous: list[Ambiguity] = field(default_factory=list)
     unverifiable_left: list[Unverifiable] = field(default_factory=list)
     unverifiable_right: list[Unverifiable] = field(default_factory=list)
+    #: Records a rule knows are waiting rather than missing (a sale after
+    #: the latest return imported for its state), by side, kept apart from
+    #: the misses until coverage is applied.
+    waiting: dict[str, list[Unverifiable]] = field(default_factory=lambda: {"left": [], "right": []})
     #: What each side read. None when the caller supplied no coverage, in
     #: which case nothing can be classed unverifiable.
     left_coverage: Coverage | None = None
@@ -499,6 +509,82 @@ def _apply_group_ref(
     return (still, rest) if one_side == "left" else (rest, still)
 
 
+def _apply_period_group(
+    rule: PeriodGroup, left: list[Row], right: list[Row], out: ReconResult
+) -> tuple[list[Row], list[Row]]:
+    """Each period-stating record with every record inside its period that
+    shares its keys (E6). Periods are taken earliest first; a record two
+    periods would both cover belongs to the first, so an overlapping second
+    period reads empty rather than counting a sale twice. An empty period is
+    still a pair: its sum is zero."""
+    from .calendar import as_date
+
+    one_side = rule.one
+    ones, many = (left, right) if one_side == "left" else (right, left)
+
+    def key(record: Row, paths: tuple[str, ...]) -> tuple[str | None, ...]:
+        return tuple(_ref_key(dig(record, p), False) for p in paths)
+
+    one_paths = tuple(o for o, _ in rule.share)
+    many_paths = tuple(m for _, m in rule.share)
+    days = [(m, as_date(dig(m, rule.timestamp_many), rule.timezone), key(m, many_paths)) for m in many]
+    consumed: set[int] = set()
+    still: list[Row] = []
+    periods: dict[tuple[str | None, ...], list[tuple[date, date]]] = {}
+
+    def start_of(record: Row):
+        return as_date(dig(record, rule.start), rule.timezone)
+
+    def earliest(record: Row) -> tuple[bool, str]:
+        day = start_of(record)
+        return day is None, day.isoformat() if day else ""
+
+    for o in sorted(ones, key=earliest):
+        first, last = start_of(o), as_date(dig(o, rule.end), rule.timezone)
+        wanted = key(o, one_paths)
+        if first is None or last is None or first > last or any(k is None for k in wanted):
+            still.append(o)
+            continue
+        members = [m for m, day, k in days
+                   if id(m) not in consumed and day is not None and first <= day <= last and k == wanted]
+        periods.setdefault(wanted, []).append((first, last))
+        if len(members) > rule.max_members:
+            out.ambiguous.append(Ambiguity(
+                left=o, candidates=members, rule=rule.kind, side=one_side,
+                reason=f"{len(members)} records fall in this period, more than {rule.max_members}"))
+            continue
+        consumed.update(id(m) for m in members)
+        pair = _pair(o, members, one_side, rule.kind, 1.0)
+        pair.evidence = {"rule": rule.kind, "period": {"start": first.isoformat(), "end": last.isoformat()},
+                         "share": {o_path: str(dig(o, o_path)) for o_path in one_paths},
+                         "members": len(members)}
+        out.matched.append(pair)
+
+    # A record outside every imported period of its key: before the
+    # earliest, it predates the returns imported; after the latest, its
+    # return cannot be filed yet. Either way it waits. One in a gap between
+    # two periods, or of a key with no period at all, is a real miss.
+    waiting = out.waiting["right" if one_side == "left" else "left"]
+    rest: list[Row] = []
+    for m, day, k in days:
+        if id(m) in consumed:
+            continue
+        spans = periods.get(k)
+        named = ", ".join(str(x) for x in k) or "this record"
+        if day is None or not spans:
+            rest.append(m)
+        elif day > max(e for _, e in spans):
+            latest = max(e for _, e in spans).isoformat()
+            waiting.append(Unverifiable(m, f"after the latest period imported for {named} (to {latest}): "
+                                           "waiting for the next"))
+        elif day < min(s for s, _ in spans):
+            earliest = min(s for s, _ in spans).isoformat()
+            waiting.append(Unverifiable(m, f"before the earliest period imported for {named} (from {earliest})"))
+        else:
+            rest.append(m)
+    return (still, rest) if one_side == "left" else (rest, still)
+
+
 def _pair(one: Row, members: list[Row], one_side: str, rule: str, confidence: float) -> MatchedPair:
     """A pair, or a group pair when several records answer the one."""
     if len(members) == 1:
@@ -709,6 +795,8 @@ def match(
             left, right = _apply_group_ref(rule, left, right, result)
         elif isinstance(rule, GroupSum):
             left, right = _apply_group_sum(rule, left, right, result)
+        elif isinstance(rule, PeriodGroup):
+            left, right = _apply_period_group(rule, left, right, result)
 
     left_ts, right_ts = spec.timestamp_paths
     result.unmatched_left, result.unverifiable_left = _split_unread(
@@ -717,6 +805,8 @@ def match(
     result.unmatched_right, result.unverifiable_right = _split_unread(
         right, right_ts, left_coverage
     )
+    result.unverifiable_left += result.waiting["left"]
+    result.unverifiable_right += result.waiting["right"]
     _score_discrepancies(spec, result)
     _describe_groups(spec, result)
     return result

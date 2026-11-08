@@ -11,6 +11,7 @@
 
 export const KINDS = [
   "settlement_batches", "settlement_transactions", "delivery_lines", "delivery_payouts", "bank_deposits",
+  "tax_filings",
 ] as const;
 export type Kind = (typeof KINDS)[number];
 
@@ -21,6 +22,7 @@ export const KIND_LABEL: Record<Kind, { short: string; long: string; from: strin
   delivery_lines: { short: "Delivery orders", long: "Orders and charges from a delivery platform's report", from: "DoorDash, Uber Eats or Grubhub transactions" },
   delivery_payouts: { short: "Delivery payouts", long: "Payouts from a delivery platform's report", from: "DoorDash, Uber Eats or Grubhub payouts" },
   bank_deposits: { short: "Bank statement", long: "Lines of a bank statement", from: "Bank statement (CSV, Excel or OFX)" },
+  tax_filings: { short: "Tax returns", long: "What each sales tax return reported", from: "Return summary or filing report" },
 };
 
 export function kindLabel(kind: string): string {
@@ -35,6 +37,8 @@ export function fieldLabel(field: string): string {
     credit: "Money in", debit: "Money out", auth_code: "Authorization code",
     pos_order_ref: "POS order reference", payout_on: "Payout date", paid_on: "Paid on",
     marketing_minor: "Marketing and promotions", payout_fee_minor: "Instant payout fee",
+    jurisdiction: "State or jurisdiction", vendor_discount_minor: "Vendor discount", paid_minor: "Paid",
+    return_id: "Return or confirmation number", tax_minor: "Tax reported",
   };
   if (special[field]) return special[field];
   const words = field.replace(/_minor$/, "").replace(/_id$/, "_ID").replace(/_/g, " ");

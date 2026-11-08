@@ -182,7 +182,7 @@ const parts: Part[] = [
     body: (
       <p>
         The website, the dashboard, the API and the hosted MCP server are served only over HTTPS. Okwan reaches
-        Stripe, PayPal, Shopify, Square, Clover, Paystack and WhatsApp over HTTPS, and its connection to our own database is
+        Stripe, PayPal, Shopify, Square, Clover, Avalara, Paystack and WhatsApp over HTTPS, and its connection to our own database is
         encrypted; our database provider, Neon, accepts no other kind. If you connect your own Postgres database,
         the connection string you save decides whether that connection is encrypted, so include{" "}
         <code>sslmode=require</code>.

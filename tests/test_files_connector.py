@@ -89,7 +89,7 @@ async def _upload(client, shop, data, mapping, name="f.csv"):
 # ── the connector, defined once ─────────────────────────────────────
 
 KINDS = {"settlement_batches", "settlement_transactions", "bank_deposits", "delivery_lines",
-         "delivery_payouts"}
+         "delivery_payouts", "tax_filings"}
 
 
 def test_one_resource_per_kind_each_a_read_and_nothing_that_writes():

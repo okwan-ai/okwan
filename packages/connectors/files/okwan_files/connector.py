@@ -5,9 +5,10 @@ reading it back is the same act as reading a rail: a paged list of
 records in a declared shape. So it is one connector, defined once here,
 and it gets REST routes, SQL tables (`files.settlement_batches`,
 `files.settlement_transactions`, `files.bank_deposits`,
-`files.delivery_lines`, `files.delivery_payouts`) and MCP tools the way
-every connector does; a reconciliation reads it like any other side
-(`batches_deposits`, `delivery_payout_lines`). Every operation is a read. Upload and delete
+`files.delivery_lines`, `files.delivery_payouts`, `files.tax_filings`)
+and MCP tools the way every connector does; a reconciliation reads it like
+any other side (`batches_deposits`, `delivery_payout_lines`,
+`avatax_collected_filed`). Every operation is a read. Upload and delete
 are Okwan's own administration, at `/v1/tenants/{id}/imports`, and never
 appear here.
 
@@ -44,6 +45,7 @@ from .schemas import (
     DeliveryPayout,
     SettlementBatch,
     SettlementTransaction,
+    TaxFiling,
 )
 
 _store: Callable[[], Any] | None = None
@@ -217,3 +219,12 @@ async def list_delivery_lines(ctx: ConnectorContext, body: ListDeliveryLinesIn) 
 async def list_delivery_payouts(ctx: ConnectorContext, body: ListImportedIn) -> CursorPage[DeliveryPayout]:
     """List imported delivery platform payouts, oldest first, from files not expired."""
     return CursorPage[DeliveryPayout].model_validate(await _read("delivery_payouts", ctx, body))
+
+
+tax_filings = files.resource("tax_filings", TaxFiling, KINDS["tax_filings"].description)
+
+
+@tax_filings.operation(OpType.LIST, ListImportedIn, CursorPage[TaxFiling])
+async def list_tax_filings(ctx: ConnectorContext, body: ListImportedIn) -> CursorPage[TaxFiling]:
+    """List imported sales tax returns, by the last day each covers, from files not expired."""
+    return CursorPage[TaxFiling].model_validate(await _read("tax_filings", ctx, body))

@@ -268,7 +268,46 @@ class GroupSum(Frozen):
         return {"left": many, "right": one} if self.many == "left" else {"left": one, "right": many}
 
 
-MatchRule = Annotated[ExactRef | Fuzzy | GroupRef | GroupSum, Field(discriminator="kind")]
+class PeriodGroup(Frozen):
+    """One record that states a period, against every record on the other
+    side inside it (E6, period sums).
+
+    A tax return covers a state for a month or a quarter; the tax engine
+    holds one document per sale. The return is matched with every sale the
+    engine dated inside the return's first and last day, for the same
+    state, and the amounts compared are the return's figure and the sales'
+    sum. Unlike GroupSum there is no subset to find: the period decides
+    membership, so every record inside it belongs, and a period with none
+    sums to zero (a nil return for a quiet month agrees; one reporting tax
+    with nothing behind it does not). A many-side record in a gap between
+    two periods of its key is a miss (a return not imported); one before
+    the earliest or after the latest is waiting, since its period predates
+    the imports or cannot have been filed yet; one of a key with no period
+    at all is a miss. Pay periods (tips per employee) take the same shape.
+    """
+
+    kind: Literal["period_group"] = "period_group"
+    one: Literal["left", "right"] = "left"
+    start: str = Field(description="The first day of the period, on the one side")
+    end: str = Field(description="The last day of the period, on the one side")
+    timestamp_many: str = Field(default="created_at", description="When a many-side record happened")
+    share: tuple[tuple[str, str], ...] = Field(
+        default=(), description="(one-side path, many-side path) pairs that must be equal, any case: the state")
+    timezone: str = Field(default="America/New_York", description="Where a timestamp's day is counted")
+    max_members: int = Field(default=10_000, ge=1, le=100_000)
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"unknown timezone {v!r}") from None
+        return v
+
+
+MatchRule = Annotated[ExactRef | Fuzzy | GroupRef | GroupSum | PeriodGroup, Field(discriminator="kind")]
 
 
 class MSISDN(Frozen):
@@ -504,6 +543,9 @@ class Reconciliation(Frozen):
             if isinstance(rule, GroupSum):
                 s = rule.sides()
                 return s["left"]["timestamp"], s["right"]["timestamp"]
+            if isinstance(rule, PeriodGroup):
+                return ((rule.end, rule.timestamp_many) if rule.one == "left"
+                        else (rule.timestamp_many, rule.end))
         return None, None
 
     @property

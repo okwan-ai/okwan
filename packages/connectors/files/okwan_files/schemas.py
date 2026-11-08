@@ -1,8 +1,9 @@
 """The shapes an imported file becomes.
 
 A tenant uploads a processor's batch report, a processor's transaction
-export, a bank statement, or a delivery platform's transaction or payout
-report, and a column mapping turns each row into one of these. Whatever processor or bank produced the file, the rows land in
+export, a bank statement, a delivery platform's transaction or payout
+report, or a summary of its sales tax returns, and a column mapping turns
+each row into one of these. Whatever processor or bank produced the file, the rows land in
 the same shape, so one reconciliation covers every source and a new
 processor is a mapping, not code (§9 2026-11-06, Tier 1 plan).
 
@@ -152,6 +153,31 @@ class DeliveryPayout(_Provenance):
         None, description="A fee on the payout itself (an instant payout), a positive amount")
 
 
+class TaxFiling(_Provenance):
+    """One sales tax return: what it reported for one jurisdiction over one period.
+
+    From the return itself or a filing service's report (Avalara Returns'
+    liability worksheet, a state's filing confirmation), typed or exported
+    once a period. The tax it reported is compared with the tax the tax
+    engine committed for the same state and days.
+    """
+
+    jurisdiction: str = Field(description="The state or jurisdiction, as the tax engine names it (WY)")
+    period_start: dt.date = Field(description="The first day the return covers")
+    period_end: dt.date = Field(description="The last day the return covers")
+    tax_minor: int = Field(description="The tax the return reported as collected, before any discount")
+    currency: str = Field(description="ISO 4217 code")
+    taxable_minor: int | None = Field(None, description="Taxable sales the return reported")
+    gross_sales_minor: int | None = Field(None, description="Gross sales the return reported")
+    adjustments_minor: int | None = Field(
+        None, description="Corrections to earlier periods carried on this return, signed")
+    vendor_discount_minor: int | None = Field(
+        None, description="A timely-filing discount the state let the seller keep, a positive amount")
+    paid_minor: int | None = Field(None, description="What was paid with the return")
+    filed_on: dt.date | None = Field(None, description="The day it was filed")
+    return_id: str | None = Field(None, description="The return's or confirmation's number")
+
+
 @dataclass(frozen=True, slots=True)
 class Kind:
     name: str
@@ -173,6 +199,8 @@ KINDS: dict[str, Kind] = {
              "Orders and charges from a delivery platform's transaction report"),
         Kind("delivery_payouts", DeliveryPayout, "paid_on",
              "Payouts from a delivery platform's payout report"),
+        Kind("tax_filings", TaxFiling, "period_end",
+             "Sales tax returns: what each reported for a jurisdiction and period"),
     )
 }
 
@@ -182,7 +210,7 @@ PROVENANCE = frozenset(_Provenance.model_fields)
 DEDUCTIONS = frozenset({
     "fees_minor", "chargebacks_minor", "fee_minor",
     "commission_minor", "processing_fee_minor", "marketing_minor", "error_charges_minor",
-    "refunds_minor", "payout_fee_minor",
+    "refunds_minor", "payout_fee_minor", "vendor_discount_minor",
 })
 
 #: Fields derived when the file has no column for them.

@@ -52,7 +52,8 @@ const parts: Part[] = [
           </li>
           <li>
             <strong>Credentials you save.</strong> The API keys, tokens and similar values you save to connect a
-            service (for example Stripe, PayPal, Shopify, Paystack, WhatsApp or a Postgres database). Each is
+            service (for example Stripe, PayPal, Shopify, Square, Clover, Avalara, Paystack, WhatsApp or a Postgres
+            database). Each is
             encrypted with AES-256-GCM under its own key and bound to your account. It is decrypted only while a
             request that reads your records runs, and is never shown again: not in the dashboard, and not in our
             staff tools, which show which fields are saved but never their values.
@@ -70,10 +71,10 @@ const parts: Part[] = [
             names or email addresses from those services, and we do not store SQL queries or their results.
           </li>
           <li>
-            <strong>Files you import.</strong> Settlement reports, transaction exports, delivery platform reports
-            and bank statements you upload (CSV, Excel or OFX, up to 8 MB). The file is read in memory while it
+            <strong>Files you import.</strong> Settlement reports, transaction exports, delivery platform reports,
+            sales tax return summaries and bank statements you upload (CSV, Excel or OFX, up to 8 MB). The file is read in memory while it
             uploads and is never stored. From each row we keep only the fields you map to it: references, dates,
-            amounts, a merchant or store ID, an order&rsquo;s status, the statement text, and at most the last four
+            amounts, a merchant or store ID, a state or tax jurisdiction, an order&rsquo;s status, the statement text, and at most the last four
             digits of a card or account number. With them we keep
             the file&rsquo;s name, the row each came from, the numbers of any rows that could not be read, and a
             fingerprint of the file (its SHA-256 hash) so the same file is not imported twice. Statement text is

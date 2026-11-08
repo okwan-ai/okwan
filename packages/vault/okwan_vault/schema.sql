@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS import_files (
     tenant_id     text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     kind          text NOT NULL CONSTRAINT import_files_kind_check
                   CHECK (kind IN ('settlement_batches', 'settlement_transactions', 'bank_deposits',
-                                  'delivery_lines', 'delivery_payouts')),
+                                  'delivery_lines', 'delivery_payouts', 'tax_filings')),
     filename      text NOT NULL,
     format        text NOT NULL CHECK (format IN ('csv', 'xlsx', 'ofx')),
     layout        text NOT NULL,
@@ -295,20 +295,20 @@ CREATE TABLE IF NOT EXISTS import_files (
     expires_at    timestamptz NOT NULL
 );
 
--- A database made before delivery platforms knows three kinds; the check
--- grows to five here. Read first, like parent_id above: ALTER TABLE would
--- lock the table on every start.
+-- A database made before delivery platforms and tax returns knows fewer
+-- kinds; the check grows to all six here. Read first, like parent_id
+-- above: ALTER TABLE would lock the table on every start.
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'import_files'::regclass AND conname = 'import_files_kind_check'
-          AND pg_get_constraintdef(oid) LIKE '%delivery_payouts%'
+          AND pg_get_constraintdef(oid) LIKE '%tax_filings%'
     ) THEN
         ALTER TABLE import_files DROP CONSTRAINT IF EXISTS import_files_kind_check,
             ADD CONSTRAINT import_files_kind_check
             CHECK (kind IN ('settlement_batches', 'settlement_transactions', 'bank_deposits',
-                            'delivery_lines', 'delivery_payouts'));
+                            'delivery_lines', 'delivery_payouts', 'tax_filings'));
     END IF;
 END $$;
 
