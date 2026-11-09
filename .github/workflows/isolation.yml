@@ -27,7 +27,11 @@ permissions:
 jobs:
   plant-leaks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # 24 planted breaks, 8 of which must re-run the whole isolation suite
+    # and pass (one wall broken, the other holding), so the job grows with
+    # every route and tenant table the suite covers: about 25 minutes at
+    # v1.50, 42 at v1.56, over 45 at v1.59. A limit, not a target.
+    timeout-minutes: 75
     services:
       postgres:
         image: postgres:16
