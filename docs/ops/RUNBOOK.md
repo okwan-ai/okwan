@@ -415,6 +415,13 @@ access in Gusto, and lands on *Gusto is connected* with the test read.
 - **"wasn't started in this browser":** the approval finished in a
   different browser, or the API restarted in between (connections in
   progress live in memory). Connect again.
+- **What it reads:** `gusto.payrolls` (each processed payroll's dates and
+  totals; its list is the connection test) and `gusto.payroll_tips` (each
+  employee's cash and paycheck tips per payroll, by Gusto's employee uuid,
+  from each payroll's detail: one list call, then one call per payroll per
+  hundred employees, at 3 requests a second). A tips page that ends inside
+  a payroll reads that payroll again on the next page. No name, wage or tax
+  is read per employee.
 - Tokens are renewed every two hours under a lock in the process; a second
   API instance needs that lock in the database first
   ([known-gaps.md](../audit/known-gaps.md) G7).
