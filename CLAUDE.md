@@ -22,6 +22,12 @@ MoMo Collections failed this and was rejected.
    mocking dependency.
 4. Verify it appears queryable in the hosted catalog for a provisioned
    tenant, not just the local one.
+5. Ship with the owner's original logo, in full colour, never just the
+   name or a letter: one entry in
+   `apps/dashboard/app/_components/ui/brand-logos.ts`, taken from the
+   owner's own site, docs or brand kit, or a CC0 set that copies it, with
+   its source in the entry's comment. `tests/test_brand_logos.py` fails a
+   registered connector without one.
 
 ## Stack (locked, §4)
 Python 3.12, FastAPI, Pydantic v2, httpx async, DuckDB, Neon Postgres.

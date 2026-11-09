@@ -16,6 +16,7 @@ instance today. A restart drops them, and the admin connects again.
 """
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from typing import Any
@@ -29,6 +30,8 @@ from pydantic import BaseModel, Field
 
 from .admin import _guard, _probe
 from .auth import admin_actor
+
+logger = logging.getLogger(__name__)
 
 #: How long a started connection may take: Gusto's own code lives ten minutes.
 STATE_TTL = 600
@@ -66,7 +69,10 @@ def build_router() -> APIRouter:
         """Start connecting Gusto for a tenant in the caller's subtree: the
         link to send its Gusto admin to, and the state to bring back."""
         await _guard(actor, tenant_id)
-        if not gusto_auth.configured():
+        if missing := gusto_auth.missing_settings():
+            # The operator reads which setting, by name; the customer is
+            # told only that Gusto isn't ready here.
+            logger.warning("Connect Gusto refused: %s not set on this server", ", ".join(missing))
             raise HTTPException(503, "Gusto isn't set up on this Okwan server yet")
         state = secrets.token_urlsafe(32)
         _remember(state, tenant_id, actor.id)

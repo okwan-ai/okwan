@@ -3,13 +3,24 @@
  * clients, for BrandMark. Each is its owner's trademark, shown to name
  * the integration it identifies (OKWAN_PROJECT.md §9, §10 item 25).
  *
- * SVG data from "SVG Logos" by Gil Barbara (CC0 1.0, github.com/gilbarbara/logos,
- * via @iconify-json/logos 1.2.15), vendored so the dashboard adds no
- * dependency. Stripe's entry is its app tile: the Simple Icons "S" (CC0 1.0)
- * in white on Stripe's purple, since the set only carries the wordmark.
- * `__ID<n>__` marks a gradient id that BrandMark makes unique per drawing.
- * Paystack has no logo file here; it keeps a letter mark until the owner
- * adds the official one from Paystack's brand kit.
+ * Every connector ships with its owner's original logo, never a letter
+ * (CLAUDE.md, standing workflow); tests/test_brand_logos.py fails a
+ * registered connector that has none. Each entry's comment says where its
+ * drawing came from:
+ * - "SVG Logos" by Gil Barbara (CC0 1.0, github.com/gilbarbara/logos, via
+ *   @iconify-json/logos 1.2.15): PayPal, Shopify, PostgreSQL, WhatsApp,
+ *   Claude, Cursor.
+ * - Simple Icons (CC0 1.0): Stripe's "S", in white on Stripe's purple as its
+ *   app tile, since the set above only carries the wordmark; Square's mark,
+ *   in the colour Simple Icons records from squareup.com.
+ * - The owner's own files: Clover's and Gusto's from their developer docs,
+ *   Avalara's from avalara.com. Gusto's tile is the "g" of its logo, as its
+ *   own favicon shows it.
+ * Paystack's is the one still to come: its site refuses an automated
+ * download, so the owner adds the file from Paystack's brand assets.
+ *
+ * Vendored, so the dashboard adds no dependency. `__ID<n>__` marks a
+ * gradient id that BrandMark makes unique per drawing.
  */
 export type Logo = { viewBox: string; body: string };
 
@@ -28,4 +39,12 @@ export const LOGOS: Record<string, Logo> = {
   "cursor": { viewBox: "0 0 256 292", body: "<path fill=\"#26251e\" d=\"M250.894 69.075L134.06 1.622a12.14 12.14 0 0 0-12.133 0L5.101 69.075A10.2 10.2 0 0 0 0 77.911v136.02a10.21 10.21 0 0 0 5.1 8.835l116.834 67.453a12.14 12.14 0 0 0 12.132 0L250.9 222.766a10.2 10.2 0 0 0 5.1-8.836V77.911a10.21 10.21 0 0 0-5.1-8.836zm-7.34 14.288L130.77 278.712c-.763 1.316-2.775.778-2.775-.746V150.053a7.17 7.17 0 0 0-3.582-6.203L13.64 79.897c-1.317-.763-.779-2.776.746-2.776h225.57c3.203 0 5.205 3.472 3.603 6.248h-.005z\"/>" },
   // Simple Icons "stripe" on #635BFF
   stripe: { viewBox: "0 0 24 24", body: "<rect width=\"24\" height=\"24\" rx=\"5.5\" fill=\"#635bff\"/><g transform=\"translate(5.4 5.4) scale(0.55)\"><path fill=\"#fff\" d=\"M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.594-7.305h.003z\"/></g>" },
+  // Square: Simple Icons "square", in the colour it records from squareup.com
+  square: { viewBox: "0 0 24 24", body: "<path fill=\"#3e4348\" d=\"M4.01 0A4.01 4.01 0 000 4.01v15.98c0 2.21 1.8 4 4.01 4.01h15.98C22.2 24 24 22.2 24 19.99V4A4.01 4.01 0 0019.99 0H4zm1.62 4.36h12.74c.7 0 1.26.57 1.26 1.27v12.74c0 .7-.56 1.27-1.26 1.27H5.63c-.7 0-1.26-.57-1.26-1.27V5.63a1.27 1.27 0 011.26-1.27zm3.83 4.35a.73.73 0 00-.73.73v5.09c0 .4.32.72.72.72h5.1a.73.73 0 00.73-.72V9.44a.73.73 0 00-.73-.73h-5.1Z\"/>" },
+  // Clover: its icon from docs.clover.com (files.readme.io/6f06232-clover-icon1.svg)
+  clover: { viewBox: "0 0 22 22", body: "<path d=\"M10.7 5.6c0-2-1.2-3.7-3-4.5-1.8-.8-3.9-.4-5.3 1S.6 5.6 1.3 7.4c.7 1.8 2.5 3 4.5 3h4.9V5.6zm1.4 0c0-2 1.2-3.7 3-4.5 1.8-.8 3.9-.4 5.3 1s1.8 3.5 1.1 5.3c-.7 1.8-2.5 3-4.5 3h-4.9V5.6zm0 11c0 2 1.2 3.7 3 4.5 1.8.8 3.9.4 5.3-1s1.8-3.5 1.1-5.3c-.7-1.8-2.5-3-4.5-3h-4.9v4.8zm-6.3 3.5c1.9 0 3.5-1.5 3.5-3.5v-3.5H5.8c-1.9 0-3.5 1.5-3.5 3.5s1.6 3.5 3.5 3.5zm4.9-3.5c0 2-1.2 3.7-3 4.5-1.8.8-3.9.4-5.3-1s-1.8-3.5-1.1-5.3c.7-1.8 2.5-3 4.5-3h4.9v4.8z\" fill=\"#228800\"/>" },
+  // Avalara: its mark from avalara.com (footer avalara-logo-32px.svg)
+  avalara: { viewBox: "0 0 32 32", body: "<path d=\"M16.0598 24.0195C16.0598 24.0195 14.3928 22.0652 13.4066 21.0094L12.0214 24.1318C14.0171 26.9623 15.3319 29.4108 16.0598 30.5789C17.4685 28.2876 20.92 21.5036 28.0341 15.1463L27.2358 13.3717C22.6105 16.6514 18.666 20.8297 16.0598 24.0195Z\" fill=\"#059bd2\"/><path d=\"M26.4379 31.4999H32.0964L27.1188 20.0883C25.6631 21.5709 24.4187 23.031 23.3152 24.4238L26.4379 31.4999Z\" fill=\"#ff6600\"/><path d=\"M18.525 0.5H18.5016H13.5709H13.5475L0 31.5H5.65847L15.4493 9.39565L15.9189 8.20507H16.1771L16.6467 9.39565L19.5581 15.9551C20.8495 14.7196 22.2582 13.5065 23.7374 12.3609L18.525 0.5Z\" fill=\"#ff6600\"/>" },
+  // Gusto: the "g" of its logo from docs.gusto.com (files.readme.io/000ba2a-gusto-logo.svg), as its favicon shows it
+  gusto: { viewBox: "0 5.9 24.2 34.9", body: "<path fill=\"#f45d48\" d=\"M24.1 27.407V6.427h-5.69V7.83a11.863 11.863 0 00-6.425-1.883C5.378 5.947 0 11.348 0 17.987c0 6.64 5.377 12.042 11.986 12.042 2.334 0 4.522-.674 6.36-1.837 0 .184-.01.35-.01.461 0 3.49-2.83 6.335-6.304 6.335a6.27 6.27 0 01-3.337-.97l-2.813 4.95a11.87 11.87 0 006.159 1.736c6.608 0 12.059-5.402 12.059-12.042 0-.258.018-1.015 0-1.255zm-12.115-3.085c-3.474 0-6.305-2.844-6.305-6.334 0-3.49 2.831-6.335 6.306-6.335 3.474 0 6.305 2.844 6.305 6.335 0 3.49-2.831 6.334-6.306 6.334z\"/>" },
 };

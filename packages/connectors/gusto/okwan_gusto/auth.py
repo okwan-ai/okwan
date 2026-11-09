@@ -54,13 +54,21 @@ def host() -> str:
     return HOSTS[environment()]
 
 
+#: The server's own settings Connect Gusto cannot start without.
+APP_SETTINGS = ("OKWAN_GUSTO_CLIENT_ID", "OKWAN_GUSTO_CLIENT_SECRET")
+
+
+def missing_settings() -> list[str]:
+    """Which of APP_SETTINGS this server lacks, by name, never by value:
+    for the operator's log, so a misspelt variable is found at once."""
+    return [name for name in APP_SETTINGS if not os.environ.get(name, "").strip()]
+
+
 def app_credentials() -> tuple[str, str]:
     """Okwan's own client id and secret, from the server's environment."""
-    client_id = os.environ.get("OKWAN_GUSTO_CLIENT_ID", "").strip()
-    secret = os.environ.get("OKWAN_GUSTO_CLIENT_SECRET", "").strip()
-    if not client_id or not secret:
+    if missing_settings():
         raise CredentialError("Gusto is not set up on this Okwan server (OKWAN_GUSTO_CLIENT_ID and _SECRET)")
-    return client_id, secret
+    return os.environ["OKWAN_GUSTO_CLIENT_ID"].strip(), os.environ["OKWAN_GUSTO_CLIENT_SECRET"].strip()
 
 
 def configured() -> bool:

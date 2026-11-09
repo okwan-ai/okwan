@@ -405,7 +405,10 @@ access in Gusto, and lands on *Gusto is connected* with the test read.
   The application's redirect URI must be
   `https://app.okwan.ai/integrations/gusto/callback`.
 - **"Gusto isn't set up on this Okwan server yet":** one of the two
-  secrets is missing on the service.
+  secrets is missing on the service. The API log names which one, never
+  its value: `Connect Gusto refused: OKWAN_GUSTO_CLIENT_ID not set on this
+  server`. A name spelt any other way counts as missing (on 2026-11-09 the
+  id was saved as `KWAN_GUSTO_CLIENT_ID`).
 - **"Gusto refused the token request … connect Gusto again":** the code
   expired (ten minutes), the business revoked access, or a refresh token
   was spent. The admin connects again; nothing else to repair.
