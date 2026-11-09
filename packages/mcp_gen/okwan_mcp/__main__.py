@@ -8,6 +8,7 @@ import sys
 import okwan_avalara.connector  # noqa: F401  (registers the connector)
 import okwan_clover.connector  # noqa: F401  (registers the connector)
 import okwan_files.connector  # noqa: F401  (registers the connector)
+import okwan_gusto.connector  # noqa: F401  (registers the connector)
 import okwan_paypal.connector  # noqa: F401  (registers the connector)
 import okwan_paystack.connector  # noqa: F401
 import okwan_postgres.connector  # noqa: F401

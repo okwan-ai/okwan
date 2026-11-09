@@ -66,6 +66,17 @@ services:
       # either way: python -m okwan_vault support list.
       - key: OKWAN_SUPPORT_ESCALATION_TO
         sync: false
+      # Okwan's own Gusto application (okwan_gusto/auth.py), from the Gusto
+      # Developer Portal, Applications. Unset, Connect Gusto answers that
+      # Gusto isn't set up. The application's redirect URI must be
+      # OKWAN_DASHBOARD_URL + /integrations/gusto/callback.
+      - key: OKWAN_GUSTO_CLIENT_ID
+        sync: false
+      - key: OKWAN_GUSTO_CLIENT_SECRET
+        sync: false
+      # demo (api.gusto-demo.com) until Gusto issues production credentials.
+      - key: OKWAN_GUSTO_ENV
+        value: demo
       # Sign-in addresses of the people who run Okwan (comma-separated).
       # Only they see the console at /ops, after an authenticator code.
       # Unset, the console does not exist for anyone.

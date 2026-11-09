@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 import okwan_avalara.connector  # noqa: F401  (registers the connector)
 import okwan_clover.connector  # noqa: F401  (registers the connector)
+import okwan_gusto.connector  # registers the connector; handed the store below
 import okwan_paystack.connector  # noqa: F401  (registers the connector)
 import okwan_paypal.connector  # noqa: F401  (registers the connector)
 import okwan_postgres.connector  # noqa: F401  (registers the connector)
@@ -43,6 +44,7 @@ import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.admin import build_router as build_admin_router
 from okwan_api.billing import build_router as build_billing_router
 from okwan_api.imports import build_router as build_imports_router
+from okwan_api.connect import build_router as build_connect_router
 from okwan_api.imports import sweeper as imports_sweeper
 from okwan_api.access import sweeper as access_sweeper
 from okwan_api.auth import get_store as _get_store
@@ -129,6 +131,9 @@ class ConnectorInfo(BaseModel):
     #: The SQL tables this connector generates (connector.resource), the
     #: same set the query layer serves and the hosted MCP describes.
     sql_tables: list[str]
+    #: How a person connects it: "fields" typed into the dashboard, or
+    #: "oauth", a Connect button that sends them to the system to approve.
+    connect: str = "fields"
     #: Operations that are not read-only ("messages.send_text"). A
     #: reconciliation may not be declared over one; connector REST mounts
     #: them like any other, so a catalog must say which they are.
@@ -152,6 +157,7 @@ async def list_connectors() -> list[ConnectorInfo]:
             probe=_probe_name(c),
             sql_tables=[f"{t.connector}.{t.resource}" for t in tables_for(c)],
             writes=[f"{r.name}.{op.name}" for r, op in c.iter_operations() if not op.is_read_only],
+            connect=getattr(c.auth, "connect", "fields"),
         )
         for c in all_connectors()
     ]
@@ -217,6 +223,7 @@ for _connector in all_connectors():
 
 # Imported files are read from the same store the vault uses.
 okwan_files.connector.use_store(_get_store)
+okwan_gusto.connector.use_store(_get_store)
 
 
 # Reconciliations span connectors, so they mount as one router rather
@@ -229,6 +236,7 @@ app.include_router(build_support_router())
 app.include_router(build_ops_router())
 app.include_router(build_billing_router())
 app.include_router(build_imports_router())
+app.include_router(build_connect_router())
 
 
 @app.exception_handler(RequestValidationError)
