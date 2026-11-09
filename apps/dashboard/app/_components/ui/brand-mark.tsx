@@ -30,11 +30,15 @@ import { LOGOS } from "./brand-logos";
  * decides. Brand pages: Shopify shopify.com/brand-assets · PayPal
  * newsroom.paypal-corp.com/media-resources · Stripe stripe.com/newsroom/brand-assets
  * · PostgreSQL postgresql.org/about/policies/trademarks · WhatsApp
- * about.meta.com/brand/resources/whatsapp · Claude anthropic.com · Cursor cursor.com.
+ * about.meta.com/brand/resources/whatsapp · Claude anthropic.com · Cursor cursor.com
+ * · Square squareup.com/us/en/press · Clover clover.com · Avalara avalara.com
+ * · Gusto gusto.com · Paystack paystack.com.
  *
- * A system with no logo here (Paystack today) gets an ink initial on the
- * white tile (ink-outlined when bare), never a filled square, so it takes
- * the same states; adding a logo is one entry in brand-logos.ts. The mark
+ * Every connector has its logo here (tests/test_brand_logos.py). The ink
+ * initial on the white tile (ink-outlined when bare) is only the stopgap
+ * for one that has not arrived yet (Paystack today), never a filled
+ * square, so it takes the same states; adding a logo is one entry in
+ * brand-logos.ts. The mark
  * is decorative (`aria-hidden`); the name beside it is the text. Never on
  * the signal yellow, in a finding sentence, in Okwan's own branding or on signed-out pages.
  */

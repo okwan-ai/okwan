@@ -301,11 +301,25 @@ async def test_a_gusto_token_cannot_be_typed_in(api):
     assert r.status_code == 400 and "Connect" in r.text
 
 
-async def test_without_okwan_s_app_credentials_authorize_says_so(api, monkeypatch):
+async def test_without_okwan_s_app_credentials_authorize_says_so(api, monkeypatch, caplog):
     client, _, shop, _ = api
     monkeypatch.delenv("OKWAN_GUSTO_CLIENT_SECRET")
-    r = await client.post(f"/v1/tenants/{shop.id}/connectors/gusto/authorize")
+    with caplog.at_level("WARNING", logger="okwan_api.connect"):
+        r = await client.post(f"/v1/tenants/{shop.id}/connectors/gusto/authorize")
     assert r.status_code == 503 and "isn't set up" in r.text
+    assert "OKWAN_GUSTO" not in r.text, "the customer is not told the server's setting names"
+    [line] = [rec.getMessage() for rec in caplog.records if rec.name == "okwan_api.connect"]
+    assert line == "Connect Gusto refused: OKWAN_GUSTO_CLIENT_SECRET not set on this server"
+    assert "cid-okwan" not in line, "a setting is named, never its value"
+
+
+def test_a_misspelt_setting_is_named_as_missing(monkeypatch):
+    """The 2026-11-09 production case: the id was saved as KWAN_GUSTO_CLIENT_ID."""
+    monkeypatch.delenv("OKWAN_GUSTO_CLIENT_ID", raising=False)
+    monkeypatch.setenv("KWAN_GUSTO_CLIENT_ID", "cid-okwan")
+    monkeypatch.setenv("OKWAN_GUSTO_CLIENT_SECRET", "secret-okwan")
+    assert gusto_auth.missing_settings() == ["OKWAN_GUSTO_CLIENT_ID"]
+    assert not gusto_auth.configured()
 
 
 async def test_the_catalog_says_gusto_connects_with_a_button_and_reads_payrolls(api):
