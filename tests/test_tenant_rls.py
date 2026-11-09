@@ -37,8 +37,9 @@ NO_TENANT_COLUMN = {"tenants", "signups", "operator_factors", "operator_actions"
 #: route: `support list` shows the operator every escalation.
 OPERATOR_READS = {"list_tickets", "get_ticket"}
 #: Maintenance across every tenant, as the login role, like deleting a
-#: tenant: the hourly sweep deletes expired imports and reads nothing back.
-MAINTENANCE = {"sweep_imports"}
+#: tenant: the hourly sweeps delete expired imports and aged access rows,
+#: and read nothing back.
+MAINTENANCE = {"sweep_imports", "sweep_access"}
 
 
 # ── static: every query over tenant data enters a scope ────────────────
@@ -152,6 +153,10 @@ async def two(store):
             mapping={}, sha256=f"sha-{name}", rows=[(2, now.date(), {"fitid": name})], skipped=[],
             card_columns=[], first_date=now.date(), last_date=now.date())
         await store.save_layout(t.id, f"{name}-layout", {"kind": "bank_deposits", "columns": {}})
+        await store.record_access(t.id, credential=f"okw_{name[:8]:<8}", ip="203.0.113.7",
+                                  network="203.0.113.0/24", surface="rest:test", target="/v1/x")
+        await store.add_access_alert(t.id, kind="new_network", credential=f"okw_{name[:8]:<8}",
+                                     detail={"network": "203.0.113.0/24"})
         out.append(t)
     return out
 
@@ -285,6 +290,11 @@ def _insert(table: str, tenant_id: str) -> tuple:
                         tenant_id, now.date()),
         "import_layouts": (("INSERT INTO import_layouts (tenant_id, name, kind, mapping) "
                             "VALUES ($1, 'rls-probe', 'bank_deposits', '{}')"), tenant_id),
+        "access_log": (("INSERT INTO access_log (tenant_id, credential, ip, network, surface) "
+                        "VALUES ($1, 'okw_rlsprobe', '203.0.113.9', '203.0.113.0/24', 'rest:x')"),
+                       tenant_id),
+        "access_alerts": (("INSERT INTO access_alerts (id, tenant_id, kind, credential) "
+                           "VALUES ('alr_rls_probe', $1, 'volume', 'okw_rlsprobe')"), tenant_id),
     }[table]
 
 

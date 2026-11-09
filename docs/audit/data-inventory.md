@@ -24,6 +24,8 @@ and what it holds only for the length of a request.
 | `reconciliation_runs` | Each run's summary and trimmed per-order verdicts (outcome, order reference, currency, totals, per-rail amounts, reason); a scrubbed error, at most 300 characters | Row-level security; no raw rail record is written (`okwan_recon` trims rows) | Newest 50 per tenant, kind and name; the insert prunes the rest |
 | `import_files` | One uploaded file's record: kind (settlement batches, settlement transactions, bank deposits, delivery lines, delivery payouts or tax filings), its name, format, the column mapping used, SHA-256 of the bytes, row and skipped-row counts, the names of any card columns it had, the span of dates it covers | Row-level security; the file itself is never written | 13 months from upload: reads skip it from then, an upload prunes the tenant's expired files, the API's hourly sweep deletes every tenant's; deleting the file or the tenant deletes it at once |
 | `import_layouts` | A tenant's saved column mappings, by name: the kind, which column fills which field, and the reading choices (currency, date order, decimal mark). Column names only, never a value from a file | Row-level security | Until deleted, or with the tenant |
+| `access_log` | One row per metered read of a tenant's data: when, the API key's public prefix (`okw_` and eight characters) or "session" for the dashboard, the caller's IP address and its network (/24 or /48), the surface, and what was read (a route, or a hosted MCP tool and the reconciliation it ran). Never the key, query text, parameters, rows or results | Row-level security | 90 days; the API's hourly sweep deletes older rows; deleting the tenant deletes them at once |
+| `access_alerts` | What the access log raised: a key on a network it had not used in 30 days (the address and network, the surface and route) or an unusual hour (the count and the key's busiest hour before), the key's prefix, whether the mail went out | Row-level security | 400 days; the hourly sweep deletes older ones; deleting the tenant deletes them at once |
 | `import_rows` | The mapped fields of each row of an imported file (references, dates, amounts in minor units, merchant or store id, an order's status and type, statement text, at most the last four digits of a card or account), with the file and row it came from | Row-level security; only mapped fields are written; a file holding a full card number anywhere is refused before anything is written (`okwan_files.guard`: network prefix, length and Luhn) | As its file |
 
 **Not stored anywhere:** card numbers (no rail returns one, no table
@@ -42,6 +44,8 @@ rails.
 | An uploaded file's bytes and every cell in it | The upload request (`okwan_api.imports`), at most 8 MB | The request ends; only the mapped fields of each row are stored, or nothing when the file is refused |
 | Rate-limit counters (IP, address, tenant) | Process memory, fixed windows | The window ends, or the process restarts |
 | PayPal access tokens | Process memory, keyed by SHA-256 of client id, secret and token URL | Expiry minus 60 seconds |
+| Who is calling: the key's public prefix or "session", and the caller's address | The request's context (`okwan_api.access`), for the access row | The request ends |
+| Which (tenant, key prefix, network) raised a new-network alert | Process memory, so two reads racing in from one new network raise one alert | An hour |
 | A Clover merchant's timezone and default currency | Process memory, one entry per connection, held weakly by that connection's transport and never shared between two | The connection closes |
 
 ## Where else data goes
@@ -49,10 +53,10 @@ rails.
 | Recipient | What | Why |
 |---|---|---|
 | The rails | The tenant's own credentials, as each rail's API requires | To read that tenant's records |
-| Resend | Recipient address and the verification link; support escalations (ticket id, tenant id and name, the account's sign-in address, the assistant's summary, the customer's last three messages, secrets removed and every customer value escaped as text) to `OKWAN_SUPPORT_ESCALATION_TO` | To deliver them; tracking must be off for the sending domain |
+| Resend | Recipient address and the verification link; access alerts (the account's sign-in address, its name and tenant id, the key's prefix, the caller's address and network, the time, the surface and route or the hour's count) to the account and to `OKWAN_SUPPORT_ESCALATION_TO`; support escalations (ticket id, tenant id and name, the account's sign-in address, the assistant's summary, the customer's last three messages, secrets removed and every customer value escaped as text) to `OKWAN_SUPPORT_ESCALATION_TO` | To deliver them; tracking must be off for the sending domain |
 | Anthropic | A support conversation: the customer's messages and the tools' results, secrets removed, plus Okwan's own documentation | To answer it (Claude Opus 5.5). Anthropic becomes a subprocessor: [owner-and-legal.md](owner-and-legal.md) |
 | Stripe | Checkout and portal requests: the account's tenant id (as metadata), its sign-in address, the Pro price id; Stripe collects the card itself | To take payment for Pro. Okwan's own Stripe account, not a connector |
-| Render logs | Warnings naming a tenant id when usage or a run could not be recorded; startup errors | Operations. No credential, token, link or query text is logged |
+| Render logs | Warnings naming a tenant id when usage, a run or an access row could not be recorded; an access alert's kind, tenant id and alert id (not the address); uvicorn's line for each request (the connecting address, method, path with its query string, status); startup errors | Operations. No credential, token, link or query text is logged |
 | GitHub | Monitor results: which public check failed and why | Incident issues |
 
 ## Secrets the service runs with

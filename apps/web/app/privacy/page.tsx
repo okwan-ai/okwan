@@ -96,7 +96,14 @@ const parts: Part[] = [
             the issue and the replies we send you.
           </li>
           <li>
-            <strong>Technical information.</strong> Your IP address is used, in memory only, to limit how often
+            <strong>Access records.</strong> Each time your data is read, through the API, the MCP server or the
+            dashboard, we record when, which API key (by its short prefix) or that it was a dashboard session, the IP
+            address and network it came from, and what was read: the address requested, or the check that ran. Never
+            the key itself, the query or its results. We use these records to show you who read your data, and to
+            email you when a key is used from a network it has not used before or reads far more than usual.
+          </li>
+          <li>
+            <strong>Technical information.</strong> Your IP address is also used, in memory only, to limit how often
             sign-in and similar requests can be tried. Our hosting providers keep standard request logs: the time,
             IP address, the address requested and the response. Okwan&rsquo;s own logs never contain credentials,
             tokens, passwords, links from our emails, or query text.
@@ -108,8 +115,8 @@ const parts: Part[] = [
             your payments.
           </li>
           <li>
-            <strong>Email.</strong> The messages we send you (a verification link when you sign up, and replies to
-            support requests) and your replies to them.
+            <strong>Email.</strong> The messages we send you (a verification link when you sign up, alerts about
+            how your API keys are used, and replies to support requests) and your replies to them.
           </li>
         </ul>
       </>
@@ -234,6 +241,8 @@ const parts: Part[] = [
             ["Files you import: their mapped rows and the file's record", "13 months from the upload, then deleted within the hour; at once if you delete the file"],
             ["Column mappings you save", "Until you delete them or your account"],
             ["Usage counts", "As long as your account exists"],
+            ["Access records: when, the API key's prefix, the IP address and network, what was read", "90 days, then deleted within the hour; at once with your account"],
+            ["Alerts about how your keys were used", "400 days, or until your account is deleted"],
             ["Support conversations", "30 days after the last message"],
             ["Support tickets and our replies", "As long as your account exists"],
             ["The log of staff actions in our console", "Permanently, as a security record. It names which account or ticket was opened, not what it contains"],
@@ -329,7 +338,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 7, 2026"
+      updated="November 9, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

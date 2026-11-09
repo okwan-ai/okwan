@@ -149,6 +149,29 @@ const parts: Part[] = [
     ),
   },
   {
+    id: "access",
+    title: "A record of every read, and alerts",
+    body: (
+      <ul>
+        <li>
+          Every time your data is read, through the API, the MCP server or the dashboard, Okwan records when, which
+          API key (by its prefix) or a dashboard session, the IP address and network it came from, and what was
+          read. Never the key itself, the query or its results. Records are kept 90 days, and only your account can
+          read them, through the API today.
+        </li>
+        <li>
+          If an API key reads your data from a network it has not used in the last 30 days, we email your account
+          at once with the key, the address and what was read, so you can revoke the key if it was not you. If a key
+          reads far more in an hour than in its busiest hour of the week before, we email you within the hour.
+        </li>
+        <li>
+          A key&rsquo;s first day sets where it normally runs from, so a new deployment does not set off an alert
+          with its own first requests.
+        </li>
+      </ul>
+    ),
+  },
+  {
     id: "isolation",
     title: "Keeping accounts apart",
     body: (
@@ -232,7 +255,7 @@ export default function Security() {
   return (
     <LegalPage
       title="Security"
-      updated="November 7, 2026"
+      updated="November 9, 2026"
       intro={
         <>
           <p>How Okwan handles the access you give it, and what it does not do yet. In short:</p>
@@ -240,6 +263,7 @@ export default function Security() {
             <li>Okwan never writes to your payment, commerce or bank systems, so it cannot move money or change your records. The only thing it sends is alert messages you set up, through WhatsApp.</li>
             <li>Each saved credential is encrypted under its own key, which is in turn encrypted by one master key held in our host&rsquo;s encrypted settings. Moving that key to a cloud KMS is planned.</li>
             <li>Records from your systems are read in memory for each request; only results are stored. From a file you import, only the columns you map are kept.</li>
+            <li>Every read of your data is recorded with the key and the address it came from, and a key used from somewhere new is emailed to you.</li>
             <li>Accounts are kept apart by two independent controls, each tested on its own.</li>
           </ul>
         </>

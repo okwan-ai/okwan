@@ -365,6 +365,32 @@ every 15 minutes; signup and the connection test have their own limits.
 Wait out `Retry-After`. Limits reset when the API restarts, but do not
 restart for this.
 
+### An access alert
+
+The API mails the account, with a copy to `OKWAN_SUPPORT_ESCALATION_TO`,
+when an API key reads from a network it has not used in 30 days (once the
+key has a day of history), or reads at least 100 times in an hour and more
+than three times its busiest hour of the week before. Render's log has one
+line per alert, `access alert <kind> on <tenant> (<alert id>)`, never the
+address. SEV3 while the customer recognises it; SEV2 once they do not,
+and then "A key or password leaked" below.
+
+1. What the key read: the customer reads `GET /v1/tenants/<tenant>/access?days=90`
+   with their session or a key. Every read is there (time, key prefix,
+   address, network, surface, route) with the alerts. The operator copy of
+   the mail has the address, network and route of the read that alerted.
+2. The customer does not recognise the network: they revoke the key
+   (dashboard *Settings*, keys; or `python -m okwan_vault key revoke <key_id>`)
+   and issue a new one. The rows from that network are the scope of what
+   was read.
+3. Expected alerts: a deployment moving to a new host or provider alerts
+   once for its new network. A volume alert repeats at most once a day per
+   key. Dashboard sessions never alert.
+4. Rows are kept 90 days and alerts 400; save what an incident needs
+   before then. The address is Cloudflare's header, which a request sent
+   straight to `okwan.onrender.com` can set itself
+   ([known-gaps.md](../audit/known-gaps.md) G17).
+
 ### A key or password leaked
 
 SEV1 if it is a customer's or an operator secret; SEV2 for a customer's

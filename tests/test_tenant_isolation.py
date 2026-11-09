@@ -289,6 +289,7 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
         ("/v1/tenants/{t}/credentials", {"connector": "stripe", "field": "secret_key", "value": "sk_INTRUDER"}),
     ("GET", "/v1/tenants/{tenant_id}/credentials"): ("/v1/tenants/{t}/credentials", None),
     ("GET", "/v1/tenants/{tenant_id}/usage"): ("/v1/tenants/{t}/usage", None),
+    ("GET", "/v1/tenants/{tenant_id}/access"): ("/v1/tenants/{t}/access", None),
     ("POST", "/v1/tenants/{tenant_id}/connectors/{connector_name}/test"):
         ("/v1/tenants/{t}/connectors/stripe/test", None),
     ("GET", "/v1/tenants/{tenant_id}/runs/latest"): ("/v1/tenants/{t}/runs/latest", None),
@@ -736,6 +737,26 @@ async def test_usage_counts_only_the_callers_subtree(client, world, rails):
     for key in ("isv_a", "a1", "a2"):
         assert world.t[key].id not in text_b
     assert world.t["a1"].id in json.dumps(a)
+
+
+async def test_the_access_log_shows_only_the_callers_subtree_each_read_under_its_own_key(
+        client, world, rails):
+    """A read is logged under the tenant it read and the key that read it.
+    Alternating callers in one process, each row names its own key: a
+    caller remembered from the last request would be logged as this one."""
+    for who in ("a1", "b1", "a1"):
+        r = await client.post("/v1/stripe/charges/list", json={"limit": 1}, headers=_auth(world.keys[who]))
+        assert r.status_code == 200
+    a = (await client.get(f"/v1/tenants/{world.t['isv_a'].id}/access", headers=_caller(world, "isv_a"))).json()
+    b = (await client.get(f"/v1/tenants/{world.t['isv_b'].id}/access", headers=_caller(world, "isv_b"))).json()
+    assert [(e["tenant_id"], e["credential"]) for e in a["entries"]] == [
+        (world.t["a1"].id, world.keys["a1"][:12])] * 2
+    assert [(e["tenant_id"], e["credential"]) for e in b["entries"]] == [
+        (world.t["b1"].id, world.keys["b1"][:12])]
+    text_b = json.dumps(b)
+    for key in ("isv_a", "a1", "a2"):
+        assert world.t[key].id not in text_b
+    assert world.keys["a1"][:12] not in text_b
 
 
 # ── 4. nothing carries over between requests ───────────────────────────

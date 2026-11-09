@@ -342,9 +342,48 @@ CREATE TABLE IF NOT EXISTS import_layouts (
     PRIMARY KEY (tenant_id, name)
 );
 
+-- ── access log: who read a tenant's data, from where, and when ──────
+-- One row per metered read (a rail or a file through REST, SQL or the
+-- hosted MCP server, a reconciliation, a connection test): when, which
+-- API key by its public prefix or "session" for the dashboard, the
+-- caller's address and its network (/24 for IPv4, /48 for IPv6), the
+-- surface, and what was read as a route or a reconciliation's name. Never
+-- query text, parameters, rows or results. Kept 90 days; the API's
+-- hourly sweep deletes older rows. Tenant data.
+CREATE TABLE IF NOT EXISTS access_log (
+    tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    at          timestamptz NOT NULL DEFAULT now(),
+    credential  text NOT NULL,
+    ip          text NOT NULL,
+    network     text NOT NULL,
+    surface     text NOT NULL,
+    target      text NOT NULL DEFAULT ''
+);
+
+-- Reads are one tenant's newest rows; the new-network check asks whether
+-- one key has used one network lately; the sweep deletes by age.
+CREATE INDEX IF NOT EXISTS access_log_read_idx ON access_log (tenant_id, at);
+CREATE INDEX IF NOT EXISTS access_log_network_idx ON access_log (tenant_id, credential, network, at);
+CREATE INDEX IF NOT EXISTS access_log_expiry_idx ON access_log (at);
+
+-- What the access log raised: a key used from a network it had not used
+-- in 30 days, or a key reading far more in an hour than its busiest hour
+-- of the week before. Mailed to the account. Kept 400 days. Tenant data.
+CREATE TABLE IF NOT EXISTS access_alerts (
+    id          text PRIMARY KEY,
+    tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    at          timestamptz NOT NULL DEFAULT now(),
+    kind        text NOT NULL CHECK (kind IN ('new_network', 'volume')),
+    credential  text NOT NULL,
+    detail      jsonb NOT NULL DEFAULT '{}',
+    mailed      boolean NOT NULL DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS access_alerts_read_idx ON access_alerts (tenant_id, at);
+
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
--- stored runs, support conversations and tickets, imported files) runs as okwan_tenant, inside one transaction that names
+-- stored runs, support conversations and tickets, imported files, the access log) runs as okwan_tenant, inside one transaction that names
 -- the tenants it may touch (PostgresStore._scoped). The policy below lets
 -- that role see, and write, only rows whose tenant_id is in that scope.
 -- With no scope it sees nothing and can write nothing. The WHERE
@@ -406,7 +445,8 @@ DECLARE
 BEGIN
     FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs',
                              'support_conversations', 'support_tickets', 'support_replies',
-                             'import_files', 'import_rows', 'import_layouts'] LOOP
+                             'import_files', 'import_rows', 'import_layouts',
+                             'access_log', 'access_alerts'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

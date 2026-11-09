@@ -15,7 +15,9 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
+from . import access as access_rules
 from . import accounts, apikey
+from .access import Seen
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
@@ -151,6 +153,21 @@ class Store(Protocol):
     async def get_layout(self, tenant_id: str, name: str) -> dict | None: ...
     async def delete_layout(self, tenant_id: str, name: str) -> bool: ...
     async def sweep_imports(self, now: datetime | None = None) -> int: ...
+    async def record_access(
+        self, tenant_id: str, *, credential: str, ip: str, network: str, surface: str,
+        target: str = "", at: datetime | None = None,
+    ) -> Seen: ...
+    async def access_entries(self, root_id: str, since: datetime, limit: int = 200) -> list[dict]: ...
+    async def add_access_alert(
+        self, tenant_id: str, *, kind: str, credential: str, detail: dict, at: datetime | None = None,
+    ) -> dict: ...
+    async def set_alert_mailed(self, tenant_id: str, alert_id: str) -> None: ...
+    async def access_alerts(self, root_id: str, since: datetime) -> list[dict]: ...
+    async def volume_spikes(
+        self, now: datetime | None = None, *, floor: int = access_rules.VOLUME_FLOOR,
+        factor: int = access_rules.VOLUME_FACTOR,
+    ) -> list[dict]: ...
+    async def sweep_access(self, now: datetime | None = None) -> int: ...
 
 
 class MemoryStore:
@@ -184,6 +201,9 @@ class MemoryStore:
         self._import_rows: dict[str, list[tuple[int, date, dict]]] = {}
         #: (tenant id, name) → saved mapping
         self._layouts: dict[tuple[str, str], dict] = {}
+        #: Access rows, oldest first, and the alerts they raised, by id.
+        self._access: list[dict] = []
+        self._alerts: dict[str, dict] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -227,6 +247,8 @@ class MemoryStore:
             del self._imports[file_id]
             self._import_rows.pop(file_id, None)
         self._layouts = {k: v for k, v in self._layouts.items() if k[0] not in gone}
+        self._access = [r for r in self._access if r["tenant_id"] not in gone]
+        self._alerts = {k: v for k, v in self._alerts.items() if v["tenant_id"] not in gone}
         return sorted(gone)
 
     async def save_billing(
@@ -775,6 +797,83 @@ class MemoryStore:
             del self._imports[file_id]
             self._import_rows.pop(file_id, None)
         return len(gone)
+
+    # ── access log ──────────────────────────────────────────────────
+
+    async def record_access(
+        self, tenant_id: str, *, credential: str, ip: str, network: str, surface: str,
+        target: str = "", at: datetime | None = None,
+    ) -> Seen:
+        at = at or datetime.now(UTC)
+        mine = [r for r in self._access if r["tenant_id"] == tenant_id and r["credential"] == credential]
+        seen = Seen(
+            known_network=any(r["network"] == network and r["at"] > at - access_rules.NETWORK_MEMORY
+                              for r in mine),
+            first_seen=min((r["at"] for r in mine), default=None),
+        )
+        self._access.append({"tenant_id": tenant_id, "at": at, "credential": credential, "ip": ip,
+                             "network": network, "surface": surface, "target": target})
+        return seen
+
+    async def access_entries(self, root_id: str, since: datetime, limit: int = 200) -> list[dict]:
+        subtree = self._subtree(root_id)
+        rows = [dict(r) for r in self._access if r["tenant_id"] in subtree and r["at"] >= since]
+        return sorted(rows, key=lambda r: r["at"], reverse=True)[:limit]
+
+    async def add_access_alert(
+        self, tenant_id: str, *, kind: str, credential: str, detail: dict, at: datetime | None = None,
+    ) -> dict:
+        alert = {"id": f"alr_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id,
+                 "at": at or datetime.now(UTC), "kind": kind, "credential": credential,
+                 "detail": dict(detail), "mailed": False}
+        self._alerts[alert["id"]] = alert
+        return dict(alert)
+
+    async def set_alert_mailed(self, tenant_id: str, alert_id: str) -> None:
+        alert = self._alerts.get(alert_id)
+        if alert is not None and alert["tenant_id"] == tenant_id:
+            alert["mailed"] = True
+
+    async def access_alerts(self, root_id: str, since: datetime) -> list[dict]:
+        subtree = self._subtree(root_id)
+        rows = [dict(a) for a in self._alerts.values() if a["tenant_id"] in subtree and a["at"] >= since]
+        return sorted(rows, key=lambda a: a["at"], reverse=True)
+
+    async def volume_spikes(
+        self, now: datetime | None = None, *, floor: int = access_rules.VOLUME_FLOOR,
+        factor: int = access_rules.VOLUME_FACTOR,
+    ) -> list[dict]:
+        now = now or datetime.now(UTC)
+        hour = timedelta(hours=1)
+        recent: dict[tuple[str, str], int] = {}
+        hours: dict[tuple[str, str, datetime], int] = {}
+        for r in self._access:
+            if not access_rules.is_key(r["credential"]):
+                continue
+            pair = (r["tenant_id"], r["credential"])
+            if now - hour < r["at"] <= now:
+                recent[pair] = recent.get(pair, 0) + 1
+            elif now - hour - access_rules.VOLUME_WEEK < r["at"] <= now - hour:
+                bucket = (*pair, r["at"].replace(minute=0, second=0, microsecond=0))
+                hours[bucket] = hours.get(bucket, 0) + 1
+        quiet = {(a["tenant_id"], a["credential"]) for a in self._alerts.values()
+                 if a["kind"] == "volume" and a["at"] > now - access_rules.VOLUME_QUIET}
+        out = []
+        for (tenant_id, credential), n in sorted(recent.items()):
+            busiest = max((c for (t, k, _), c in hours.items() if (t, k) == (tenant_id, credential)),
+                          default=0)
+            if n >= floor and n > factor * busiest and (tenant_id, credential) not in quiet:
+                out.append({"tenant_id": tenant_id, "credential": credential,
+                            "requests": n, "busiest": busiest})
+        return out
+
+    async def sweep_access(self, now: datetime | None = None) -> int:
+        now = now or datetime.now(UTC)
+        before = len(self._access)
+        self._access = [r for r in self._access if r["at"] >= now - access_rules.RETENTION]
+        self._alerts = {k: v for k, v in self._alerts.items()
+                        if v["at"] >= now - access_rules.ALERT_RETENTION}
+        return before - len(self._access)
 
 
 async def resolver_for(store: Store, tenant_id: str, connectors=None):

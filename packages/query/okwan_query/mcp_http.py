@@ -62,13 +62,28 @@ async def _caller(ctx: Context):
     from okwan_api.auth import get_store
 
     store = get_store()
-    tenant = await store.tenant_for_key(_bearer(ctx))
+    key = _bearer(ctx)
+    tenant = await store.tenant_for_key(key)
     if tenant is None:
         raise Unauthenticated("invalid or revoked API key")
+
+    from okwan_api import access
+
+    access.remember(ctx.headers or {}, _peer(ctx), key)
 
     from okwan_vault import resolver_for
 
     return tenant, await resolver_for(store, tenant.id)
+
+
+def _peer(ctx: Context) -> str | None:
+    """The TCP peer of the HTTP request carrying this tool call, if any."""
+    try:
+        request = ctx.request_context.request
+    except (AttributeError, ValueError):  # no request: stdio, or a test's stand-in
+        return None
+    client = getattr(request, "client", None)
+    return getattr(client, "host", None)
 
 
 async def _tenant_resolver(ctx: Context):
@@ -248,7 +263,7 @@ def _reconcile_tool():
             return {"error": detail, "rows": [], "summary": {}}
 
         await record_run(tenant, spec, "mcp", started, result=result)
-        await meter(tenant, "mcp:reconcile")
+        await meter(tenant, "mcp:reconcile", target=f"okwan_reconcile {name}")
         return paged(result.summary, result.rows(), key, status, limit, cursor)
 
     kw = inspect.Parameter.KEYWORD_ONLY
@@ -323,7 +338,7 @@ def build_server(max_records: int = DEFAULT_LIMIT):
             from okwan_api.auth import meter
 
             if session.upstream_reads:
-                await meter(tenant, "mcp:query")
+                await meter(tenant, "mcp:query", target="okwan_query")
             return result
         except TooManyRuns as exc:
             return {"error": str(exc), "retry_after_seconds": int(exc.retry_after) + 1,

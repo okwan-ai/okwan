@@ -21,7 +21,13 @@ def generate() -> tuple[str, str, str]:
     """Return (full_key, public_prefix, hash_hex). Store only the last two."""
     body = secrets.token_urlsafe(TOKEN_BYTES)
     full = f"{PREFIX}_{body}"
-    return full, full[: len(PREFIX) + 9], hash_key(full)
+    return full, public_prefix(full), hash_key(full)
+
+
+def public_prefix(full_key: str) -> str:
+    """The part of a key that is stored and shown, so a person can tell
+    their keys apart: `okw_` and eight characters, never enough to use."""
+    return full_key[: len(PREFIX) + 9]
 
 
 def hash_key(full_key: str) -> str:
