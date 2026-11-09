@@ -32,8 +32,28 @@ CREATE TABLE IF NOT EXISTS api_keys (
     prefix      text NOT NULL,
     hash_hex    text NOT NULL UNIQUE,
     created_at  timestamptz NOT NULL DEFAULT now(),
-    revoked_at  timestamptz
+    revoked_at  timestamptz,
+    -- What the key may do (models.KEY_SCOPES): `read` reaches data routes
+    -- and the hosted MCP only; `admin` also the administration routes. No
+    -- default: every insert states it.
+    scope       text NOT NULL CHECK (scope IN ('read', 'admin'))
 );
+
+-- Keys issued before scopes existed could administer, and keep that power:
+-- the column arrives as `admin` for them, then loses its default so no
+-- later insert can leave it out.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'api_keys'
+          AND column_name = 'scope'
+    ) THEN
+        ALTER TABLE api_keys ADD COLUMN scope text NOT NULL DEFAULT 'admin'
+            CHECK (scope IN ('read', 'admin'));
+        ALTER TABLE api_keys ALTER COLUMN scope DROP DEFAULT;
+    END IF;
+END $$;
 
 -- Lookup is by hash, never by scanning: a key check must not get slower
 -- as the tenant count grows.

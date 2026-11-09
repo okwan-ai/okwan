@@ -43,7 +43,7 @@ async def store():
 
 async def test_tenant_and_key_round_trip(store):
     tenant = await store.create_tenant(f"Acme {uuid.uuid4().hex[:6]}")
-    full, record = await store.issue_key(tenant.id)
+    full, record = await store.issue_key(tenant.id, scope="admin")
 
     resolved = await store.tenant_for_key(full)
     assert resolved.id == tenant.id
@@ -53,7 +53,7 @@ async def test_tenant_and_key_round_trip(store):
 
 async def test_revocation_is_immediate(store):
     tenant = await store.create_tenant("Acme")
-    full, record = await store.issue_key(tenant.id)
+    full, record = await store.issue_key(tenant.id, scope="admin")
     await store.revoke_key(record.id)
 
     assert await store.tenant_for_key(full) is None
@@ -61,7 +61,7 @@ async def test_revocation_is_immediate(store):
 
 async def test_revoking_twice_raises(store):
     tenant = await store.create_tenant("Acme")
-    _, record = await store.issue_key(tenant.id)
+    _, record = await store.issue_key(tenant.id, scope="admin")
     await store.revoke_key(record.id)
 
     with pytest.raises(KeyError):
@@ -212,7 +212,7 @@ async def test_session_round_trip_and_expiry(accounts_store):
 
 async def test_key_owner(store):
     tenant = await store.create_tenant("Acme")
-    _, record = await store.issue_key(tenant.id)
+    _, record = await store.issue_key(tenant.id, scope="admin")
     assert await store.key_owner(record.id) == tenant.id
     assert await store.key_owner("key_nope") is None
 

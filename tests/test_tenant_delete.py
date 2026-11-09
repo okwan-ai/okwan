@@ -54,7 +54,7 @@ async def _fill(store, name: str) -> dict:
     _, token_hash = new_token(SESSION_PREFIX)
     await store.create_session(root.id, token_hash, NOW + timedelta(hours=1))
     await store.add_signup(email, "hash", f"sig-{os.urandom(4).hex()}", NOW + timedelta(hours=1))
-    _, key = await store.issue_key(shop.id)
+    _, key = await store.issue_key(shop.id, scope="admin")
     await store.put_credential(shop.id, "stripe", "secret_key", "sk_test_DeleteMe")
     await store.record_request(root.id, "rest:stripe")
     await store.set_plan(root.id, "pro")

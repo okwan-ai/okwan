@@ -158,7 +158,7 @@ async def test_checkout_asks_stripe_for_pro_for_this_account_only(client, store,
 
 async def test_billing_needs_a_dashboard_session_on_the_account(client, store, stripe):
     tenant, _, _ = await _account(store)
-    key, _ = await store.issue_key(tenant.id)
+    key, _ = await store.issue_key(tenant.id, scope="admin")
     r = await client.post("/v1/billing/checkout", headers={"Authorization": f"Bearer {key}"})
     assert r.status_code == 403
     assert (await client.post("/v1/billing/checkout")).status_code == 403

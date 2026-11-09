@@ -433,7 +433,11 @@ own API key they leaked themselves.
 
 - A customer's Okwan API key: the customer revokes it in the dashboard
   (*Settings*, keys), or `python -m okwan_vault key revoke <key_id>`. Revocation takes
-  effect on the next request. Issue a new one.
+  effect on the next request. Issue a new one, read-only unless the
+  customer's own backend needs to administer (`key issue <tenant_id> admin`,
+  or *Admin access* ticked in the dashboard). A read key at an
+  administration route gets 403 "This API key is read-only"; that is the
+  key working as issued, not an outage.
 - A customer's password: `python -m okwan_vault account reset-password
   <email>` (password from a file, never typed into a chat). Every session
   of that login ends at once.
@@ -605,7 +609,8 @@ Set up 2026-11-04, and how to redo it:
    nothing of value, and the call the monitor makes is unmetered.
 2. Its key is the Actions secret `OKWAN_MONITOR_KEY`: an organization
    secret (`okwan-ai` → *Settings → Secrets and variables → Actions*)
-   with repository access limited to `okwan`. To replace it, issue a key
+   with repository access limited to `okwan`. It only reads, so it is a
+   read-only key (the CLI's default). To replace it, issue a key
    into a file so it never shows on screen, paste it into the secret,
    delete the file, then revoke the old key:
 

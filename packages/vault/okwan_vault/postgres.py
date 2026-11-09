@@ -37,6 +37,7 @@ from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
     IMPORT_KEPT_MONTHS,
+    KEY_SCOPES,
     LAYOUTS_KEPT,
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
@@ -224,17 +225,19 @@ class PostgresStore:
 
     # ── api keys ────────────────────────────────────────────────────
 
-    async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
+    async def issue_key(self, tenant_id: str, *, scope: str) -> tuple[str, ApiKey]:
+        if scope not in KEY_SCOPES:
+            raise ValueError(f"a key's scope is one of {KEY_SCOPES}, not {scope!r}")
         full, prefix, hash_hex = apikey.generate()
         key_id = f"key_{uuid.uuid4().hex[:16]}"
         row = await self.pool.fetchrow(
-            "INSERT INTO api_keys (id, tenant_id, prefix, hash_hex) "
-            "VALUES ($1, $2, $3, $4) RETURNING created_at",
-            key_id, tenant_id, prefix, hash_hex,
+            "INSERT INTO api_keys (id, tenant_id, prefix, hash_hex, scope) "
+            "VALUES ($1, $2, $3, $4, $5) RETURNING created_at",
+            key_id, tenant_id, prefix, hash_hex, scope,
         )
         return full, ApiKey(
             id=key_id, tenant_id=tenant_id, prefix=prefix,
-            hash_hex=hash_hex, created_at=row["created_at"],
+            hash_hex=hash_hex, created_at=row["created_at"], scope=scope,
         )
 
     async def revoke_key(self, key_id: str) -> None:
@@ -247,14 +250,19 @@ class PostgresStore:
             raise KeyError(f"unknown or already-revoked key {key_id!r}")
 
     async def tenant_for_key(self, full_key: str) -> Tenant | None:
-        """Indexed hash lookup — no scan over keys, no timing signal."""
+        found = await self.access_for_key(full_key)
+        return found[0] if found else None
+
+    async def access_for_key(self, full_key: str) -> tuple[Tenant, str] | None:
+        """The key's tenant and what the key may do. Indexed hash lookup —
+        no scan over keys, no timing signal."""
         row = await self.pool.fetchrow(
-            "SELECT t.id, t.name, t.parent_id, t.created_at "
+            "SELECT t.id, t.name, t.parent_id, t.created_at, k.scope "
             "FROM api_keys k JOIN tenants t ON t.id = k.tenant_id "
             "WHERE k.hash_hex = $1 AND k.revoked_at IS NULL",
             apikey.hash_key(full_key),
         )
-        return None if row is None else _tenant(row)
+        return None if row is None else (_tenant(row), row["scope"])
 
     # ── credentials ─────────────────────────────────────────────────
 

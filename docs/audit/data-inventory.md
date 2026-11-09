@@ -11,7 +11,7 @@ and what it holds only for the length of a request.
 | `accounts` | Email, tenant, password hash | scrypt (N=2^14, r=8, p=1), per-password salt; 12 to 256 characters | As the tenant |
 | `signups` | Email, password hash, verification token **hash**, expiry | Token is 32 random bytes, stored as SHA-256 only, single use | 24 hours by expiry check; expired rows are not purged |
 | `sessions` | Session token **hash**, tenant, expiry, when it was last used | SHA-256 only; httpOnly, Secure, SameSite=Lax cookie on the dashboard | 12 hours from sign-in, or 30 minutes without use, whichever is first; deleted on sign-out and on password reset; expired rows are not purged |
-| `api_keys` | Key id, public prefix, key **hash**, revoked time | 32 random bytes, SHA-256 only, shown once | Revoked keys are kept, flagged |
+| `api_keys` | Key id, public prefix, key **hash**, revoked time, scope (`read` or `admin`) | 32 random bytes, SHA-256 only, shown once | Revoked keys are kept, flagged |
 | `credentials` | A tenant's rail credentials. For Gusto, nothing typed: the company's uuid, access and refresh tokens and the access token's expiry, written by Connect Gusto's callback and rewritten each time the two-hour token is renewed | AES-256-GCM per value with its own data key; data key wrapped by the master key; AAD binds tenant, connector and field; row-level security | Until replaced or deleted |
 | `usage` | Hourly request counts per tenant and surface | Row-level security | Not purged |
 | `plans` | A root tenant's plan and limit | Row-level security | As the tenant |

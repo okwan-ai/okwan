@@ -29,6 +29,16 @@ class Tenant:
         return self.parent_id is None
 
 
+#: What an API key may do. A `read` key reads data through the REST
+#: connector routes, SQL and the hosted MCP server; it cannot reach an
+#: administration route (merchants, keys, credentials, imports, runs,
+#: support). An `admin` key reaches both, within its tenant's subtree. A
+#: key's scope is stated where it is made, never defaulted by the store.
+READ = "read"
+ADMIN = "admin"
+KEY_SCOPES = (READ, ADMIN)
+
+
 @dataclass(frozen=True, slots=True)
 class ApiKey:
     """Only the hash is stored. A leaked database does not yield keys."""
@@ -39,6 +49,7 @@ class ApiKey:
     hash_hex: str
     created_at: datetime = field(default_factory=_now)
     revoked_at: datetime | None = None
+    scope: str = ADMIN
 
     @property
     def is_active(self) -> bool:

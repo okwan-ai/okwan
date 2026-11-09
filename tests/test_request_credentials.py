@@ -40,7 +40,7 @@ async def keyed(store):
     for connector, fields in VAULT.items():
         for field, value in fields.items():
             await store.put_credential(tenant.id, connector, field, value)
-    full, _ = await store.issue_key(tenant.id)
+    full, _ = await store.issue_key(tenant.id, scope="admin")
     return tenant, full
 
 
@@ -198,7 +198,7 @@ def test_an_unconfigured_tenant_is_not_rescued_by_the_environment(
 
     async def bare():
         tenant = await store.create_tenant("Empty")
-        return (await store.issue_key(tenant.id))[0]
+        return (await store.issue_key(tenant.id, scope="admin"))[0]
 
     key = asyncio.run(bare())
     client.get("/v1/reconciliations/shopify_stripe",

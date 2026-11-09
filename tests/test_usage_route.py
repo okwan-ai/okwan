@@ -48,7 +48,7 @@ async def tree(store):
     await store.record_request(m2.id, "rest:across")
     await store.record_request(isv.id, "test:stripe")
     await store.record_request(other.id, "sql")
-    key, _ = await store.issue_key(isv.id)
+    key, _ = await store.issue_key(isv.id, scope="admin")
     return {"isv": isv, "m1": m1, "m2": m2, "other": other,
             "isv_auth": await _session(store, isv.id),
             "m1_auth": await _session(store, m1.id),

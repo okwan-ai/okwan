@@ -84,7 +84,7 @@ async def _tenant(store, name: str = "Kofi's Store"):
     for connector, fields in VAULT.items():
         for field, value in fields.items():
             await store.put_credential(t.id, connector, field, value)
-    key, _ = await store.issue_key(t.id)
+    key, _ = await store.issue_key(t.id, scope="admin")
     return t, {"Authorization": f"Bearer {key}"}
 
 
@@ -206,7 +206,7 @@ async def test_a_query_needing_two_runs_costs_two(client, store, rails):
 async def test_a_missing_connection_is_401_and_spends_nothing(client, store, rails):
     t = await store.create_tenant("Half connected")
     await store.put_credential(t.id, "stripe", "secret_key", "sk")
-    key, _ = await store.issue_key(t.id)
+    key, _ = await store.issue_key(t.id, scope="admin")
     for _ in range(SQL_RECON_TENANT.limit + 2):
         r = client.post("/v1/query", json={"sql": FOLD}, headers={"Authorization": f"Bearer {key}"})
         assert r.status_code == 401

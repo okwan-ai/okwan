@@ -17,6 +17,7 @@ import os
 
 from fastapi import Depends, Header, HTTPException, Request
 from okwan_vault import (
+    ADMIN,
     EnvMasterKey,
     MemoryStore,
     PostgresStore,
@@ -95,6 +96,17 @@ async def current_tenant(
     key's public prefix and the caller's address are kept for the access
     log, which `meter` writes once a read has succeeded.
     """
+    tenant, _ = await _key_access(request, authorization, x_okwan_key)
+    return tenant
+
+
+#: What a read-only key is told at an administration route.
+READ_ONLY = ("This API key is read-only: it reads data through the API, SQL and MCP, and cannot manage "
+             "merchants, keys, connections or files. Use the dashboard, or a key issued with admin access.")
+
+
+async def _key_access(request: Request, authorization: str, x_okwan_key: str) -> tuple[Tenant, str]:
+    """The key's tenant and scope, or 401."""
     key = x_okwan_key.strip()
     if not key and authorization.lower().startswith("bearer "):
         key = authorization[7:].strip()
@@ -103,11 +115,11 @@ async def current_tenant(
             401, "missing API key — send Authorization: Bearer okw_… or X-Okwan-Key"
         )
 
-    tenant = await get_store().tenant_for_key(key)
-    if tenant is None:
+    found = await get_store().access_for_key(key)
+    if found is None:
         raise HTTPException(401, "invalid or revoked API key")
     access.remember_request(request, key)
-    return tenant
+    return found
 
 
 async def admin_actor(
@@ -115,7 +127,7 @@ async def admin_actor(
     authorization: str = Header(default=""),
     x_okwan_key: str = Header(default=""),
 ) -> Tenant:
-    """An API key or a dashboard session, for the admin routes only.
+    """A dashboard session or an admin API key, for the admin routes only.
 
     Data routes and the hosted MCP stay on `current_tenant`, so a session
     cannot reach them; those take a key the customer chose to issue. A
@@ -123,6 +135,11 @@ async def admin_actor(
     dashboard: the connection test and the reconciliation runs, each
     subtree-guarded and metered to the target. The runs also pass the
     same plan gate as `check_quota`.
+
+    A read-only key is refused here with 403, whatever the route: one
+    handed to an AI client or a reporting job can read, but cannot add a
+    merchant, issue or revoke a key, replace a saved credential or delete
+    an import.
     """
     token = x_okwan_key.strip()
     if not token and authorization.lower().startswith("bearer "):
@@ -133,7 +150,10 @@ async def admin_actor(
             raise HTTPException(401, "session expired — sign in again")
         access.remember_request(request, token)
         return tenant
-    return await current_tenant(request, authorization=authorization, x_okwan_key=x_okwan_key)
+    tenant, scope = await _key_access(request, authorization, x_okwan_key)
+    if scope != ADMIN:
+        raise HTTPException(403, READ_ONLY)
+    return tenant
 
 
 async def load_credentials(tenant: Tenant, connector_name: str, fields: tuple[str, ...]):

@@ -118,7 +118,7 @@ async def world(store):
         for connector, fields in _vault(STAMPS[key]).items():
             for field, value in fields.items():
                 await store.put_credential(tenant.id, connector, field, value)
-    keys = {k: (await store.issue_key(t.id))[0] for k, t in tenants.items()}
+    keys = {k: (await store.issue_key(t.id, scope="admin"))[0] for k, t in tenants.items()}
     sessions = {k: await _session(store, tenants[k].id) for k in ("isv_a", "isv_b")}
     return SimpleNamespace(store=store, t=tenants, keys=keys, sessions=sessions)
 

@@ -56,7 +56,7 @@ async def api(mailbox):
     set_store(store)
     shop = await store.create_tenant("Corner Café")
     await store.add_account(shop.id, "owner@cafe.test", "not-a-real-hash")
-    key, _ = await store.issue_key(shop.id)
+    key, _ = await store.issue_key(shop.id, scope="admin")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://okwan.test") as c:
         yield SimpleNamespace(client=c, store=store, shop=shop, key=key, mail=mailbox)

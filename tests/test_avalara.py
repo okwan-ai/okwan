@@ -294,7 +294,7 @@ async def tenant(monkeypatch):
     store = MemoryStore(EnvMasterKey(new_key()))
     set_store(store)
     shop = await store.create_tenant("Corner Café")
-    key, _ = await store.issue_key(shop.id)
+    key, _ = await store.issue_key(shop.id, scope="admin")
     for field, value in CREDS.items():
         await store.put_credential(shop.id, "avalara", field, value)
     seen: list[dict] = []

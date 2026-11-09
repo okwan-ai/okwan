@@ -35,7 +35,7 @@ def api_key():
 
     async def issue():
         tenant = await store.create_tenant("Test tenant")
-        full, _ = await store.issue_key(tenant.id)
+        full, _ = await store.issue_key(tenant.id, scope="admin")
         return full
 
     return {"Authorization": f"Bearer {asyncio.run(issue())}"}

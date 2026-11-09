@@ -112,7 +112,7 @@ async def world(store, monkeypatch):
     await store.add_account(a.id, contact, pw)
     shop = await store.create_tenant("Kofi's Store", parent_id=a.id)
     await store.put_credential(shop.id, "stripe", "secret_key", STRIPE_VALUE)
-    _, shop_key = await store.issue_key(shop.id)
+    _, shop_key = await store.issue_key(shop.id, scope="admin")
     await store.add_run(shop.id, kind="across", name="rails", surface="dashboard", status="failed",
                         started_at=NOW, finished_at=NOW, summary=None, rows=None,
                         error="stripe answered 401")
@@ -133,7 +133,7 @@ async def world(store, monkeypatch):
     ticket_b = await store.add_ticket(
         b.id, conversation_id=None, severity="sev3", category="billing",
         summary="Wants the pro plan", notified=False)
-    key, _ = await store.issue_key(hq.id)
+    key, _ = await store.issue_key(hq.id, scope="admin")
     return SimpleNamespace(
         store=store, hq=hq, a=a, b=b, shop=shop, shop_key=shop_key, contact=contact,
         ticket_a=ticket_a, ticket_b=ticket_b,
