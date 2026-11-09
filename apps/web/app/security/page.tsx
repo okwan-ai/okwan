@@ -145,6 +145,10 @@ const parts: Part[] = [
           shown to you once; a lost key is replaced, never read back. You can revoke a key at any time.
         </li>
         <li>Sign-in, sign-up and similar requests are limited per address and per IP address, so passwords cannot be guessed at speed.</li>
+        <li>
+          Other websites can&rsquo;t use your session. The dashboard refuses any change that doesn&rsquo;t come from its own
+          pages, and the API accepts no cookies and lets no other website read what it returns.
+        </li>
       </ul>
     ),
   },
