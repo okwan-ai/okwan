@@ -3,7 +3,10 @@ from .authz import Forbidden, ancestors, may_administer, require_administer
 from .crypto import new_key, open_sealed, seal
 from .keys import EnvMasterKey, KmsMasterKey, MasterKeyProvider, from_env
 from .models import (
+    ADMIN,
     IMPORT_KEPT_MONTHS,
+    KEY_SCOPES,
+    READ,
     RUNS_KEPT,
     ApiKey,
     DuplicateImport,
@@ -25,9 +28,12 @@ from .usage import (
 )
 
 __all__ = [
+    "ADMIN",
     "DEFAULT_PLAN",
     "IMPORT_KEPT_MONTHS",
+    "KEY_SCOPES",
     "PLANS",
+    "READ",
     "RUNS_KEPT",
     "ApiKey",
     "DuplicateImport",

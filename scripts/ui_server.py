@@ -128,7 +128,7 @@ async def seed() -> None:
 async def seed_access(store, tenant_id: str) -> None:
     """A key that has read from one office for a week, then from somewhere
     new today, and the alert that raised. Documentation addresses."""
-    _, key = await store.issue_key(tenant_id)
+    _, key = await store.issue_key(tenant_id, scope="read")
     now = datetime.now(UTC)
     reads = [("rest:stripe", "/v1/stripe/charges/list"), ("rest:query", "/v1/query"),
              ("mcp:reconcile", "okwan_reconcile shopify_stripe"), ("rest:paypal", "/v1/paypal/transactions/list")]

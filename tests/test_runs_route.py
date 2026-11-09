@@ -83,7 +83,7 @@ async def tree(store):
     for connector, fields in VAULT.items():
         for field, value in fields.items():
             await store.put_credential(merchant.id, connector, field, value)
-    key, _ = await store.issue_key(merchant.id)
+    key, _ = await store.issue_key(merchant.id, scope="admin")
     return {"isv": isv, "merchant": merchant, "other": other,
             "isv_auth": await _session(store, isv.id),
             "other_auth": await _session(store, other.id),

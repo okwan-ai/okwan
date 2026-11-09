@@ -6,7 +6,8 @@ provisioning by hand and for inspecting a tenant.
 
     python -m okwan_vault keygen
     python -m okwan_vault tenant create "Acme ISV"
-    python -m okwan_vault key issue ten_abc123
+    python -m okwan_vault key issue ten_abc123          # read-only
+    python -m okwan_vault key issue ten_abc123 admin    # can also administer
     python -m okwan_vault cred set ten_abc123 stripe secret_key
     python -m okwan_vault tenant show ten_abc123
     python -m okwan_vault tenant list
@@ -34,7 +35,7 @@ from pathlib import Path
 from . import accounts
 from .crypto import new_key
 from .keys import from_env
-from .models import Tenant
+from .models import KEY_SCOPES, READ, Tenant
 from .postgres import PostgresStore
 from .usage import NOT_ROOT_PLAN, PlanRefused, billing_root, month_start, quota
 
@@ -340,14 +341,18 @@ async def account_reset_password(email: str) -> None:
     print("password replaced; every session for this account has ended")
 
 
-async def key_issue(tenant_id: str) -> None:
+async def key_issue(tenant_id: str, scope: str = READ) -> None:
+    """A read-only key unless `admin` is asked for by name."""
+    if scope not in KEY_SCOPES:
+        sys.exit(f"a key is {' or '.join(KEY_SCOPES)}, not {scope!r}")
     store = await _store()
     try:
         if await store.get_tenant(tenant_id) is None:
             sys.exit(f"no such tenant: {tenant_id}")
-        full, record = await store.issue_key(tenant_id)
+        full, record = await store.issue_key(tenant_id, scope=scope)
         print(f"key id  {record.id}")
         print(f"prefix  {record.prefix}")
+        print(f"scope   {record.scope}")
         print("\nSecret key, shown once and never stored:\n")
         print(f"  {full}\n")
     finally:
@@ -404,7 +409,7 @@ USAGE = """usage:
   python -m okwan_vault support list
   python -m okwan_vault operator enroll <email>
   python -m okwan_vault operator log
-  python -m okwan_vault key issue <tenant_id>
+  python -m okwan_vault key issue <tenant_id> [read|admin]
   python -m okwan_vault key revoke <key_id>
   python -m okwan_vault cred set <tenant_id> <connector> <field>
   python -m okwan_vault cred delete <tenant_id> <connector> <field>
@@ -448,7 +453,7 @@ def main(argv: list[str]) -> None:
         ("support", "list"): (support_list, 0),
         ("operator", "enroll"): (operator_enroll, 1),
         ("operator", "log"): (operator_log, 0),
-        ("key", "issue"): (key_issue, 1),
+        ("key", "issue"): (key_issue, (1, 2)),
         ("key", "revoke"): (key_revoke, 1),
         ("cred", "set"): (cred_set, 3),
         ("cred", "delete"): (cred_delete, 3),
@@ -458,6 +463,6 @@ def main(argv: list[str]) -> None:
     if route is None:
         sys.exit(USAGE)
     fn, argc = route
-    if len(args) != argc:
+    if len(args) not in (argc if isinstance(argc, tuple) else (argc,)):
         sys.exit(USAGE)
     asyncio.run(fn(*args))

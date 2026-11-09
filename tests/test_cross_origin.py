@@ -39,7 +39,7 @@ async def api():
     store = MemoryStore(EnvMasterKey(new_key()))
     set_store(store)
     shop = await store.create_tenant("Corner Café")
-    key, _ = await store.issue_key(shop.id)
+    key, _ = await store.issue_key(shop.id, scope="admin")
     session, token_hash = new_token(SESSION_PREFIX)
     await store.create_session(shop.id, token_hash, datetime.now(UTC) + timedelta(hours=1))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://okwan.test") as c:

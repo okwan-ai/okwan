@@ -23,6 +23,7 @@ from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
     IMPORT_KEPT_MONTHS,
+    KEY_SCOPES,
     LAYOUTS_KEPT,
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
@@ -44,9 +45,10 @@ class Store(Protocol):
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
     async def get_tenant(self, tenant_id: str) -> Tenant | None: ...
     async def children_of(self, tenant_id: str) -> list[Tenant]: ...
-    async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]: ...
+    async def issue_key(self, tenant_id: str, *, scope: str) -> tuple[str, ApiKey]: ...
     async def revoke_key(self, key_id: str) -> None: ...
     async def tenant_for_key(self, full_key: str) -> Tenant | None: ...
+    async def access_for_key(self, full_key: str) -> tuple[Tenant, str] | None: ...
     async def put_credential(
         self, tenant_id: str, connector: str, field_name: str, value: str
     ) -> None: ...
@@ -275,7 +277,9 @@ class MemoryStore:
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return next((t for t, b in self._billing.items() if b["customer_id"] == customer_id), None)
 
-    async def issue_key(self, tenant_id: str) -> tuple[str, ApiKey]:
+    async def issue_key(self, tenant_id: str, *, scope: str) -> tuple[str, ApiKey]:
+        if scope not in KEY_SCOPES:
+            raise ValueError(f"a key's scope is one of {KEY_SCOPES}, not {scope!r}")
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         full, prefix, hash_hex = apikey.generate()
@@ -284,6 +288,7 @@ class MemoryStore:
             tenant_id=tenant_id,
             prefix=prefix,
             hash_hex=hash_hex,
+            scope=scope,
         )
         self._keys[record.id] = record
         return full, record
@@ -294,19 +299,18 @@ class MemoryStore:
         record = self._keys.get(key_id)
         if record is None:
             raise KeyError(f"unknown key {key_id!r}")
-        self._keys[key_id] = ApiKey(
-            id=record.id,
-            tenant_id=record.tenant_id,
-            prefix=record.prefix,
-            hash_hex=record.hash_hex,
-            created_at=record.created_at,
-            revoked_at=datetime.now(UTC),
-        )
+        self._keys[key_id] = replace(record, revoked_at=datetime.now(UTC))
 
     async def tenant_for_key(self, full_key: str) -> Tenant | None:
+        found = await self.access_for_key(full_key)
+        return found[0] if found else None
+
+    async def access_for_key(self, full_key: str) -> tuple[Tenant, str] | None:
+        """The key's tenant and what the key may do, or None."""
         for record in self._keys.values():
             if record.is_active and apikey.matches(full_key, record.hash_hex):
-                return self._tenants.get(record.tenant_id)
+                tenant = self._tenants.get(record.tenant_id)
+                return (tenant, record.scope) if tenant else None
         return None
 
     async def put_credential(

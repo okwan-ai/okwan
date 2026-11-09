@@ -87,7 +87,7 @@ export default async function SettingsPage({ searchParams }: {
             <Card>
               <CardHeader
                 title="Issue a key"
-                description="A key reads one merchant's data, or your workspace's, over REST, SQL and MCP. It's shown once."
+                description="A key reads one merchant's data, or your workspace's, over REST, SQL and MCP, and can't change anything unless you give it admin access. It's shown once."
               />
               <CardBody>
                 <KeyIssuer tenants={[{ id: null, name: "Your workspace" }, ...merchants]} />

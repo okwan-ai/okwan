@@ -241,7 +241,7 @@ async def test_revoking_someone_elses_key_is_404_and_leaves_it_working(
 ):
     mine = _verified(client, outbox)
     theirs = _verified(client, outbox, email="rival@other.test")
-    full, record = await store.issue_key(theirs["tenant"]["id"])
+    full, record = await store.issue_key(theirs["tenant"]["id"], scope="admin")
 
     r = client.delete(f"/v1/tenants/keys/{record.id}", headers=_auth(mine["session"]))
     assert r.status_code == 404
@@ -254,7 +254,7 @@ async def test_revoking_someone_elses_key_is_404_and_leaves_it_working(
 
 async def test_revoking_your_own_key_still_works(client, outbox, store):
     mine = _verified(client, outbox)
-    full, record = await store.issue_key(mine["tenant"]["id"])
+    full, record = await store.issue_key(mine["tenant"]["id"], scope="admin")
     r = client.delete(f"/v1/tenants/keys/{record.id}", headers=_auth(mine["session"]))
     assert r.status_code == 204
     assert await store.tenant_for_key(full) is None

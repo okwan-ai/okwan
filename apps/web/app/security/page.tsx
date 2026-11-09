@@ -144,6 +144,11 @@ const parts: Part[] = [
           API keys are stored as a SHA-256 hash and a short prefix that helps you tell them apart. The full key is
           shown to you once; a lost key is replaced, never read back. You can revoke a key at any time.
         </li>
+        <li>
+          A new API key is read-only: it reads your data through the API, SQL and MCP, and cannot add merchants,
+          issue or revoke keys, or change connections or files. A key with admin access is issued only when you
+          ask for one, and the key you give an AI client is always read-only.
+        </li>
         <li>Sign-in, sign-up and similar requests are limited per address and per IP address, so passwords cannot be guessed at speed.</li>
         <li>
           Other websites can&rsquo;t use your session. The dashboard refuses any change that doesn&rsquo;t come from its own
@@ -226,7 +231,7 @@ const parts: Part[] = [
           <li><strong>A KMS for the master key.</strong> As above: the master key is in our host&rsquo;s encrypted settings today.</li>
           <li><strong>Master key rotation.</strong> The design allows a new master key by re-encrypting only the per-credential keys, but there is no tool for it yet.</li>
           <li><strong>A second factor at sign-in.</strong> Staff need an authenticator code; customer accounts use a password only.</li>
-          <li><strong>Scoped API keys and roles.</strong> Every API key can read everything its account can.</li>
+          <li><strong>Keys limited to one service, and roles.</strong> A read-only key cannot change anything, but it can read everything its account can.</li>
           <li><strong>An independent audit.</strong> We have not completed an independent security review or a certification such as SOC 2. A review is planned, and this page will link to it.</li>
         </ul>
       </>

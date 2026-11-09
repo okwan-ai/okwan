@@ -72,8 +72,8 @@ async def api():
     set_store(store)
     root = await store.create_tenant("Dealer group")
     shop = await store.create_tenant("Store 12", parent_id=root.id)
-    key, _ = await store.issue_key(shop.id)
-    root_key, _ = await store.issue_key(root.id)
+    key, _ = await store.issue_key(shop.id, scope="admin")
+    root_key, _ = await store.issue_key(root.id, scope="admin")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://okwan.test") as c:
         c.headers["Authorization"] = f"Bearer {key}"

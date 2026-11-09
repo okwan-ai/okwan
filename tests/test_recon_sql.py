@@ -184,7 +184,7 @@ async def _tenant_with_key(store, vault: dict) -> tuple:
     for connector, fields in vault.items():
         for field, value in fields.items():
             await store.put_credential(t.id, connector, field, value)
-    key, _ = await store.issue_key(t.id)
+    key, _ = await store.issue_key(t.id, scope="admin")
     return t, {"Authorization": f"Bearer {key}"}
 
 

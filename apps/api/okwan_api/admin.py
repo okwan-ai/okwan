@@ -22,7 +22,7 @@ MCP) stay key-only.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from okwan_core import OkwanError, UpstreamError, all_connectors
@@ -35,6 +35,7 @@ from okwan_recon.paging import DEFAULT_ROWS, MAX_ROWS
 from okwan_recon.registry import get as get_reconciliation
 from okwan_recon.registry import get_across
 from okwan_recon.runner import run
+from okwan_vault import READ
 from okwan_vault.authz import Forbidden, require_administer
 from okwan_vault.usage import month_start
 from pydantic import BaseModel, Field
@@ -49,6 +50,12 @@ from .scrub import secrets_of as _secrets_of
 class CreateTenantIn(BaseModel):
     name: str = Field(min_length=1, max_length=200,
                       description="Merchant or workspace name")
+
+
+class IssueKeyIn(BaseModel):
+    scope: Literal["read", "admin"] = Field(
+        "read", description="`read` (the default) reads data through REST, SQL and MCP; `admin` also manages "
+                            "merchants, keys, connections and imports. Give an AI client a read key.")
 
 
 class CredentialIn(BaseModel):
@@ -95,17 +102,22 @@ def build_router() -> APIRouter:
 
     @router.post("/{tenant_id}/keys", status_code=201)
     async def issue_key(
-        tenant_id: str, actor=Depends(admin_actor)
+        tenant_id: str, body: IssueKeyIn | None = None, actor=Depends(admin_actor)
     ) -> dict[str, Any]:
         """Issue an API key for a tenant in the caller's subtree.
 
-        The secret is returned exactly once; only its hash is stored.
+        Read-only unless `scope` is `admin`: a read key reads data through
+        REST, SQL and MCP; only an admin key also manages merchants, keys,
+        connections and imports. The secret is returned exactly once; only
+        its hash is stored.
         """
         await _guard(actor, tenant_id)
-        full, record = await get_store().issue_key(tenant_id)
+        scope = body.scope if body else READ
+        full, record = await get_store().issue_key(tenant_id, scope=scope)
         return {
             "key_id": record.id,
             "prefix": record.prefix,
+            "scope": record.scope,
             "secret": full,
             "note": "shown once — store it now",
         }

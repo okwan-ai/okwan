@@ -4,6 +4,7 @@ from __future__ import annotations
 import okwan_shopify.connector  # noqa: F401
 import okwan_stripe.connector  # noqa: F401
 import pytest
+from cryptography.exceptions import InvalidTag
 from okwan_core import get
 from okwan_vault import (
     EnvMasterKey,
@@ -29,7 +30,7 @@ def test_aad_binds_ciphertext_to_its_context():
     sealed = seal(key, b"sk_live_secret", aad=b"tenant1|stripe|secret_key")
 
     assert open_sealed(key, sealed, aad=b"tenant1|stripe|secret_key") == b"sk_live_secret"
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidTag):
         open_sealed(key, sealed, aad=b"tenant2|stripe|secret_key")
 
 
@@ -50,7 +51,7 @@ def test_master_key_must_be_32_bytes():
 
 async def test_key_is_never_stored(store):
     tenant = await store.create_tenant("Acme")
-    full, record = await store.issue_key(tenant.id)
+    full, record = await store.issue_key(tenant.id, scope="admin")
 
     assert full not in record.hash_hex
     assert record.prefix in full
@@ -59,7 +60,7 @@ async def test_key_is_never_stored(store):
 
 async def test_only_the_right_key_resolves(store):
     tenant = await store.create_tenant("Acme")
-    full, _ = await store.issue_key(tenant.id)
+    full, _ = await store.issue_key(tenant.id, scope="admin")
 
     assert (await store.tenant_for_key(full)).id == tenant.id
     assert await store.tenant_for_key("okw_nonsense") is None
@@ -67,7 +68,7 @@ async def test_only_the_right_key_resolves(store):
 
 async def test_revoked_key_stops_working(store):
     tenant = await store.create_tenant("Acme")
-    full, record = await store.issue_key(tenant.id)
+    full, record = await store.issue_key(tenant.id, scope="admin")
     await store.revoke_key(record.id)
 
     assert await store.tenant_for_key(full) is None
@@ -163,7 +164,7 @@ def test_invalid_key_is_rejected(client):
 
 async def test_revoked_key_is_rejected(client, store):
     tenant = await store.create_tenant("Acme")
-    full, record = await store.issue_key(tenant.id)
+    full, record = await store.issue_key(tenant.id, scope="admin")
     await store.revoke_key(record.id)
 
     r = client.post("/v1/stripe/charges/list", json={"limit": 1},
@@ -174,7 +175,7 @@ async def test_revoked_key_is_rejected(client, store):
 async def test_credentials_are_never_accepted_from_the_request(client, store):
     """The old X-Okwan-Credential header must not work any more."""
     tenant = await store.create_tenant("Acme")
-    full, _ = await store.issue_key(tenant.id)
+    full, _ = await store.issue_key(tenant.id, scope="admin")
 
     r = client.post(
         "/v1/stripe/charges/list",
@@ -190,7 +191,7 @@ async def test_credentials_are_never_accepted_from_the_request(client, store):
 
 async def test_x_okwan_key_header_also_authenticates(client, store):
     tenant = await store.create_tenant("Acme")
-    full, _ = await store.issue_key(tenant.id)
+    full, _ = await store.issue_key(tenant.id, scope="admin")
 
     r = client.post("/v1/stripe/charges/list", json={"limit": 1},
                     headers={"X-Okwan-Key": full})

@@ -146,8 +146,8 @@ async def world(store):
                         error="stripe answered 401 for key sk_live_LEAKEDinERRORtext123")
     await store.add_run(b.id, kind="across", name="rails", surface="rest", status="ok",
                         started_at=NOW, finished_at=NOW, summary={"orders": 7}, rows=[], error=None)
-    await store.issue_key(a.id)
-    await store.issue_key(b.id)
+    await store.issue_key(a.id, scope="admin")
+    await store.issue_key(b.id, scope="admin")
     sessions = {}
     for key, t in (("a", a), ("b", b)):
         full, token_hash = new_token(SESSION_PREFIX)

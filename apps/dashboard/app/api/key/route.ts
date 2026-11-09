@@ -3,16 +3,17 @@ import { fail, json, readBody } from "@/lib/respond";
 
 /** Issue a key. The secret passes through once, uncached, and is not kept.
  * `?tenant=` issues for a merchant (targetTenant); the API decides whether
- * the caller may. */
+ * the caller may. Read-only unless the body asks for `admin` by name. */
 export async function POST(req: Request) {
-  const body = await readBody<object>(req);
+  const body = await readBody<{ scope?: unknown }>(req);
   if (body instanceof Response) return body;
   const token = await session();
   const tenant = await targetTenant(req);
   if (!token || !tenant) return fail("signed out — sign in again", 401);
-  const r = await api<{ key_id: string; prefix: string; secret: string }>(
+  const scope = body?.scope === "admin" ? "admin" : "read";
+  const r = await api<{ key_id: string; prefix: string; scope: string; secret: string }>(
     `/v1/tenants/${encodeURIComponent(tenant)}/keys`,
-    { method: "POST", session: token },
+    { method: "POST", session: token, body: { scope } },
   );
   return r.ok ? json(r.data, 201) : fail(r.detail, r.status);
 }

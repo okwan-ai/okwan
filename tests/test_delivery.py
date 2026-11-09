@@ -191,7 +191,7 @@ async def tenant():
     store = MemoryStore(EnvMasterKey(new_key()))
     set_store(store)
     shop = await store.create_tenant("Corner Café")
-    key, _ = await store.issue_key(shop.id)
+    key, _ = await store.issue_key(shop.id, scope="admin")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://okwan.test") as c:
         c.headers["Authorization"] = f"Bearer {key}"
         for name, mapping in FILES:

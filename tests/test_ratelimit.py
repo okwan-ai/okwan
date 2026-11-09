@@ -193,7 +193,7 @@ def test_verify_is_limited_per_ip(client):
 # ── the credential test ─────────────────────────────────────────────
 
 async def test_credential_test_is_limited_per_tenant(client, store, account):
-    full, _ = await store.issue_key(account.id)
+    full, _ = await store.issue_key(account.id, scope="admin")
     auth = {"Authorization": f"Bearer {full}"}
     url = f"/v1/tenants/{account.id}/connectors/whatsapp/test"  # untestable: no upstream
     for i in range(TEST_TENANT.limit):
@@ -205,7 +205,7 @@ async def test_credential_test_is_limited_per_tenant(client, store, account):
 
 async def test_a_foreign_tenant_is_404_even_when_limited(client, store, account):
     rival = await store.create_tenant("Rival")
-    full, _ = await store.issue_key(account.id)
+    full, _ = await store.issue_key(account.id, scope="admin")
     auth = {"Authorization": f"Bearer {full}", "X-Forwarded-For": "9.9.9.9"}
     for _ in range(TEST_TENANT.limit + 5):
         client.post(f"/v1/tenants/{account.id}/connectors/whatsapp/test", headers=auth)
