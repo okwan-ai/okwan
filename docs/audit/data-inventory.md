@@ -32,7 +32,8 @@ and what it holds only for the length of a request.
 has a column for one, and an uploaded file holding one is refused
 whole), raw rail records, uploaded files themselves, query text or query
 results, request bodies, customer email addresses or names from the
-rails.
+rails, and anything about a business's employees beyond what a check
+reads in the request: Gusto's employee uuid and the employee's tips.
 
 ## Held only while a request runs
 
@@ -41,6 +42,7 @@ rails.
 | A tenant's decrypted credentials | A closure in the request (`resolver_for`) | The request ends |
 | Rail rows for a SQL query | An in-memory DuckDB connection, one per query | The query returns |
 | Rail rows for a reconciliation | Python objects | The response is built; only the trimmed verdict is stored |
+| A payroll's detail from Gusto, read for `gusto.payroll_tips`: Okwan takes each employee's uuid and two tip amounts (cash and paycheck) and drops the rest of the response (names, wages, pay, deductions, taxes) as it parses it | Python objects (`okwan_gusto.schemas.PayrollTip`) | The page is built |
 | An uploaded file's bytes and every cell in it | The upload request (`okwan_api.imports`), at most 8 MB | The request ends; only the mapped fields of each row are stored, or nothing when the file is refused |
 | Rate-limit counters (IP, address, tenant) | Process memory, fixed windows | The window ends, or the process restarts |
 | PayPal access tokens | Process memory, keyed by SHA-256 of client id, secret and token URL | Expiry minus 60 seconds |

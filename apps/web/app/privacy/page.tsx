@@ -53,7 +53,8 @@ const parts: Part[] = [
           <li>
             <strong>Credentials you save.</strong> The API keys, tokens and similar values you save to connect a
             service (for example Stripe, PayPal, Shopify, Square, Clover, Avalara, Paystack, WhatsApp or a Postgres
-            database). Each is
+            database). Gusto has nothing to type: you approve Okwan in Gusto, and we save the tokens Gusto issues
+            for your company and renew them as Gusto requires. Each is
             encrypted with AES-256-GCM under its own key and bound to your account. It is decrypted only while a
             request that reads your records runs, and is never shown again: not in the dashboard, and not in our
             staff tools, which show which fields are saved but never their values.
@@ -69,6 +70,13 @@ const parts: Part[] = [
             reported, and the outcome and reason. A short error message is kept if a check failed. We keep the
             newest 50 results of each check. We do not store the raw records, card numbers, or your customers&rsquo;
             names or email addresses from those services, and we do not store SQL queries or their results.
+          </li>
+          <li>
+            <strong>Payroll.</strong> From a payroll service you connect (Gusto today), Okwan reads each processed
+            payroll&rsquo;s dates and company totals, and for each employee only the service&rsquo;s reference for
+            that employee and the tips paid: cash tips and paycheck tips. It never reads or keeps an
+            employee&rsquo;s name, wages, pay rate, gross or net pay, deductions, taxes or tax identifiers. As with
+            other connected services, these records are held in memory for the request that reads them.
           </li>
           <li>
             <strong>Files you import.</strong> Settlement reports, transaction exports, delivery platform reports,

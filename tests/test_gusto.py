@@ -1,8 +1,11 @@
-"""Gusto: payrolls read as minor units, a token that renews itself once,
-and Connect Gusto storing a company's tokens without ever showing one.
+"""Gusto: payrolls and each employee's tips read as minor units, a token
+that renews itself once, and Connect Gusto storing a company's tokens
+without ever showing one.
 
 What would fail silently: a tip counted from a float, a missing total read
-as zero, a window that slides while paging, a refresh token spent twice by
+as zero, a window that slides while paging, an employee's tips counted twice
+or skipped where a page ends inside a payroll, a name or wage kept beside a
+tip, a refresh token spent twice by
 two racing requests (Gusto spends it once, so the second would disconnect
 the business), a renewed pair never written back (the next request would
 use a spent token), a callback that connects whoever sends a code, or a
@@ -22,8 +25,8 @@ from okwan_core import ConnectorContext
 from okwan_gusto import auth as gusto_auth
 from okwan_gusto import connector as gusto_connector
 from okwan_gusto.auth import API_VERSION, Tokens, _GustoAuth
-from okwan_gusto.connector import list_payrolls, window
-from okwan_gusto.schemas import ListPayrollsIn, Payroll
+from okwan_gusto.connector import list_payroll_tips, list_payrolls, window
+from okwan_gusto.schemas import ListPayrollsIn, ListPayrollTipsIn, Payroll, PayrollTip
 
 COMPANY = "7b1d0df1-6403-4a06-8768-c1dd7d24d27a"
 
@@ -123,6 +126,135 @@ async def test_an_unreadable_cursor_restarts_the_walk():
     client = _FakeClient([[]])
     await list_payrolls(ConnectorContext(client=client, credentials=CREDS), ListPayrollsIn(cursor="not-ours"))
     assert client.calls[0][1]["page"] == 1
+
+
+# ── each employee's tips ──────────────────────────────────────────────
+
+def _employee(uuid: str, *fixed: tuple[str, str], excluded: bool = False) -> dict[str, Any]:
+    """An employee compensation as Gusto's payroll detail returns it, with
+    the fields Okwan must never keep."""
+    return {"employee_uuid": uuid, "excluded": excluded, "first_name": "Ada", "last_name": "Lovelace",
+            "gross_pay": "1450.00", "net_pay": "1180.55", "check_amount": "1180.55", "payment_method": "Direct Deposit",
+            "memo": "thanks", "fixed_compensations": [{"name": n, "amount": a, "job_uuid": f"job-{i}"}
+                                                    for i, (n, a) in enumerate(fixed)],
+            "hourly_compensations": [{"name": "Regular Hours", "hours": "80.000", "compensation_multiplier": 1}],
+            "taxes": [{"name": "Federal Income Tax", "employer": False, "amount": "120.00"}]}
+
+
+def _detail(uuid: str, *employees: dict[str, Any], period: tuple[str, str] = ("2026-09-01", "2026-09-15")) -> dict:
+    return {"payroll_uuid": uuid, "company_uuid": COMPANY, "processed": True, "check_date": "2026-09-16",
+            "off_cycle": False, "pay_period": {"start_date": period[0], "end_date": period[1]},
+            "totals": {"gross_pay": "9999.99"}, "employee_compensations": list(employees)}
+
+
+DETAIL = _detail(
+    "p-0901",
+    _employee("e-ada", ("Cash Tips", "120.50"), ("Paycheck Tips", "40.00"), ("Cash Tips", "9.50"), ("Bonus", "50.00")),
+    _employee("e-bo", ("Cash Tips", "0.00"), ("Paycheck Tips", "0.00")),
+    _employee("e-cy", ("Bonus", "100.00")),
+    _employee("e-dee", ("Cash Tips", "75.00"), excluded=True),
+)
+
+
+def test_each_employee_s_tips_read_as_minor_units_summed_over_jobs():
+    rows = {r.employee_uuid: r for r in PayrollTip.rows_from_gusto(DETAIL)}
+    ada = rows["e-ada"]
+    assert (ada.cash_tips_minor, ada.paycheck_tips_minor, ada.tips_minor) == (13000, 4000, 17000)
+    assert (ada.payroll_uuid, ada.check_date, ada.period_start, ada.period_end) == (
+        "p-0901", date(2026, 9, 16), date(2026, 9, 1), date(2026, 9, 15))
+    assert (rows["e-bo"].cash_tips_minor, rows["e-bo"].tips_minor) == (0, 0), "declared zero is zero, not missing"
+
+
+def test_an_employee_not_paid_tips_or_left_off_the_payroll_has_no_row():
+    assert [r.employee_uuid for r in PayrollTip.rows_from_gusto(DETAIL)] == ["e-ada", "e-bo"]
+
+
+def test_a_tip_row_keeps_no_name_pay_or_tax():
+    kept = json.dumps([r.model_dump(mode="json") for r in PayrollTip.rows_from_gusto(DETAIL)])
+    for never in ("Ada", "Lovelace", "1450", "1180", "thanks", "Direct Deposit", "Regular Hours", "Federal",
+                  "120.00", "5000", "Bonus", "9999"):
+        assert never not in kept, f"a tip row kept {never!r}"
+    assert set(PayrollTip.model_fields) | {"tips_minor"} == {
+        "payroll_uuid", "employee_uuid", "check_date", "period_start", "period_end", "off_cycle", "currency",
+        "cash_tips_minor", "paycheck_tips_minor", "tips_minor"}
+
+
+class _GustoRoutes:
+    """Gusto's payroll list by page number, and each payroll's detail by
+    page of employees."""
+
+    def __init__(self, listed: list[list[dict]], details: dict[str, list[dict]]) -> None:
+        self.listed, self.details = listed, details
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        params = dict(params or {})
+        self.calls.append((path, params))
+        page = params.get("page", 1)
+        if path.endswith("/payrolls"):
+            return self.listed[page - 1] if page <= len(self.listed) else []
+        pages = self.details[path.rsplit("/", 1)[1]]
+        return pages[page - 1] if page <= len(pages) else {"employee_compensations": []}
+
+    async def aclose(self) -> None:
+        pass
+
+
+def _tipped(n: int, prefix: str) -> list[dict[str, Any]]:
+    return [_employee(f"{prefix}{i}", ("Cash Tips", f"{i + 1}.00")) for i in range(n)]
+
+
+async def _walk(ctx: ConnectorContext, **params: Any) -> tuple[list[str], int]:
+    seen, cursor, pages = [], None, 0
+    while True:
+        page = await list_payroll_tips(ctx, ListPayrollTipsIn(**params, cursor=cursor))
+        seen += [f"{r.payroll_uuid}/{r.employee_uuid}" for r in page.items]
+        pages += 1
+        cursor = page.next_cursor
+        if not page.has_more:
+            return seen, pages
+
+
+async def test_the_tips_walk_gives_every_row_once_when_a_page_ends_inside_a_payroll():
+    routes = _GustoRoutes([[{"payroll_uuid": "p-a"}, {"payroll_uuid": "p-b"}]],
+                          {"p-a": [_detail("p-a", *_tipped(3, "a"))], "p-b": [_detail("p-b", *_tipped(2, "b"))]})
+    seen, pages = await _walk(ConnectorContext(client=routes, credentials=CREDS), limit=2,
+                              start_date=date(2026, 9, 1), end_date=date(2026, 10, 31))
+    assert seen == ["p-a/a0", "p-a/a1", "p-a/a2", "p-b/b0", "p-b/b1"] and pages == 3
+    lists = [c for c in routes.calls if c[0].endswith("/payrolls")]
+    assert {(c[1]["start_date"], c[1]["end_date"]) for c in lists} == {("2026-09-01", "2026-10-31")}
+    assert all("include" not in c[1] for c in lists), "the tips walk needs no totals"
+    details = [c for c in routes.calls if not c[0].endswith("/payrolls")]
+    assert details[0] == (f"/v1/companies/{COMPANY}/payrolls/p-a", {"page": 1, "per": 100})
+
+
+async def test_a_payroll_of_more_than_a_hundred_employees_is_read_to_its_short_page():
+    routes = _GustoRoutes([[{"payroll_uuid": "p-big"}]], {"p-big": [
+        _detail("p-big", *_tipped(100, "x")), _detail("p-big", *_tipped(1, "y"))]})
+    seen, _ = await _walk(ConnectorContext(client=routes, credentials=CREDS), limit=100)
+    assert len(seen) == 101 and seen[-1] == "p-big/y0" and len(set(seen)) == 101
+    # The first page ends inside the payroll, so the second reads it again,
+    # each time to its short page.
+    assert [c[1]["page"] for c in routes.calls if "p-big" in c[0]] == [1, 2, 1, 2]
+
+
+async def test_the_tips_walk_moves_to_the_next_page_of_payrolls(monkeypatch):
+    monkeypatch.setattr(gusto_connector, "PAYROLLS_PER_READ", 2)
+    routes = _GustoRoutes(
+        [[{"payroll_uuid": "p-1"}, {"payroll_uuid": "p-2"}], [{"payroll_uuid": "p-3"}]],
+        {u: [_detail(u, *_tipped(1, u))] for u in ("p-1", "p-2", "p-3")})
+    seen, _ = await _walk(ConnectorContext(client=routes, credentials=CREDS), limit=25)
+    assert seen == ["p-1/p-10", "p-2/p-20", "p-3/p-30"]
+    assert [c[1]["page"] for c in routes.calls if c[0].endswith("/payrolls")] == [1, 2]
+
+
+async def test_an_unreadable_tips_cursor_restarts_the_walk():
+    routes = _GustoRoutes([[]], {})
+    for cursor in ("not-ours", gusto_connector._encode_tips(1, 999, 0, date(2026, 9, 1), date(2026, 9, 2))):
+        page = await list_payroll_tips(ConnectorContext(client=routes, credentials=CREDS),
+                                       ListPayrollTipsIn(cursor=cursor))
+        assert page.items == [] and not page.has_more
+    assert [c[1]["page"] for c in routes.calls] == [1, 1]
 
 
 # ── the token: renewed once, reported, never echoed ───────────────────
@@ -327,7 +459,8 @@ async def test_the_catalog_says_gusto_connects_with_a_button_and_reads_payrolls(
     [g] = [c for c in (await client.get("/v1/connectors")).json() if c["name"] == "gusto"]
     assert g["connect"] == "oauth"
     assert g["credential_fields"] == ["company_uuid", "access_token", "refresh_token", "expires_at"]
-    assert (g["probe"], g["sql_tables"], g["writes"]) == ("gusto.payrolls.list", ["gusto.payrolls"], [])
+    assert (g["probe"], g["sql_tables"], g["writes"]) == (
+        "gusto.payrolls.list", ["gusto.payrolls", "gusto.payroll_tips"], [])
     others = [c for c in (await client.get("/v1/connectors")).json() if c["name"] != "gusto"]
     assert {c["connect"] for c in others} == {"fields"}
 
