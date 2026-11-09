@@ -27,8 +27,7 @@ database schema, the CI and monitoring workflows, and the hosting
 configuration as documented in `render.yaml` and the runbook.
 
 Out of scope: the rails themselves (Stripe, Shopify, PayPal, Paystack),
-the hosting providers' own controls (Render, Neon, Vercel, Resend), and
-anything in `NIW_WORKING_PACK.md`.
+and the hosting providers' own controls (Render, Neon, Vercel, Resend).
 
 ## Reproduce the results
 
