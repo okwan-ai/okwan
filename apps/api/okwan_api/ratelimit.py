@@ -27,7 +27,7 @@ import os
 import secrets
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
@@ -119,9 +119,19 @@ limiter = Limiter()
 
 
 def client_ip(request: Request) -> str:
+    return address_from(request.headers, request.client.host if request.client else None)
+
+
+def address_from(headers: Mapping[str, str], peer: str | None) -> str:
+    """The caller's address from a request's headers and its TCP peer.
+
+    `client_ip` for a FastAPI request; the hosted MCP server, which sees
+    the headers on its own context, calls this directly so both name the
+    same address for the same caller.
+    """
     secret = os.environ.get("OKWAN_DASHBOARD_SECRET", "")
-    forwarded = request.headers.get("x-okwan-client-ip", "").strip()
-    presented = request.headers.get("x-okwan-dashboard-secret", "")
+    forwarded = headers.get("x-okwan-client-ip", "").strip()
+    presented = headers.get("x-okwan-dashboard-secret", "")
     # Bytes, not str: compare_digest raises on non-ASCII str, and header
     # values arrive latin-1 decoded, so a crafted header would be a 500.
     matched = bool(secret) and secrets.compare_digest(
@@ -131,13 +141,13 @@ def client_ip(request: Request) -> str:
     # connection from, overwriting anything the client sent. Trusting it
     # assumes every request reaches Render through Cloudflare, which is the
     # same assumption that makes any X-Forwarded-For entry trustworthy.
-    cloudflare = _address(request.headers.get("cf-connecting-ip", ""))
+    cloudflare = _address(headers.get("cf-connecting-ip", ""))
     # Fallback when Cloudflare's header is absent (local runs): count from
     # the right, because a client's own entries land to the left of what a
     # trusted proxy appends. One hop errs toward a shared bucket, which is
     # coarse but unforgeable; too many hops would read a forged entry.
     hops = int(os.environ.get("OKWAN_TRUSTED_PROXY_HOPS", "1"))
-    chain = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")
+    chain = [p.strip() for p in headers.get("x-forwarded-for", "").split(",")
              if p.strip()]
     if matched and forwarded:
         return forwarded
@@ -145,7 +155,7 @@ def client_ip(request: Request) -> str:
         return cloudflare
     if hops and len(chain) >= hops:
         return chain[-hops]
-    return request.client.host if request.client else "unknown"
+    return peer or "unknown"
 
 
 def _address(value: str) -> str:

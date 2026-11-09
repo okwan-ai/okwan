@@ -44,6 +44,7 @@ from okwan_api.admin import build_router as build_admin_router
 from okwan_api.billing import build_router as build_billing_router
 from okwan_api.imports import build_router as build_imports_router
 from okwan_api.imports import sweeper as imports_sweeper
+from okwan_api.access import sweeper as access_sweeper
 from okwan_api.auth import get_store as _get_store
 from okwan_api.signup import build_router as build_signup_router
 from okwan_api.ops import build_router as build_ops_router
@@ -90,16 +91,18 @@ async def lifespan(_: FastAPI):
 
     Mounting an ASGI app does not run its lifespan, so the streamable
     HTTP transport's task group has to be entered here or every MCP
-    request fails before reaching a handler. The hourly sweep of expired
-    imports runs alongside, for the life of the process.
+    request fails before reaching a handler. The hourly sweeps run
+    alongside, for the life of the process: expired imports, and the access
+    log's volume check and retention.
     """
     await open_store()
-    sweep = asyncio.create_task(imports_sweeper())
+    sweeps = [asyncio.create_task(imports_sweeper()), asyncio.create_task(access_sweeper())]
     try:
         async with _mcp.session_manager.run():
             yield
     finally:
-        sweep.cancel()
+        for sweep in sweeps:
+            sweep.cancel()
         await close_store()
 
 

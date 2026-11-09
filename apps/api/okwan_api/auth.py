@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from okwan_vault import (
     EnvMasterKey,
     MemoryStore,
@@ -28,6 +28,8 @@ from okwan_vault import (
 )
 from okwan_vault.models import Tenant
 from okwan_vault.usage import Quota, quota
+
+from . import access
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +85,15 @@ def set_store(store: Store) -> None:
 
 
 async def current_tenant(
+    request: Request,
     authorization: str = Header(default=""),
     x_okwan_key: str = Header(default=""),
 ) -> Tenant:
     """Resolve the caller's tenant, or 401.
 
-    Accepts `Authorization: Bearer okw_…` or `X-Okwan-Key: okw_…`.
+    Accepts `Authorization: Bearer okw_…` or `X-Okwan-Key: okw_…`. The
+    key's public prefix and the caller's address are kept for the access
+    log, which `meter` writes once a read has succeeded.
     """
     key = x_okwan_key.strip()
     if not key and authorization.lower().startswith("bearer "):
@@ -101,10 +106,12 @@ async def current_tenant(
     tenant = await get_store().tenant_for_key(key)
     if tenant is None:
         raise HTTPException(401, "invalid or revoked API key")
+    access.remember_request(request, key)
     return tenant
 
 
 async def admin_actor(
+    request: Request,
     authorization: str = Header(default=""),
     x_okwan_key: str = Header(default=""),
 ) -> Tenant:
@@ -124,8 +131,9 @@ async def admin_actor(
         tenant = await get_store().tenant_for_session(accounts.hash_token(token))
         if tenant is None:
             raise HTTPException(401, "session expired — sign in again")
+        access.remember_request(request, token)
         return tenant
-    return await current_tenant(authorization=authorization, x_okwan_key=x_okwan_key)
+    return await current_tenant(request, authorization=authorization, x_okwan_key=x_okwan_key)
 
 
 async def load_credentials(tenant: Tenant, connector_name: str, fields: tuple[str, ...]):
@@ -160,16 +168,21 @@ async def check_quota(tenant: Tenant = Depends(current_tenant)) -> Tenant:
     return tenant
 
 
-async def meter(tenant: Tenant, surface: str) -> None:
-    """Record one request. Never fails the request it is counting.
+async def meter(tenant: Tenant, surface: str, target: str | None = None) -> None:
+    """Record one request, and who made it. Never fails the request it is
+    counting.
 
     A metering error is a billing problem, not a customer problem; losing
     a count is strictly better than 500-ing a call that already worked.
+    The access row (`access.record`) names the caller remembered at
+    authentication and what was read: the route, or `target` where the
+    route alone does not say (the hosted MCP server's tools).
     """
     try:
         await get_store().record_request(tenant.id, surface)
     except Exception:
         logger.warning("usage not recorded for %s", tenant.id, exc_info=True)
+    await access.record(tenant, surface, target)
 
 
 def credentials_for(tenant: Tenant):

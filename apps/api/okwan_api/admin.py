@@ -210,6 +210,36 @@ def build_router() -> APIRouter:
             ],
         }
 
+    @router.get("/{tenant_id}/access")
+    async def access_log(
+        tenant_id: str,
+        days: int = Query(7, ge=1, le=90),
+        limit: int = Query(200, ge=1, le=1000),
+        actor=Depends(admin_actor),
+    ) -> dict[str, Any]:
+        """Every read of a tenant's data and its merchants', newest first,
+        and the alerts those reads raised.
+
+        Each entry says when, which API key (by the public prefix the
+        dashboard shows) or "session" for the dashboard, the caller's
+        address and network, the surface, and what was read: a route, or a
+        hosted MCP tool and the reconciliation it ran. Never query text,
+        parameters or results. Kept 90 days. Like the usage route, the
+        target's own subtree only, and not metered: reading the log reads
+        no rail.
+        """
+        await _guard(actor, tenant_id)
+        store = get_store()
+        since = datetime.now(UTC) - timedelta(days=days)
+        entries = await store.access_entries(tenant_id, since, limit)
+        alerts = await store.access_alerts(tenant_id, since)
+        return {
+            "tenant_id": tenant_id,
+            "window": {"since": since.isoformat(), "days": days, "limit": limit},
+            "entries": [{**e, "at": e["at"].isoformat()} for e in entries],
+            "alerts": [{**a, "at": a["at"].isoformat()} for a in alerts],
+        }
+
     @router.post("/{tenant_id}/connectors/{connector_name}/test")
     async def test_connector(
         tenant_id: str, connector_name: str, request: Request,

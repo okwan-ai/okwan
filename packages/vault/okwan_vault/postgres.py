@@ -24,12 +24,14 @@ import json
 import uuid
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import asyncpg
 
+from . import access as access_rules
 from . import accounts, apikey
+from .access import Seen
 from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
@@ -64,7 +66,7 @@ TENANT_ROLE = "okwan_tenant"
 TENANT_TABLES = (
     "credentials", "usage", "plans", "reconciliation_runs",
     "support_conversations", "support_tickets", "support_replies",
-    "import_files", "import_rows", "import_layouts",
+    "import_files", "import_rows", "import_layouts", "access_log", "access_alerts",
 )
 
 
@@ -1052,6 +1054,134 @@ class PostgresStore:
         """
         status = await self.pool.execute(
             "DELETE FROM import_files WHERE expires_at <= $1", now or datetime.now(UTC))
+        return int(status.split()[-1])
+
+    # ── access log ──────────────────────────────────────────────────
+
+    async def record_access(
+        self, tenant_id: str, *, credential: str, ip: str, network: str, surface: str,
+        target: str = "", at: datetime | None = None,
+    ) -> Seen:
+        """Write one access row, and say what was known before it.
+
+        Both lookups are one index probe each: the oldest row of this
+        credential, and any row of it from this network within the window.
+        """
+        at = at or datetime.now(UTC)
+        async with self._scoped(tenant_id) as con:
+            before = await con.fetchrow(
+                "SELECT (SELECT min(at) FROM access_log WHERE tenant_id = $1 AND credential = $2) "
+                "AS first_seen, EXISTS (SELECT 1 FROM access_log WHERE tenant_id = $1 "
+                "AND credential = $2 AND network = $3 AND at > $4) AS known",
+                tenant_id, credential, network, at - access_rules.NETWORK_MEMORY)
+            await con.execute(
+                "INSERT INTO access_log (tenant_id, at, credential, ip, network, surface, target) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                tenant_id, at, credential, ip, network, surface, target)
+        return Seen(known_network=before["known"], first_seen=before["first_seen"])
+
+    async def access_entries(self, root_id: str, since: datetime, limit: int = 200) -> list[dict]:
+        """A tenant's and its merchants' newest access rows, scoped to
+        exactly that subtree, as `usage_buckets` reads the meter."""
+        async with self.pool.acquire() as con, con.transaction():
+            ids = await _subtree(con, root_id)
+            await _enter_scope(con, ids)
+            rows = await con.fetch(
+                "SELECT tenant_id, at, credential, ip, network, surface, target FROM access_log "
+                "WHERE tenant_id = ANY($1::text[]) AND at >= $2 ORDER BY at DESC LIMIT $3",
+                ids, since, limit)
+        return [dict(r) for r in rows]
+
+    async def add_access_alert(
+        self, tenant_id: str, *, kind: str, credential: str, detail: dict, at: datetime | None = None,
+    ) -> dict:
+        alert = {"id": f"alr_{uuid.uuid4().hex[:16]}", "tenant_id": tenant_id,
+                 "at": at or datetime.now(UTC), "kind": kind, "credential": credential,
+                 "detail": dict(detail), "mailed": False}
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "INSERT INTO access_alerts (id, tenant_id, at, kind, credential, detail) "
+                "VALUES ($1, $2, $3, $4, $5, $6::jsonb)",
+                alert["id"], tenant_id, alert["at"], kind, credential, json.dumps(detail))
+        return alert
+
+    async def set_alert_mailed(self, tenant_id: str, alert_id: str) -> None:
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "UPDATE access_alerts SET mailed = true WHERE tenant_id = $1 AND id = $2",
+                tenant_id, alert_id)
+
+    async def access_alerts(self, root_id: str, since: datetime) -> list[dict]:
+        async with self.pool.acquire() as con, con.transaction():
+            ids = await _subtree(con, root_id)
+            await _enter_scope(con, ids)
+            rows = await con.fetch(
+                "SELECT id, tenant_id, at, kind, credential, detail, mailed FROM access_alerts "
+                "WHERE tenant_id = ANY($1::text[]) AND at >= $2 ORDER BY at DESC",
+                ids, since)
+        return [{**dict(r), "detail": _loads(r["detail"])} for r in rows]
+
+    async def volume_spikes(
+        self, now: datetime | None = None, *, floor: int = access_rules.VOLUME_FLOOR,
+        factor: int = access_rules.VOLUME_FACTOR,
+    ) -> list[dict]:
+        """Keys that read unusually much in the last hour, across tenants.
+
+        The tenant list is identity, read as the login role; the access
+        rows are read as TENANT_ROLE scoped to a batch of those tenants at
+        a time, so row-level security holds for a check that spans them.
+        A key with a volume alert in the quiet window is left out.
+        """
+        now = now or datetime.now(UTC)
+        hour = timedelta(hours=1)
+        ids = [r["id"] for r in await self.pool.fetch("SELECT id FROM tenants ORDER BY id")]
+        out: list[dict] = []
+        for i in range(0, len(ids), 500):
+            batch = ids[i:i + 500]
+            async with self._scoped(*batch) as con:
+                rows = await con.fetch(
+                    """
+                    WITH recent AS (
+                        SELECT tenant_id, credential, count(*) AS n FROM access_log
+                        WHERE tenant_id = ANY($1::text[]) AND at > $2 AND at <= $3
+                          AND starts_with(credential, $4)
+                        GROUP BY tenant_id, credential
+                    ), hours AS (
+                        SELECT tenant_id, credential, count(*) AS n FROM access_log
+                        WHERE tenant_id = ANY($1::text[]) AND at > $5 AND at <= $2
+                          AND starts_with(credential, $4)
+                        GROUP BY tenant_id, credential, date_trunc('hour', at)
+                    ), prior AS (
+                        SELECT tenant_id, credential, max(n) AS busiest FROM hours
+                        GROUP BY tenant_id, credential
+                    )
+                    SELECT r.tenant_id, r.credential, r.n AS requests,
+                           COALESCE(p.busiest, 0) AS busiest
+                    FROM recent r LEFT JOIN prior p USING (tenant_id, credential)
+                    WHERE r.n >= $6 AND r.n > $7 * COALESCE(p.busiest, 0)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM access_alerts a
+                          WHERE a.tenant_id = r.tenant_id AND a.credential = r.credential
+                            AND a.kind = 'volume' AND a.at > $8)
+                    ORDER BY r.tenant_id, r.credential
+                    """,
+                    batch, now - hour, now, access_rules.KEY_MARK,
+                    now - hour - access_rules.VOLUME_WEEK, floor, factor,
+                    now - access_rules.VOLUME_QUIET)
+            out.extend(dict(r) for r in rows)
+        return out
+
+    async def sweep_access(self, now: datetime | None = None) -> int:
+        """Delete access rows past RETENTION and alerts past ALERT_RETENTION.
+
+        Across tenants, as the login role, like `sweep_imports`: it reads
+        nothing back and touches only what has aged out.
+        """
+        now = now or datetime.now(UTC)
+        status = await self.pool.execute(
+            "DELETE FROM access_log WHERE at < $1", now - access_rules.RETENTION)
+        await self.pool.execute(
+            "DELETE FROM access_alerts WHERE at < $1", now - access_rules.ALERT_RETENTION)
         return int(status.split()[-1])
 
 async def _subtree(con, root_id: str) -> list[str]:
