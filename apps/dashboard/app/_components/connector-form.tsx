@@ -6,7 +6,7 @@ import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import { nowReadableAs } from "@/lib/connector-meta";
 import { railLabel } from "@/lib/finding";
 import { markArrived, reportTest, type TestResult } from "@/lib/tab-results";
-import { Button } from "./ui/button";
+import { Button, buttonClass } from "./ui/button";
 import { Card, CardFooter, CardHeader } from "./ui/card";
 import { IconChevron } from "./ui/icons";
 
@@ -24,6 +24,9 @@ export type ConnectorView = {
   sql_tables?: string[];
   /** Operations that are not read-only ("messages.send_text"). */
   writes?: string[];
+  /** "oauth": nothing to type; a Connect button sends the person to the
+   *  system to approve, and its callback stores what it returns. */
+  connect?: "fields" | "oauth";
   stored: string[];
 };
 
@@ -188,6 +191,8 @@ export function ConnectorForm({ c, tenantId, tenantKey, onResult, next, autoFocu
       {!done && readOnly}
     </form>
   );
+  if (c.connect === "oauth") return <OAuthConnect c={c} tenantId={tenantId} label={label} />;
+
   const alert = error && (
     <p role="alert" className="mt-4 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>
   );
@@ -225,6 +230,36 @@ export function ConnectorForm({ c, tenantId, tenantKey, onResult, next, autoFocu
               "No list call can run without your own IDs, so there's no live test."
             )}
           </p>
+        </div>
+      </Disclosure>
+    </div>
+  );
+}
+
+/**
+ * A system with no key to type (Gusto): one link that starts its approval
+ * at /integrations/<name>/connect, and what is stored, never a value.
+ * The callback runs the same one-row test read as Test and Save.
+ */
+function OAuthConnect({ c, tenantId, label }: { c: ConnectorView; tenantId?: string; label: string }) {
+  const connected = c.credential_fields.length > 0 && c.credential_fields.every((f) => c.stored.includes(f));
+  return (
+    <div className="space-y-4">
+      <p className="text-sm">
+        {connected
+          ? `${label} is connected. Okwan reads its payrolls and can't run payroll or change anything in it.`
+          : `You'll sign in to ${label} and approve read-only access. Okwan never sees your ${label} password, and there is nothing to copy or paste.`}
+      </p>
+      <a
+        href={`/integrations/${encodeURIComponent(c.name)}/connect${tenantQuery(tenantId)}`}
+        className={buttonClass(connected ? "secondary" : "primary", "w-full")}
+      >
+        {connected ? `Connect ${label} again` : `Connect ${label}`}
+      </a>
+      <Disclosure label="Technical details">
+        <div className="space-y-2 text-xs text-ink-soft">
+          <p className="break-words">{c.description}</p>
+          {c.probe && <p>Test read after connecting: <code className="font-mono">{c.probe}</code></p>}
         </div>
       </Disclosure>
     </div>

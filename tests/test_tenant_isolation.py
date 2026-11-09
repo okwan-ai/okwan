@@ -290,6 +290,9 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
     ("GET", "/v1/tenants/{tenant_id}/credentials"): ("/v1/tenants/{t}/credentials", None),
     ("GET", "/v1/tenants/{tenant_id}/usage"): ("/v1/tenants/{t}/usage", None),
     ("GET", "/v1/tenants/{tenant_id}/access"): ("/v1/tenants/{t}/access", None),
+    ("POST", "/v1/tenants/{tenant_id}/connectors/gusto/authorize"): ("/v1/tenants/{t}/connectors/gusto/authorize", None),
+    ("POST", "/v1/tenants/{tenant_id}/connectors/gusto/callback"): (
+        "/v1/tenants/{t}/connectors/gusto/callback", {"code": "c", "state": "s"}),
     ("POST", "/v1/tenants/{tenant_id}/connectors/{connector_name}/test"):
         ("/v1/tenants/{t}/connectors/stripe/test", None),
     ("GET", "/v1/tenants/{tenant_id}/runs/latest"): ("/v1/tenants/{t}/runs/latest", None),

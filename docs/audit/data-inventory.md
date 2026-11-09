@@ -12,7 +12,7 @@ and what it holds only for the length of a request.
 | `signups` | Email, password hash, verification token **hash**, expiry | Token is 32 random bytes, stored as SHA-256 only, single use | 24 hours by expiry check; expired rows are not purged |
 | `sessions` | Session token **hash**, tenant, expiry, when it was last used | SHA-256 only; httpOnly, Secure, SameSite=Lax cookie on the dashboard | 12 hours from sign-in, or 30 minutes without use, whichever is first; deleted on sign-out and on password reset; expired rows are not purged |
 | `api_keys` | Key id, public prefix, key **hash**, revoked time | 32 random bytes, SHA-256 only, shown once | Revoked keys are kept, flagged |
-| `credentials` | A tenant's rail credentials | AES-256-GCM per value with its own data key; data key wrapped by the master key; AAD binds tenant, connector and field; row-level security | Until replaced or deleted |
+| `credentials` | A tenant's rail credentials. For Gusto, nothing typed: the company's uuid, access and refresh tokens and the access token's expiry, written by Connect Gusto's callback and rewritten each time the two-hour token is renewed | AES-256-GCM per value with its own data key; data key wrapped by the master key; AAD binds tenant, connector and field; row-level security | Until replaced or deleted |
 | `usage` | Hourly request counts per tenant and surface | Row-level security | Not purged |
 | `plans` | A root tenant's plan and limit | Row-level security | As the tenant |
 | `support_conversations` | The support assistant's transcripts: customer text after secret redaction, the assistant's turns, the read-only tools' results (plan and usage, which connections are saved, test results, run summaries and errors, key prefixes) | Row-level security; secrets removed before storage | 30 days after the last message; the save prunes older ones |
@@ -46,13 +46,15 @@ rails.
 | PayPal access tokens | Process memory, keyed by SHA-256 of client id, secret and token URL | Expiry minus 60 seconds |
 | Who is calling: the key's public prefix or "session", and the caller's address | The request's context (`okwan_api.access`), for the access row | The request ends |
 | Which (tenant, key prefix, network) raised a new-network alert | Process memory, so two reads racing in from one new network raise one alert | An hour |
+| A Gusto connection being started: its state, the tenant and the account that started it | Process memory (`okwan_api.connect`) | Ten minutes, or its use |
+| The new Gusto token pair each spent refresh token became, so two racing requests renew once | Process memory (`okwan_gusto.auth`) | The process restarts |
 | A Clover merchant's timezone and default currency | Process memory, one entry per connection, held weakly by that connection's transport and never shared between two | The connection closes |
 
 ## Where else data goes
 
 | Recipient | What | Why |
 |---|---|---|
-| The rails | The tenant's own credentials, as each rail's API requires | To read that tenant's records |
+| The rails | The tenant's own credentials, as each rail's API requires. For Gusto, Okwan's own client id and secret with the approval code or the refresh token, to Gusto's token endpoint | To read that tenant's records |
 | Resend | Recipient address and the verification link; access alerts (the account's sign-in address, its name and tenant id, the key's prefix, the caller's address and network, the time, the surface and route or the hour's count) to the account and to `OKWAN_SUPPORT_ESCALATION_TO`; support escalations (ticket id, tenant id and name, the account's sign-in address, the assistant's summary, the customer's last three messages, secrets removed and every customer value escaped as text) to `OKWAN_SUPPORT_ESCALATION_TO` | To deliver them; tracking must be off for the sending domain |
 | Anthropic | A support conversation: the customer's messages and the tools' results, secrets removed, plus Okwan's own documentation | To answer it (Claude Opus 5.5). Anthropic becomes a subprocessor: [owner-and-legal.md](owner-and-legal.md) |
 | Stripe | Checkout and portal requests: the account's tenant id (as metadata), its sign-in address, the Pro price id; Stripe collects the card itself | To take payment for Pro. Okwan's own Stripe account, not a connector |
@@ -63,6 +65,6 @@ rails.
 
 Set on the Render services, never in the repository:
 `OKWAN_VAULT_MASTER_KEY`, `OKWAN_VAULT_DATABASE_URL`, `RESEND_API_KEY`,
-`OKWAN_DASHBOARD_SECRET`, `ANTHROPIC_API_KEY`. The master key opens every stored credential;
+`OKWAN_DASHBOARD_SECRET`, `ANTHROPIC_API_KEY`, `OKWAN_GUSTO_CLIENT_ID`, `OKWAN_GUSTO_CLIENT_SECRET`. The master key opens every stored credential;
 see [known-gaps.md](known-gaps.md), "Master key in an environment
 variable".

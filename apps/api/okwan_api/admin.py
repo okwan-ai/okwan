@@ -136,6 +136,10 @@ def build_router() -> APIRouter:
         """
         await _guard(actor, tenant_id)
         connector = _connector(body.connector, status=400)
+        if getattr(connector.auth, "connect", "fields") == "oauth":
+            # Its fields are written by its own Connect flow (connect.py),
+            # never typed: a pasted token would skip the company check.
+            raise HTTPException(400, f"{body.connector} connects with its Connect button, not typed credentials")
         if body.field not in connector.auth.required_fields:
             raise HTTPException(
                 400,

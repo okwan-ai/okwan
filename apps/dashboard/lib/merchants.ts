@@ -10,6 +10,8 @@ export type Connector = {
   resources?: Record<string, string[]>;
   credential_fields: string[];
   probe: string | null;
+  /** How a person connects it: typed fields, or a Connect button (OAuth). */
+  connect?: "fields" | "oauth";
   /** SQL tables this connector generates ("stripe.charges"). */
   sql_tables?: string[];
   /** Operations that are not read-only ("messages.send_text"). */

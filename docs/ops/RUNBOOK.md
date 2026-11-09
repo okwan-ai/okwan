@@ -392,6 +392,30 @@ and then "A key or password leaked" below.
    straight to `okwan.onrender.com` can set itself
    ([known-gaps.md](../audit/known-gaps.md) G17).
 
+### Gusto (Connect Gusto)
+
+Gusto has no key to type. A business's Gusto admin presses *Connect Gusto*
+on a merchant's Connections (or the workspace's own), approves read-only
+access in Gusto, and lands on *Gusto is connected* with the test read.
+
+- **Setup:** Okwan's Gusto application lives in the Gusto Developer
+  Portal (organization Global Tech Startup LLC). On the `okwan` Render
+  service: `OKWAN_GUSTO_CLIENT_ID`, `OKWAN_GUSTO_CLIENT_SECRET`, and
+  `OKWAN_GUSTO_ENV` (`demo` until Gusto issues production credentials).
+  The application's redirect URI must be
+  `https://app.okwan.ai/integrations/gusto/callback`.
+- **"Gusto isn't set up on this Okwan server yet":** one of the two
+  secrets is missing on the service.
+- **"Gusto refused the token request … connect Gusto again":** the code
+  expired (ten minutes), the business revoked access, or a refresh token
+  was spent. The admin connects again; nothing else to repair.
+- **"wasn't started in this browser":** the approval finished in a
+  different browser, or the API restarted in between (connections in
+  progress live in memory). Connect again.
+- Tokens are renewed every two hours under a lock in the process; a second
+  API instance needs that lock in the database first
+  ([known-gaps.md](../audit/known-gaps.md) G7).
+
 ### A key or password leaked
 
 SEV1 if it is a customer's or an operator secret; SEV2 for a customer's
