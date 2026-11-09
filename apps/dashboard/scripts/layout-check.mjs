@@ -26,7 +26,7 @@ const SIZES = [[1670, 941], [1366, 768], [1024, 768], [390, 844]];
 const SIGNED_OUT = ["/signup?mode=signin", "/signup", "/verify?token=layout-check"];
 const SIGNED_IN = [
   "/overview", "/overview?days=all", "/findings", "/merchants", "/integrations", "/agents",
-  "/settings", "/settings?tab=plan", "/settings?tab=keys", "/settings?tab=security", "/ops",
+  "/settings", "/settings?tab=plan", "/settings?tab=keys", "/settings?tab=access", "/settings?tab=security", "/ops",
 ];
 
 // Runs in the page: text a person can see, and whether any of it collides.

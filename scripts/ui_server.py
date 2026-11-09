@@ -9,6 +9,9 @@ with only Stripe, so "needs you" states render too. Kofi's Store has
 also imported a processor batch report and a bank statement, with their
 mappings saved; Accra has no files. The check runs through
 the API's own route, so the stored run is exactly what production stores.
+The access log has a week of reads by Kofi's Store's key from its usual
+network, today's reads from a new one with the alert they raised, and the
+dashboard session's own run, so every column of Settings › Access log fills.
 Dummy credentials; nothing leaves the machine; nothing is written to disk.
 
     python scripts/ui_server.py    # listens on 127.0.0.1:8000, prints "seeded"
@@ -27,6 +30,7 @@ from okwan_api.main import app
 from okwan_recon import across
 from okwan_recon.coverage import Coverage
 from okwan_vault import cli
+from okwan_vault.access import network_of
 from okwan_vault.accounts import SESSION_PREFIX, new_token
 
 EMAIL = os.environ.get("UI_CHECK_EMAIL", "layout@okwan.test")
@@ -118,6 +122,30 @@ async def seed() -> None:
                 "filename": name, "content_base64": base64.b64encode(data).decode(), "layout": mapping["name"]})
             r.raise_for_status()
     await store.delete_session(token_hash)
+    await seed_access(store, kofi.id)
+
+
+async def seed_access(store, tenant_id: str) -> None:
+    """A key that has read from one office for a week, then from somewhere
+    new today, and the alert that raised. Documentation addresses."""
+    _, key = await store.issue_key(tenant_id)
+    now = datetime.now(UTC)
+    reads = [("rest:stripe", "/v1/stripe/charges/list"), ("rest:query", "/v1/query"),
+             ("mcp:reconcile", "okwan_reconcile shopify_stripe"), ("rest:paypal", "/v1/paypal/transactions/list")]
+    for day in range(7, 0, -1):
+        for n, (surface, target) in enumerate(reads):
+            await store.record_access(tenant_id, credential=key.prefix, ip="198.51.100.20",
+                                      network=network_of("198.51.100.20"), surface=surface, target=target,
+                                      at=now - timedelta(days=day, minutes=n * 7))
+    for n, (surface, target) in enumerate(reads[:2]):
+        await store.record_access(tenant_id, credential=key.prefix, ip="203.0.113.7",
+                                  network=network_of("203.0.113.7"), surface=surface, target=target,
+                                  at=now - timedelta(minutes=40 - n * 5))
+    alert = await store.add_access_alert(tenant_id, kind="new_network", credential=key.prefix, at=now - timedelta(minutes=40),
+                                 detail={"ip": "203.0.113.7", "network": "203.0.113.0/24", "surface": "rest:stripe",
+                                         "target": "/v1/stripe/charges/list",
+                                         "at": (now - timedelta(minutes=40)).isoformat()})
+    await store.set_alert_mailed(tenant_id, alert["id"])  # as production's mailer would
 
 
 async def main() -> None:
