@@ -23,6 +23,7 @@ import os
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -31,7 +32,8 @@ from okwan_vault import ADMIN, READ, EnvMasterKey, MemoryStore, PostgresStore, n
 from okwan_vault.accounts import SESSION_PREFIX, new_token
 
 DSN = os.environ.get("OKWAN_VAULT_DATABASE_URL", "")
-SCHEMA = os.path.join(os.path.dirname(__file__), "..", "packages", "vault", "okwan_vault", "schema.sql")
+ROOT = Path(__file__).resolve().parent.parent
+SCHEMA = ROOT / "packages" / "vault" / "okwan_vault" / "schema.sql"
 
 
 @pytest.fixture
@@ -161,12 +163,12 @@ def test_the_vault_cli_issues_read_keys_unless_admin_is_named():
 
 
 def test_the_dashboard_issues_read_keys_and_admin_only_when_ticked():
-    root = os.path.join(os.path.dirname(__file__), "..", "apps", "dashboard")
-    route = open(os.path.join(root, "app", "api", "key", "route.ts")).read()
+    app = ROOT / "apps" / "dashboard" / "app"
+    route = (app / "api" / "key" / "route.ts").read_text()
     assert 'scope === "admin" ? "admin" : "read"' in route
-    issue = open(os.path.join(root, "app", "_components", "issue-key.tsx")).read()
+    issue = (app / "_components" / "issue-key.tsx").read_text()
     assert "useState(false)" in issue.split("const [admin, setAdmin]")[1][:40], "admin starts unticked"
-    setup = open(os.path.join(root, "app", "_components", "mcp-setup.tsx")).read()
+    setup = (app / "_components" / "mcp-setup.tsx").read_text()
     assert "allowAdmin" not in setup, "an AI client's key is always read-only"
 
 
@@ -203,8 +205,8 @@ async def test_postgres_stores_and_returns_the_scope():
 
 
 def _scope_migration() -> str:
-    sql = open(SCHEMA).read()
-    blocks = re.findall(r"DO \$\$.*?END \$\$;", sql, re.S)
+    sql = SCHEMA.read_text()
+    blocks = re.findall(r"DO \$\$.*?END \$\$;", sql, re.DOTALL)
     [block] = [b for b in blocks if "table_name = 'api_keys'" in b and "scope" in b]
     return block
 
