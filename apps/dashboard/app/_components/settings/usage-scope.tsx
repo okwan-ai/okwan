@@ -3,14 +3,19 @@
 import { useRouter } from "next/navigation";
 
 /**
- * Whose usage Plan & usage shows: the whole workspace, or one merchant.
- * A navigation, so the server reads that tenant's usage; the window
- * (?days=) is kept.
+ * Whose usage (Plan & usage) or reads (Access log) a Settings tab shows:
+ * the whole workspace, or one merchant. A navigation, so the server reads
+ * that tenant; the window (?days=) is kept.
  */
-export function UsageScope({ merchants, value, days }: { merchants: { id: string; name: string }[]; value: string | null; days: number }) {
+export function UsageScope({ merchants, value, days, tab = "plan" }: {
+  merchants: { id: string; name: string }[];
+  value: string | null;
+  days: number;
+  tab?: "plan" | "access";
+}) {
   const router = useRouter();
   function go(next: string) {
-    const q = new URLSearchParams({ tab: "plan" });
+    const q = new URLSearchParams({ tab });
     if (next) q.set("merchant", next);
     if (days !== 30) q.set("days", String(days));
     router.push(`/settings?${q.toString()}`, { scroll: false });

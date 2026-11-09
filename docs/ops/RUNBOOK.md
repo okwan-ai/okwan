@@ -375,8 +375,9 @@ line per alert, `access alert <kind> on <tenant> (<alert id>)`, never the
 address. SEV3 while the customer recognises it; SEV2 once they do not,
 and then "A key or password leaked" below.
 
-1. What the key read: the customer reads `GET /v1/tenants/<tenant>/access?days=90`
-   with their session or a key. Every read is there (time, key prefix,
+1. What the key read: the customer opens *Settings → Access log* in the
+   dashboard (90 days, by merchant), or reads
+   `GET /v1/tenants/<tenant>/access?days=90` with their session or a key. Every read is there (time, key prefix,
    address, network, surface, route) with the alerts. The operator copy of
    the mail has the address, network and route of the read that alerted.
 2. The customer does not recognise the network: they revoke the key

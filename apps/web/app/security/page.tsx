@@ -157,7 +157,7 @@ const parts: Part[] = [
           Every time your data is read, through the API, the MCP server or the dashboard, Okwan records when, which
           API key (by its prefix) or a dashboard session, the IP address and network it came from, and what was
           read. Never the key itself, the query or its results. Records are kept 90 days, and only your account can
-          read them, through the API today.
+          read them: in the dashboard under Settings, Access log, or through the API.
         </li>
         <li>
           If an API key reads your data from a network it has not used in the last 30 days, we email your account

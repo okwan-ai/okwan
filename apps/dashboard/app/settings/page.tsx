@@ -4,10 +4,12 @@ import { tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors } from "@/lib/merchants";
 import { SETTINGS_TABS, settingsTabOf } from "@/lib/settings-tabs";
+import { accessFor } from "@/lib/access";
 import { billing } from "@/lib/billing";
 import { myUsage, usageFor } from "@/lib/usage";
 import { ConnectionsGrid } from "../_components/connections-grid";
 import { KeyIssuer } from "../_components/issue-key";
+import { AccessLog } from "../_components/settings/access-log";
 import { BillingCard } from "../_components/settings/billing-card";
 import { PlanUsage } from "../_components/settings/plan-usage";
 import { RevokeKey } from "../_components/settings/revoke-key";
@@ -101,6 +103,8 @@ export default async function SettingsPage({ searchParams }: {
             </p>
           </div>
         )}
+
+        {active === "access" && <AccessTab merchants={merchants} selfId={tree.self.id} merchant={merchant ?? null} days={days} />}
 
         {active === "security" && (
           <KeyValueList label="How Okwan handles your data">
@@ -211,6 +215,48 @@ async function PlanTab({ merchants, selfId, merchant, days, upgraded }: {
   );
 }
 
+/** Settings › Access log, for the whole workspace or one merchant, like
+ *  Plan & usage. Only a child of this workspace may be named; the API's
+ *  subtree guard would refuse anything else anyway. */
+async function AccessTab({ merchants, selfId, merchant, days }: {
+  merchants: { id: string; name: string }[];
+  selfId: string;
+  merchant: string | null;
+  days: number;
+}) {
+  const known = merchant ? merchants.find((m) => m.id === merchant) : undefined;
+  const scope = <div className="mb-6"><UsageScope merchants={merchants} value={known ? known.id : null} days={days} tab="access" /></div>;
+  const withDays = (q: string) => (days === 30 ? q : `${q}&days=${days}`);
+  if (merchant && !known) {
+    return (
+      <>
+        {scope}
+        <EmptyState
+          title="The access log isn't available for this merchant"
+          action={<Link href={withDays("/settings?tab=access")} className="text-sm font-medium underline underline-offset-4">Whole workspace →</Link>}
+        />
+      </>
+    );
+  }
+  const r = await accessFor(known ? known.id : selfId, days);
+  const base = known ? `/settings?tab=access&merchant=${encodeURIComponent(known.id)}` : "/settings?tab=access";
+  return (
+    <>
+      {scope}
+      {r.ok ? (
+        <AccessLog
+          access={r.data}
+          names={known ? {} : Object.fromEntries(merchants.map((m) => [m.id, m.name]))}
+          selfId={known ? known.id : selfId}
+          rangeHref={(d) => `${base}&days=${d}`}
+        />
+      ) : (
+        <EmptyState title="The access log isn't available right now">The Okwan API didn&apos;t answer. Try again in a moment.</EmptyState>
+      )}
+    </>
+  );
+}
+
 /** Security, one row per guarantee: a lead anyone can read, the detail
  *  folded. Every ReadOnlyChip and HowItWorks links here; ids are anchors. */
 const SECURITY: { id: string; label: string; lead: string; text: ReactNode }[] = [
@@ -248,7 +294,20 @@ const SECURITY: { id: string; label: string; lead: string; text: ReactNode }[] =
     id: "metering",
     label: "Metering",
     lead: "We count requests, never their contents.",
-    text: "One count per merchant (or workspace), hour and channel. No query text, no row content, no per-call log: the meter is the record.",
+    text: "One count per merchant (or workspace), hour and channel, for your plan. Who read what is the access log's record, below; neither keeps query text or row content.",
+  },
+  {
+    id: "access-log",
+    label: "Access log",
+    lead: "Every read is recorded with the key and address it came from, for 90 days.",
+    text: (
+      <>
+        Each read through REST, SQL, the hosted MCP or this dashboard records when, which key (by its prefix) or a dashboard
+        session, the IP address and its network, and what was read. Never the key, the query or its results. A key used from a
+        network it hasn&apos;t used in 30 days, or reading far more than its busiest hour of the week before, emails your
+        account. See <Link href="/settings?tab=access" className="underline underline-offset-4">Access log</Link>.
+      </>
+    ),
   },
   {
     id: "egress",
