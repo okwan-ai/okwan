@@ -23,6 +23,3 @@ decide them.
 | Penetration test and SOC 2: whether, when, which firm | Owner | This pack is written for that reviewer |
 | Cyber and professional liability insurance | Owner, broker | Commonly asked for in an ISV's vendor review |
 | Use of third parties' logos and marks on the site and dashboard | Owner, counsel | Already flagged in `OKWAN_PROJECT.md` §10 item 25 |
-
-Immigration matters are out of scope for this pack and are handled
-separately.

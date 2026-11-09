@@ -64,6 +64,10 @@ auth adapter's `required_fields` exactly.
 ~10 focused hrs/week. Smallest shippable increment first. One clear
 recommendation, no option lists.
 
-## Out of scope for Claude Code
-Immigration and legal items — flag them, don't draft them. Those live in
-`NIW_WORKING_PACK.md` and are handled separately.
+## Private material stays out of this repository
+This repository is public. Personal, tax and corporate-filing material,
+pricing and revenue targets, competitor analysis, legal and trademark
+work, partner agreements and NDAs, and any history of exposed credentials
+never go in it: no code, docs, commits, PRs or screenshots. They live in
+`okwan-ai/okwan-private`, and that work is done together with the owner,
+as part of the same plan.

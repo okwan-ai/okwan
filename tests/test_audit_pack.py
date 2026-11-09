@@ -12,8 +12,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 PACK = sorted((ROOT / "docs" / "audit").glob("*.md"))
-#: Mentioned as out of scope, kept outside this repository.
-ELSEWHERE = {"NIW_WORKING_PACK.md"}
 
 _PATH = re.compile(r"`([\w./-]+\.(?:py|sql|yml|md|ts|toml|json))(?:::(\w+))?`")
 _LINK = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
@@ -28,8 +26,6 @@ def test_the_pack_exists():
 def test_every_cited_path_and_test_exists(doc):
     missing = []
     for path, test in _PATH.findall(doc.read_text()):
-        if path in ELSEWHERE:
-            continue
         target = ROOT / path
         if not target.exists():
             missing.append(path)
