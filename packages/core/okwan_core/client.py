@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ from tenacity import (
 )
 
 from .errors import RateLimitedError, UpstreamError
+from .redact import redact, sent_secrets
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +70,12 @@ class OkwanClient:
         self._client = httpx.AsyncClient(base_url=base_url, auth=auth, timeout=30.0)
         self._bucket = _TokenBucket(rate_limit.requests_per_second, rate_limit.burst)
         self._profile = rate_limit
+        self._secrets: tuple[str, ...] = ()
+
+    def keep_secret(self, values: Iterable[str]) -> None:
+        """Values never to show in an error from this client: the
+        connection's stored credentials (Connector.context sets them)."""
+        self._secrets = (*self._secrets, *(v for v in values if v))
 
     async def request(
         self,
@@ -91,7 +99,10 @@ class OkwanClient:
                     await asyncio.sleep(retry_after)
                     raise RateLimitedError(retry_after=retry_after)
                 if resp.status_code >= 400:
-                    raise UpstreamError(status=resp.status_code, body=resp.text[:2000])
+                    # A rail may quote the key it rejected: clean the body here,
+                    # once, before any surface can show it (redact.py).
+                    body = redact(resp.text, (*self._secrets, *sent_secrets(resp.request)))
+                    raise UpstreamError(status=resp.status_code, body=body[:2000])
                 return resp.json() if resp.content else {}
         raise RuntimeError("unreachable")  # pragma: no cover
 

@@ -86,6 +86,14 @@ one line each, so the coverage is visible. If you are not sure a finding
 is real, say so and say what would prove it.
 ```
 
+## Record
+
+| Date | Reviewer | What it found | What became of it |
+|---|---|---|---|
+| 2026-11-10 | An attacker's pass (fresh agent, attacker's brief, every finding proven by a running exploit) | **High:** a stored rail credential reached a read-only key through the data routes when a rail quoted the key it rejected (connector REST, `/v1/query`, reconciliations, the hosted MCP's query tool); only the connection test and run history scrubbed it. Confirmed again, already known: a query with no memory limit or timeout (G6), and sign-up verification limited per spoofable address (G17) | The high: reproduced by its exploit, then fixed where the error is made (C45, T22) with the exploit turned into `tests/test_upstream_redaction.py`. G6 and G17 stay as ranked in known-gaps.md. Held, with tries listed: a read key administering, cross-tenant reads on every surface, the SQL sandbox, SSRF through a Postgres DSN, Gusto state replay, dashboard cross-site changes, billing webhook forgery |
+| 2026-11-10 | Bandit 1.9 (static analyser, local) | 33 items: 20 SQL built from strings, 2 XML parsing of uploads, 4 "hardcoded passwords", 7 low notes on running subprocesses | None real. The SQL interpolates only fixed column lists or quoted identifiers, every value is a bound parameter, and the Postgres connector's own query runs the customer's SQL on their own database in a read-only transaction by design; the XML parser already refuses a DOCTYPE or ENTITY and caps the unpacked size; the "passwords" are an empty default and the local test server's dummy values |
+| 2026-11-10 | CodeQL, security-extended (first run, on PR 60) | No alert on the code that PR changed | Its first full scan of `main` runs when PR 60 merges; alerts then show in the repository's Security tab and are triaged here |
+
 ## What happens to a finding
 
 - It is reproduced first: a test that passes when the attack works, run

@@ -31,6 +31,7 @@ from okwan_core import (
     register,
 )
 from okwan_core.egress import EgressRefused, PinnedLoop, resolve_public
+from okwan_core.redact import redact
 
 from .schemas import (
     Column,
@@ -86,6 +87,20 @@ class PgTransport:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
         self._conn: asyncpg.Connection | None = None
+        try:
+            password = urlsplit(dsn).password
+        except ValueError:
+            password = None
+        self._secrets: tuple[str, ...] = tuple(v for v in (dsn, password and unquote(password), password) if v)
+
+    def keep_secret(self, values) -> None:
+        """Values never to show in an error (Connector.context sets them)."""
+        self._secrets = (*self._secrets, *(v for v in values if v))
+
+    def _upstream(self, status: int, message: str) -> UpstreamError:
+        """An error with the DSN and its password taken out, as
+        okwan_core.redact does for every HTTP rail."""
+        return UpstreamError(status=status, body=redact(message, self._secrets))
 
     async def conn(self) -> asyncpg.Connection:
         if self._conn is None:
@@ -101,9 +116,9 @@ class PgTransport:
                     loop=PinnedLoop(asyncio.get_running_loop(), host, ip), **extra,
                 )
             except EgressRefused as exc:
-                raise UpstreamError(status=403, body=f"postgres connect refused: {exc}")
+                raise self._upstream(403, f"postgres connect refused: {exc}") from None
             except (OSError, asyncpg.PostgresError) as exc:
-                raise UpstreamError(status=502, body=f"postgres connect failed: {exc}")
+                raise self._upstream(502, f"postgres connect failed: {exc}") from None
         return self._conn
 
     async def fetch_readonly(
@@ -114,7 +129,7 @@ class PgTransport:
             async with conn.transaction(readonly=True):
                 return await conn.fetch(sql, *args)
         except asyncpg.PostgresError as exc:
-            raise UpstreamError(status=400, body=f"postgres error: {exc}")
+            raise self._upstream(400, f"postgres error: {exc}") from None
 
     async def aclose(self) -> None:
         if self._conn is not None:
