@@ -29,6 +29,21 @@ MoMo Collections failed this and was rejected.
    its source in the entry's comment. `tests/test_brand_logos.py` fails a
    registered connector without one.
 
+## Independent review
+The assistant that writes the code is never its only reviewer: it shares
+the blind spots that wrote it.
+- CodeQL (`.github/workflows/codeql.yml`) runs on every PR. A new alert is
+  fixed, or dismissed in GitHub with the reason written in the PR, never
+  left. Merging waits for it like the other checks.
+- A change to a critical path (`docs/audit/red-team.md`) gets an attacker's
+  pass before merge: a fresh agent given an attacker's brief and none of
+  the author's conclusions. A finding counts only with an exploit test
+  that runs, and each confirmed one ends as a regression test.
+- The owner runs `docs/audit/red-team.md` through a second AI platform
+  before the first ISV signs, after critical-path changes, and quarterly.
+  Every finding is reproduced as a failing test before it is fixed or
+  answered.
+
 ## Stack (locked, §4)
 Python 3.12, FastAPI, Pydantic v2, httpx async, DuckDB, Neon Postgres.
 Next.js 15 + TypeScript + Tailwind for web. Deployed on Render.

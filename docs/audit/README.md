@@ -17,6 +17,7 @@ existing.
 | [known-gaps.md](known-gaps.md) | What is missing or weak, ranked, with the plan for each |
 | [dependencies.md](dependencies.md) | Direct dependencies, the versions verified, how to inventory the rest |
 | [owner-and-legal.md](owner-and-legal.md) | Items for the owner and counsel, flagged, not drafted |
+| [red-team.md](red-team.md) | Who reviews the code besides the AI that wrote it: CodeQL, an attacker's pass, and a second AI platform's red team, with the prompt |
 | [../ops/RUNBOOK.md](../ops/RUNBOOK.md) | Operations: who answers, monitoring, failure procedures |
 
 ## Scope

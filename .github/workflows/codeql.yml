@@ -1,0 +1,52 @@
+# A second reviewer that is not the AI that wrote the code: GitHub's
+# CodeQL, a semantic analyser with its own rules and its own blind spots,
+# reads the Python API and the TypeScript dashboard and site on every pull
+# request, every push to main and once a week. Its alerts land in the
+# repository's Security tab; a new error-level alert fails the PR's
+# "CodeQL" check (OKWAN_PROJECT.md §9 2026-11-10, CLAUDE.md "Independent
+# review").
+name: codeql
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          # The extended suite: the default security queries plus the
+          # wider set (more findings, some noisier), since this is the
+          # reviewer meant to disagree with the author.
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - "**/node_modules/**"
+              - "**/.next/**"
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
