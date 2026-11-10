@@ -1,0 +1,106 @@
+# Red team from a second AI platform
+
+Okwan's code is mostly written by one AI assistant. The same assistant
+reviewing its own work shares the blind spots that wrote it, so a review
+that matters comes from somewhere else. Three layers do that
+(CLAUDE.md, "Independent review"):
+
+1. **CodeQL on every pull request** (`.github/workflows/codeql.yml`): a
+   semantic analyser that is not an AI and fails differently.
+2. **An attacker's pass** on any change to the critical paths below: a
+   fresh agent with an attacker's brief and none of the author's
+   conclusions. A finding counts only with an exploit that runs.
+3. **A second AI platform**, run by the owner with the prompt below:
+   before the first ISV signs, after any change to a critical path, and
+   at least once a quarter.
+
+## The critical paths
+
+| Area | Files |
+|---|---|
+| Who the caller is, and what a key may do | `apps/api/okwan_api/auth.py`, `packages/vault/okwan_vault/apikey.py`, `packages/vault/okwan_vault/accounts.py` |
+| Whose data a caller may touch | `apps/api/okwan_api/admin.py` (`_guard`), `packages/vault/okwan_vault/authz.py`, `packages/vault/okwan_vault/schema.sql` (row-level security), `packages/vault/okwan_vault/postgres.py` |
+| Secrets at rest | `packages/vault/okwan_vault/crypto.py`, `packages/vault/okwan_vault/keys.py`, `apps/api/okwan_api/scrub.py` |
+| Caller SQL | `packages/query/okwan_query/guard.py`, `packages/query/okwan_query/session.py` |
+| The hosted MCP server | `packages/query/okwan_query/mcp_http.py` |
+| Connecting Gusto (OAuth) | `apps/api/okwan_api/connect.py`, `packages/connectors/gusto/okwan_gusto/auth.py`, `apps/dashboard/app/integrations/[name]/` |
+| Files customers upload | `apps/api/okwan_api/imports.py`, `packages/connectors/files/okwan_files/` |
+| The dashboard's session and its changes | `apps/dashboard/lib/api.ts`, `apps/dashboard/lib/respond.ts`, `apps/dashboard/app/**/route.ts` |
+| The operator console | `apps/api/okwan_api/ops.py` |
+
+## How to run it (owner, about ten minutes)
+
+1. Open a different AI service from the one that builds Okwan (for
+   example ChatGPT or Gemini), in a new conversation.
+2. Paste the prompt below. The repository is public, so it can read the
+   code at https://github.com/okwan-ai/okwan; if it cannot browse, paste
+   the files of the area you want covered, one area at a time.
+3. Paste its answer back to the assistant that builds Okwan. Each finding
+   is reproduced as a failing test before anything is fixed; a finding
+   that does not reproduce is answered with what was tried. Where the
+   two disagree is where to look hardest.
+
+Never paste a key, a token, a password or anything from the private
+working pack into either platform.
+
+## The prompt
+
+```text
+You are a red team hired to break a multi-tenant SaaS API before it takes
+paying customers. Do not review or praise the code. Find every way to
+break it, and for each one show exactly how.
+
+The code: https://github.com/okwan-ai/okwan (Python 3.12, FastAPI, Pydantic
+v2, DuckDB, Postgres with row-level security; a Next.js 15 dashboard).
+Okwan reads a business's payment and commerce systems read-only and serves
+the data over REST, SQL and an MCP server. Tenants form a tree: an ISV
+account with merchant child tenants. Callers are API keys (each key is
+"read" or "admin"; a read key may only read data, an admin key may also
+administer its own subtree), dashboard sessions, and allowlisted operators.
+
+The files that matter most are listed in docs/audit/red-team.md. What the
+authors already know is weak is in docs/audit/known-gaps.md: do not repeat
+those unless the code is worse than they say.
+
+Try to:
+1. Make a read-only key administer anything, by any route, header, method,
+   casing or MCP tool.
+2. Read or change another tenant's data, credentials, files, runs, keys or
+   access log, on any surface.
+3. Get a stored secret (a saved credential, an API key, a session token, an
+   OAuth token, the master key, an environment variable) into a response,
+   an error or a log.
+4. Escape the SQL guard: read files, the environment or the network, reach
+   another tenant's rows, or run anything that is not a read.
+5. Connect a Gusto company to the wrong tenant, or replay or forge the
+   OAuth state.
+6. Make the dashboard change something for a request from another site.
+7. Make the server loop, page forever or allocate without bound with a
+   small request.
+8. Make money come out wrong: a float, a rounding, a currency's decimals.
+
+For each finding give: severity (critical, high, medium, low), the file
+and line of the cause, the exact requests or code that exploit it, what
+the attacker gets, and a one-line fix. Then list what you tried that held,
+one line each, so the coverage is visible. If you are not sure a finding
+is real, say so and say what would prove it.
+```
+
+## Record
+
+| Date | Reviewer | What it found | What became of it |
+|---|---|---|---|
+| 2026-11-10 | An attacker's pass (fresh agent, attacker's brief, every finding proven by a running exploit) | **High:** a stored rail credential reached a read-only key through the data routes when a rail quoted the key it rejected (connector REST, `/v1/query`, reconciliations, the hosted MCP's query tool); only the connection test and run history scrubbed it. Confirmed again, already known: a query with no memory limit or timeout (G6), and sign-up verification limited per spoofable address (G17) | The high: reproduced by its exploit, then fixed where the error is made (C45, T22) with the exploit turned into `tests/test_upstream_redaction.py`. G6 and G17 stay as ranked in known-gaps.md. Held, with tries listed: a read key administering, cross-tenant reads on every surface, the SQL sandbox, SSRF through a Postgres DSN, Gusto state replay, dashboard cross-site changes, billing webhook forgery |
+| 2026-11-10 | Bandit 1.9 (static analyser, local) | 33 items: 20 SQL built from strings, 2 XML parsing of uploads, 4 "hardcoded passwords", 7 low notes on running subprocesses | None real. The SQL interpolates only fixed column lists or quoted identifiers, every value is a bound parameter, and the Postgres connector's own query runs the customer's SQL on their own database in a read-only transaction by design; the XML parser already refuses a DOCTYPE or ENTITY and caps the unpacked size; the "passwords" are an empty default and the local test server's dummy values |
+| 2026-11-10 | CodeQL, security-extended (first run, on PR 60) | No alert on the code that PR changed | Its first full scan of `main` runs when PR 60 merges; alerts then show in the repository's Security tab and are triaged here |
+
+## What happens to a finding
+
+- It is reproduced first: a test that passes when the attack works, run
+  against the code as it is.
+- A reproduced finding is fixed in its own pull request, and its test is
+  turned around to assert the attack fails, so it stays fixed.
+- A finding that does not reproduce is answered with the test that was
+  tried. It is never dismissed on the author's word.
+- Each pass is recorded in OKWAN_PROJECT.md §9: the platform, the date,
+  what it found and what became of each finding.

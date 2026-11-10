@@ -150,6 +150,11 @@ class Connector:
             )
             ctx = ConnectorContext(client=client, credentials=credentials)
         ctx.tenant_id = tenant_id
+        # Whatever client the factory built, it never shows a stored value
+        # in an error (redact.py). Set here, after any factory, like tenant_id.
+        keep = getattr(ctx.client, "keep_secret", None)
+        if callable(keep):
+            keep(v for v in credentials.values() if v)
         return ctx
 
     def iter_operations(self) -> list[tuple[Resource, Operation]]:
