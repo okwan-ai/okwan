@@ -11,6 +11,7 @@ tool, a REST route and a DuckDB view, with no per-fold code.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -474,22 +475,29 @@ async def run_across(
     resolver: CredentialResolver = env_credentials,
     overrides: dict[str, Any] | None = None,
     max_records: int | None = None,
+    fetch: Callable[..., Awaitable[tuple[list[Row], Coverage]]] | None = None,
 ) -> AcrossResult:
-    """Fetch the ledger once, each rail once, match each pair, fold."""
+    """Fetch the ledger once, each rail once, match each pair, fold.
+
+    `fetch` reads a side in place of the connectors (`fetch_side`): the
+    sample check passes its own rows (sample.py). Everything after the read,
+    the matching and the fold, is the same code either way.
+    """
     from .runner import resolve_window, side_overrides
 
+    read = fetch or fetch_side
     spec.validate_against_registry()
     members = spec.members()
     first = members[0]
     cap = max_records or first.max_records
     window = resolve_window(first)
 
-    ledger, ledger_cov = await fetch_side(
+    ledger, ledger_cov = await read(
         first.left, resolver, cap, side_overrides(first.left, window, overrides)
     )
     results: list[tuple[Reconciliation, Rail, ReconResult]] = []
     for member, rail in zip(members, spec.rails, strict=True):
-        right, right_cov = await fetch_side(
+        right, right_cov = await read(
             member.right, resolver, cap, side_overrides(member.right, window, overrides)
         )
         results.append((member, rail, match(member, ledger, right, ledger_cov, right_cov)))

@@ -16,6 +16,18 @@ export type Step = { id: string; label: string; hint?: string; href: string; don
  *  ticks. The old browser-wide key is no longer read. */
 const storageKey = (account: string) => `okwan.setup.ticked:${account}`;
 
+/** Tick a step the API can't confirm from the page where it happens (the
+ *  sample check ticks itself when it is seen). Kept in this browser, like
+ *  every other tick. */
+export function tickStep(account: string, id: string): void {
+  const key = storageKey(account);
+  try {
+    localStorage.setItem(key, JSON.stringify([...new Set([...readTicked(key), id])]));
+  } catch {
+    // Storage blocked: the step stays open, and can be marked done by hand.
+  }
+}
+
 function readTicked(key: string): string[] {
   try {
     return JSON.parse(localStorage.getItem(key) ?? "[]");
@@ -122,7 +134,7 @@ export function SetupChecklist({ account, steps, prominent = false }: { account:
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4">
           <div>
             <h2 id="setup-title" className="text-base font-semibold">Get set up</h2>
-            <p className="mt-0.5 text-sm text-ink-soft">Four steps to your first result and your first agent.</p>
+            <p className="mt-0.5 text-sm text-ink-soft">See a finished check first, then run your own.</p>
           </div>
           <div className="flex flex-wrap items-center gap-4">
             {progress}

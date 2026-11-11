@@ -252,6 +252,8 @@ export type AttentionRow = FindingRow & {
   /** The check's result was cut short (more than 1,000 orders, or a side
    *  hit its record cap), so this list may not be the whole of it. */
   partial: boolean;
+  /** From the sample check (/sample): made-up rows, no merchant behind it. */
+  sample?: boolean;
 };
 
 /** A finding as the palette's order search needs it. */

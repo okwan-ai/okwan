@@ -6,7 +6,7 @@ import {
   ago, type AttentionRow, atStake, type FindingRow, OUTCOME_LABEL, OUTCOME_MARK, OUTCOME_TONE, railLabel, sameCurrency,
 } from "@/lib/finding";
 import { formatMinor } from "@/lib/money";
-import { mcpCall, restCall } from "@/lib/reproduce";
+import { mcpCall, restCall, sampleCall } from "@/lib/reproduce";
 import { MoneyTrail } from "./money-trail";
 import { Badge } from "./ui/badge";
 import { BrandMark } from "./ui/brand-mark";
@@ -14,7 +14,7 @@ import { Button, buttonClass } from "./ui/button";
 import { CodeBlock, CopyButton } from "./ui/copy-button";
 import { SlideOver } from "./ui/dialog";
 
-export type DrawerRow = FindingRow & { merchantId: string; merchantName: string; at?: number; partial?: boolean };
+export type DrawerRow = FindingRow & { merchantId: string; merchantName: string; at?: number; partial?: boolean; sample?: boolean };
 
 /**
  * One order's proof, where the operator already is: the verdict, what is at
@@ -118,9 +118,21 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase, onMerchant
 
           <section aria-labelledby="drawer-repro" className="space-y-2">
             <h3 id="drawer-repro" className="text-sm font-semibold">Reproduce this verdict</h3>
-            <CodeBlock label="Hosted MCP" code={mcpCall(r)} />
-            <CodeBlock label="REST · curl + jq" code={restCall(apiBase, r)} />
-            <p className="text-xs text-ink-soft">With a key issued for {r.merchantName}. Each call is a fresh, metered check.</p>
+            {r.sample ? (
+              <>
+                <CodeBlock label="REST · curl + jq" code={sampleCall(apiBase, r)} />
+                <p className="text-xs text-ink-soft">
+                  The sample needs no key. For your own merchant the path drops <code className="font-mono">/sample</code> and
+                  takes that merchant&apos;s key.
+                </p>
+              </>
+            ) : (
+              <>
+                <CodeBlock label="Hosted MCP" code={mcpCall(r)} />
+                <CodeBlock label="REST · curl + jq" code={restCall(apiBase, r)} />
+                <p className="text-xs text-ink-soft">With a key issued for {r.merchantName}. Each call is a fresh, metered check.</p>
+              </>
+            )}
           </section>
 
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
@@ -133,7 +145,7 @@ export function OrderDrawer({ rows, index, onIndex, onClose, apiBase, onMerchant
               </Link>
             )}
             <CopyButton value={summary(r)} label="Copy summary" text="Copy summary" />
-            <CopyButton value={prompt(r)} label="Copy agent prompt" text="Agent prompt" />
+            {!r.sample && <CopyButton value={prompt(r)} label="Copy agent prompt" text="Agent prompt" />}
           </div>
           <p className="text-xs text-ink-soft">Okwan only reads. Make any refund in PayPal or Stripe.</p>
         </div>

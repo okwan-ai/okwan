@@ -59,6 +59,9 @@ SQL_RECON_TENANT = Rule("sql:recon:tenant", 12, 60)
 #: File imports per target tenant: each one parses a file of up to 8 MB
 #: and writes up to 50,000 rows.
 IMPORT_TENANT = Rule("import:tenant", 30, 3600)
+#: The sample check holds nothing of anyone's and costs one run an hour;
+#: the limit only keeps one address from hammering a route that needs no key.
+SAMPLE_IP = Rule("sample:ip", 120, 60)
 #: Operator console unlock: a wrong authenticator code is a guess.
 OPS_UNLOCK = Rule("ops:unlock", 5, 900)
 OPS_UNLOCK_IP = Rule("ops:unlock:ip", 10, 900)
@@ -113,7 +116,7 @@ class Limiter:
 
 
 _RULES = (SIGNUP_IP, SIGNUP_ADDRESS, VERIFY_IP, SIGNIN_IP, SIGNIN_ADDRESS,
-          TEST_IP, TEST_TENANT, SQL_RECON_TENANT, IMPORT_TENANT)
+          TEST_IP, TEST_TENANT, SQL_RECON_TENANT, IMPORT_TENANT, SAMPLE_IP)
 
 limiter = Limiter()
 
