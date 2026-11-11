@@ -435,9 +435,12 @@ none of it.
   (Settings, or it pressed the link); the plan was used up, so no check
   ran; or a rail is not connected. The finding is in the dashboard either
   way, marked *New*.
-- **A check that is slow.** One merchant's rows can make its check take
-  many seconds (G19). The log shows the round running long and fewer
-  checks than were due; they run the next hour.
+- **A check that is slow.** A check's matching is bounded (a second or two
+  at most, whatever the merchant's rows hold), so a slow check is a slow
+  rail. The log shows the round running long and fewer checks than were
+  due; they run the next hour. An order the dashboard shows as *Couldn't
+  verify* with "the fallback match stopped" is a merchant with thousands
+  of records sharing one amount and day: nothing was decided about it.
 - **A check that fails** (a revoked key, a rail down) is stored as a failed
   run and tried again a day later, not every hour.
 - One API instance only (G7): a second instance would run each due

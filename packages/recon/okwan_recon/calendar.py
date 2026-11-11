@@ -61,12 +61,17 @@ def is_business_day(day: date) -> bool:
     return day.weekday() < 5 and day not in us_bank_holidays(day.year)
 
 
-def business_days_after(start: date, end: date) -> int | None:
+def business_days_after(start: date, end: date, at_most: int | None = None) -> int | None:
     """Business days in (start, end]: 0 on the same day, 1 for T+1.
 
     None when `end` precedes `start`, because settlement runs one way. A
     batch closed on a non-business day still counts from that day, so a
     Saturday batch deposited Monday is T+1.
+
+    With `at_most`, counting stops one past it: the answer is then only
+    "more than `at_most`", and the walk is a few days long however far
+    apart the two dates are. The dates are a record's own, so without it a
+    record dated a thousand years off costs a third of a million steps.
     """
     if end < start:
         return None
@@ -74,6 +79,8 @@ def business_days_after(start: date, end: date) -> int | None:
     while day < end:
         day += timedelta(days=1)
         count += is_business_day(day)
+        if at_most is not None and count > at_most:
+            break
     return count
 
 

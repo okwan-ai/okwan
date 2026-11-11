@@ -30,8 +30,10 @@ jobs:
     # 24 planted breaks, 8 of which must re-run the whole isolation suite
     # and pass (one wall broken, the other holding), so the job grows with
     # every route and tenant table the suite covers: about 25 minutes at
-    # v1.50, 42 at v1.56, over 45 at v1.59. A limit, not a target.
-    timeout-minutes: 75
+    # v1.50, 42 at v1.56, over 45 at v1.59, 62 at v1.66. A limit, not a
+    # target: raised from 75 when a passing run came within a quarter of
+    # an hour of it.
+    timeout-minutes: 100
     services:
       postgres:
         image: postgres:16

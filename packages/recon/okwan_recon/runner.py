@@ -2,6 +2,7 @@
 emitters call — MCP, REST and the DuckDB view cannot diverge."""
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,4 +52,5 @@ async def run(
     right, right_cov = await fetch_side(
         spec.right, resolver, cap, side_overrides(spec.right, window, overrides)
     )
-    return match(spec, left, right, left_cov, right_cov)
+    # Off the event loop: bounded (engine, E7), but still plain computing.
+    return await asyncio.to_thread(match, spec, left, right, left_cov, right_cov)
