@@ -111,10 +111,12 @@ def test_every_route_that_can_read_a_rail_requires_a_key():
     from okwan_api.main import app
     from okwan_api.ops import operator
 
-    # The billing webhook carries Stripe's signature instead of a key.
+    # The billing webhook carries Stripe's signature instead of a key. The
+    # sample check runs the fold over rows held in the code and cannot read
+    # a rail (tests/test_sample_check.py::test_only_the_read_is_replaced).
     public = {"/healthz", "/v1/connectors", "/v1/signup", "/v1/signup/verify", "/v1/billing/webhook",
               "/v1/sessions", "/openapi.json", "/docs", "/docs/oauth2-redirect",
-              "/redoc"}
+              "/redoc", "/v1/sample/reconciliations/across/{name}"}
     # The operator console's gate: a dashboard session whose login is on the
     # allowlist (tests/test_ops.py), which reaches no rail.
     gates = {current_tenant, check_quota, admin_actor, operator}

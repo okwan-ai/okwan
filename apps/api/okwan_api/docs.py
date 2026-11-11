@@ -44,6 +44,10 @@ STATIC_TAGS: list[tuple[str, str, str]] = [
     ("reconciliations", "The check",
      ("Run the check over a merchant's orders and payments. Each run is one request and is saved as "
      "verdicts and amounts, never raw payment records.")),
+    ("sample", "Try it: the sample check",
+     ("The check, finished, over a made-up store's week: the same matching, the same response, "
+      "no key and no account. Use it to see what a check returns and to build your parser before "
+      "you connect anything. Nothing is read from any account, stored or metered.")),
     ("query", "SQL",
      "Read-only SQL over the tables the connectors generate. One request per statement."),
     ("tenants", "Merchants & keys",
@@ -172,7 +176,7 @@ def tags() -> list[dict[str, Any]]:
 def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     connector_tags = [t["name"] for t in tag_list if t["name"] not in {s[0] for s in STATIC_TAGS}]
     return [
-        {"name": "Start here", "tags": ["reconciliations"]},
+        {"name": "Start here", "tags": ["sample", "reconciliations"]},
         {"name": "Connectors", "tags": connector_tags},
         {"name": "SQL", "tags": ["query"]},
         {"name": "Your workspace", "tags": ["tenants", "imports", "accounts", "support"]},
@@ -186,6 +190,7 @@ TITLES: dict[tuple[str, str], str] = {
     ("get", "/v1/connectors"): "List connectors",
     ("get", "/v1/reconciliations"): "List checks",
     ("get", "/v1/reconciliations/across/{name}"): "Run the check",
+    ("get", "/v1/sample/reconciliations/across/{name}"): "Run the sample check",
     ("get", "/v1/reconciliations/{name}"): "Run a two-sided reconciliation",
     ("get", "/v1/query/tables"): "List SQL tables",
     ("post", "/v1/query"): "Run a SQL query",

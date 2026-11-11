@@ -25,7 +25,7 @@ mkdirSync(OUT, { recursive: true });
 const SIZES = [[1670, 941], [1366, 768], [1024, 768], [390, 844]];
 const SIGNED_OUT = ["/signup?mode=signin", "/signup", "/verify?token=layout-check"];
 const SIGNED_IN = [
-  "/overview", "/overview?days=all", "/findings", "/merchants", "/integrations", "/agents",
+  "/overview", "/overview?days=all", "/sample", "/findings", "/merchants", "/integrations", "/agents",
   "/settings", "/settings?tab=plan", "/settings?tab=keys", "/settings?tab=access", "/settings?tab=security", "/ops",
 ];
 

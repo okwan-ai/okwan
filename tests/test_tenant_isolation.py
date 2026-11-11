@@ -268,6 +268,10 @@ PUBLIC = {
     # tenant only through metadata Okwan itself wrote at Checkout, and only a
     # root account's plan can change: tests/test_billing.py.
     ("POST", "/v1/billing/webhook"),
+    # The sample check: the real fold over made-up rows held in the code. It
+    # takes no credential, resolves no tenant and reads no vault or rail
+    # (tests/test_sample_check.py).
+    ("GET", "/v1/sample/reconciliations/across/{name}"),
 }
 #: The tenant is whoever holds the API key; data is read with its vault only.
 KEY_DATA = {

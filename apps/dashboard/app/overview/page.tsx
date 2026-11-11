@@ -12,6 +12,7 @@ import { FindingsTable } from "../_components/findings-table";
 import { RangeSelect } from "../_components/range-select";
 import { RANGES } from "@/lib/ranges";
 import { MerchantList } from "../_components/merchants-table";
+import { SAMPLE_STEP } from "@/lib/sample-step";
 import { SetupChecklist, type Step } from "../_components/setup-checklist";
 import { VerdictCard } from "../_components/verdict-card";
 import { Card, CardBody } from "../_components/ui/card";
@@ -283,6 +284,16 @@ function setupSteps(runs: MerchantRun[], keySeen: boolean): Step[] {
   const agentFor = ready ?? runs[0]?.merchant;
   const at = (id: string, tab?: string) => `/merchants/${encodeURIComponent(id)}${tab ? `?tab=${tab}` : ""}`;
   return [
+    // First, and it needs nothing: a finished check on made-up data, so the
+    // first minute shows what a check finds (§9 2026-11-11). Ticks itself
+    // when the page is seen; done already for an account with a real result.
+    {
+      id: SAMPLE_STEP,
+      label: "See a sample check",
+      hint: "A store's week, checked in seconds. Nothing to connect.",
+      href: "/sample",
+      done: runs.some((r) => r.state === "ok") ? true : null,
+    },
     { id: "merchant", label: "Add a merchant", hint: "One for each business you serve.", href: "/merchants?add=1", done: runs.length > 0 },
     {
       id: "rails",
