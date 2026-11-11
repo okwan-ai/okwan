@@ -68,6 +68,11 @@ def remember(headers: Mapping[str, str], peer: str | None, token: str, target: s
     _caller.set(Caller(credential_for(token), address_from(headers, peer), target))
 
 
+def remember_schedule(target: str) -> None:
+    """For the daily check (schedule.py): Okwan's own read, from no address."""
+    _caller.set(Caller(rules.SCHEDULE, "unknown", target))
+
+
 def remember_request(request: Request, token: str) -> None:
     """For a FastAPI route: the route's path is what was read."""
     remember(request.headers, request.client.host if request.client else None, token,

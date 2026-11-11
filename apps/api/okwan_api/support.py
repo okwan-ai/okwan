@@ -191,6 +191,27 @@ nothing in Okwan moves money.
   `?tab=keys` (issue and revoke API keys), `?tab=plan` (plan and usage),
   `?tab=security`.
 
+## Daily checks and their email
+- Okwan runs the across-rails check once a day for each merchant whose Shopify,
+  PayPal and Stripe are all connected, counted from Okwan's own last daily
+  check of that merchant: a check run from the dashboard, a key or an agent
+  does not move it. It shows in the merchant's history as "Daily check" and in
+  the access log as "Okwan's daily check". It counts toward the plan like any
+  check; none runs once the plan is used up.
+- When a daily check finds something the account has not been told of, the
+  account's sign-in address gets an email, one a day at most: each merchant
+  with something new, how many orders and the amounts. Never an order, a
+  customer or a payment record. A finding from a check later in the day is in
+  the next day's email.
+- Both are on by default and are switches in Settings -> Daily checks
+  ({app}/settings#daily-checks). The link at the foot of any such email also
+  turns the emails off, without signing in. Turning the emails off does not
+  stop the checks.
+- No email arrived: nothing was new, today's email already went (the finding
+  is in tomorrow's), the emails are off, a rail is not connected, or the plan
+  is used up. The finding is in the dashboard either way, marked New.
+- A sample check on made-up data, with nothing connected, is at {app}/sample.
+
 ## The API and MCP
 - REST: `{API_BASE}/v1/...`, reference at `{API_BASE}/docs`. Authenticate with
   an Okwan API key (`okw_...`) as `Authorization: Bearer`.

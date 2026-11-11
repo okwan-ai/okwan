@@ -47,6 +47,8 @@ from okwan_api.imports import build_router as build_imports_router
 from okwan_api.connect import build_router as build_connect_router
 from okwan_api.imports import sweeper as imports_sweeper
 from okwan_api.access import sweeper as access_sweeper
+from okwan_api.notify import build_router as build_notify_router
+from okwan_api.schedule import sweeper as schedule_sweeper
 from okwan_api.auth import get_store as _get_store
 from okwan_api.sample import build_router as build_sample_router
 from okwan_api.signup import build_router as build_signup_router
@@ -95,11 +97,13 @@ async def lifespan(_: FastAPI):
     Mounting an ASGI app does not run its lifespan, so the streamable
     HTTP transport's task group has to be entered here or every MCP
     request fails before reaching a handler. The hourly sweeps run
-    alongside, for the life of the process: expired imports, and the access
-    log's volume check and retention.
+    alongside, for the life of the process: expired imports, the access
+    log's volume check and retention, and the daily check of every
+    connected merchant (schedule.py).
     """
     await open_store()
-    sweeps = [asyncio.create_task(imports_sweeper()), asyncio.create_task(access_sweeper())]
+    sweeps = [asyncio.create_task(imports_sweeper()), asyncio.create_task(access_sweeper()),
+              asyncio.create_task(schedule_sweeper())]
     try:
         async with _mcp.session_manager.run():
             yield
@@ -239,6 +243,7 @@ app.include_router(build_billing_router())
 app.include_router(build_imports_router())
 app.include_router(build_connect_router())
 app.include_router(build_sample_router())
+app.include_router(build_notify_router())
 
 
 @app.exception_handler(RequestValidationError)

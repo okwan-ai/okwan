@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import calendar
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
@@ -212,3 +213,42 @@ class SealedCredential:
             "key_id": self.key_id,
             "created_at": self.created_at.isoformat(),
         }
+
+
+#: An account's choices about the daily check, before it has made any.
+NOTIFY_DEFAULTS = {"daily_checks": True, "finding_emails": True, "unsubscribe_token": None, "mailed_at": None}
+
+
+@dataclass(frozen=True)
+class DailyCheck:
+    """What the daily check keeps about one merchant, and nothing else may
+    write: when it last tried, the findings the account has been told of
+    (as fingerprints, never the order reference), and the stored run that
+    holds findings not yet mailed."""
+
+    tenant_id: str
+    checked_at: datetime
+    told: tuple[str, ...] = ()
+    news_run: str | None = None
+
+
+#: `unsub_<tenant id>.<random>`: the tenant is named so the token is looked
+#: up inside that tenant's scope, never across tenants.
+UNSUBSCRIBE_MARK = "unsub_"
+
+
+def new_unsubscribe_token(tenant_id: str) -> str:
+    import secrets
+
+    return f"{UNSUBSCRIBE_MARK}{tenant_id}.{secrets.token_urlsafe(24)}"
+
+
+_UNSUBSCRIBE = re.compile(r"unsub_(ten_[0-9a-f]{16})\.[A-Za-z0-9_-]{32}")
+
+
+def unsubscribe_tenant(token: str) -> str | None:
+    """The tenant an unsubscribe token names, or None when the token is not
+    exactly the shape issued: the id goes into a database scope, so nothing
+    else is let through."""
+    found = _UNSUBSCRIBE.fullmatch(token)
+    return found.group(1) if found else None

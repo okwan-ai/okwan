@@ -272,6 +272,10 @@ PUBLIC = {
     # takes no credential, resolves no tenant and reads no vault or rail
     # (tests/test_sample_check.py).
     ("GET", "/v1/sample/reconciliations/across/{name}"),
+    # The way out of the daily check's mail: no credential, a token from the
+    # mail instead, which names one account and can only turn its mail off
+    # (tests/test_daily_checks.py).
+    ("POST", "/v1/unsubscribe"),
 }
 #: The tenant is whoever holds the API key; data is read with its vault only.
 KEY_DATA = {
@@ -294,6 +298,8 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
     ("GET", "/v1/tenants/{tenant_id}/credentials"): ("/v1/tenants/{t}/credentials", None),
     ("GET", "/v1/tenants/{tenant_id}/usage"): ("/v1/tenants/{t}/usage", None),
     ("GET", "/v1/tenants/{tenant_id}/access"): ("/v1/tenants/{t}/access", None),
+    ("GET", "/v1/tenants/{tenant_id}/notify"): ("/v1/tenants/{t}/notify", None),
+    ("PUT", "/v1/tenants/{tenant_id}/notify"): ("/v1/tenants/{t}/notify", {"daily_checks": False}),
     ("POST", "/v1/tenants/{tenant_id}/connectors/gusto/authorize"): ("/v1/tenants/{t}/connectors/gusto/authorize", None),
     ("POST", "/v1/tenants/{tenant_id}/connectors/gusto/callback"): (
         "/v1/tenants/{t}/connectors/gusto/callback", {"code": "c", "state": "s"}),

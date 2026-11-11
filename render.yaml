@@ -42,6 +42,16 @@ services:
         sync: false
       - key: OKWAN_MAIL_FROM
         sync: false
+      # The sender's name and postal address, one line, printed at the foot
+      # of the daily check's mail ("Okwan · <this>"). US law requires it on
+      # mail sent unasked, so no such mail goes out until it is set. The
+      # daily checks themselves run without it.
+      - key: OKWAN_MAIL_POSTAL_ADDRESS
+        sync: false
+      # The daily check of every connected merchant (okwan_api/schedule.py).
+      # On unless this is "off": the switch to pause all of them at once.
+      - key: OKWAN_DAILY_CHECKS
+        value: "on"
       # Public signup. Unset (or anything but "true"), signup answers 503
       # "signup is not open yet" outside dev, even with mail working. Set it
       # to true once the privacy policy and terms are published

@@ -157,6 +157,9 @@ async def two(store):
                                   network="203.0.113.0/24", surface="rest:test", target="/v1/x")
         await store.add_access_alert(t.id, kind="new_network", credential=f"okw_{name[:8]:<8}",
                                      detail={"network": "203.0.113.0/24"})
+        await store.set_notify(t.id, finding_emails=False)
+        await store.claim_daily_check(t.id, now)
+        await store.settle_daily_check(t.id, told=[f"{name}-told"], news_run=None)
         out.append(t)
     return out
 
@@ -295,6 +298,10 @@ def _insert(table: str, tenant_id: str) -> tuple:
                        tenant_id),
         "access_alerts": (("INSERT INTO access_alerts (id, tenant_id, kind, credential) "
                            "VALUES ('alr_rls_probe', $1, 'volume', 'okw_rlsprobe')"), tenant_id),
+        "notify_settings": (("INSERT INTO notify_settings (tenant_id, finding_emails) VALUES ($1, false) "
+                             "ON CONFLICT (tenant_id) DO UPDATE SET finding_emails = false"), tenant_id),
+        "daily_checks": (("INSERT INTO daily_checks (tenant_id, checked_at) VALUES ($1, now()) "
+                          "ON CONFLICT (tenant_id) DO UPDATE SET checked_at = now()"), tenant_id),
     }[table]
 
 

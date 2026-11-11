@@ -61,8 +61,9 @@ const parts: Part[] = [
     body: (
       <ul>
         <li>
-          Okwan reads records from your systems when you run a check or call the API or MCP server, and holds them
-          in memory for that request only.
+          Okwan reads records from your systems when you run a check or call the API or MCP server, and once a day
+          for the daily check unless you turn it off, and holds them in memory for that read only. A daily check
+          is listed in your access log as Okwan&rsquo;s own read.
         </li>
         <li>
           What it stores is the result: for each order, its reference, amounts, the outcome and how it was reached.
@@ -264,7 +265,7 @@ export default function Security() {
   return (
     <LegalPage
       title="Security"
-      updated="November 9, 2026"
+      updated="November 11, 2026"
       intro={
         <>
           <p>How Okwan handles the access you give it, and what it does not do yet. In short:</p>

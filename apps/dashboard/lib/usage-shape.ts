@@ -27,6 +27,8 @@ export const CHANNELS: { key: string; label: string; test: (s: string) => boolea
   { key: "agents", label: "Agents over MCP", test: (s) => s.startsWith("mcp:") },
   { key: "rest", label: "REST and SQL", test: (s) => s.startsWith("rest:") },
   { key: "dashboard", label: "Dashboard checks", test: (s) => s.startsWith("dashboard:") },
+  // The daily check Okwan runs unasked (okwan_api/schedule.py): a check like any other.
+  { key: "schedule", label: "Daily checks", test: (s) => s.startsWith("schedule:") },
   { key: "tests", label: "Connection tests", test: (s) => s.startsWith("test:") },
 ];
 

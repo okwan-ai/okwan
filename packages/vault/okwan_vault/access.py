@@ -46,6 +46,10 @@ KEY_MARK = "okw_"
 #: The credential a dashboard session is logged under.
 SESSION = "session"
 
+#: The credential Okwan's own daily check is logged under (okwan_api.schedule):
+#: no key and no person, so it has no address either.
+SCHEDULE = "schedule"
+
 
 @dataclass(frozen=True, slots=True)
 class Seen:

@@ -392,6 +392,57 @@ and then "A key or password leaked" below.
    straight to `okwan.onrender.com` can set itself
    ([known-gaps.md](../audit/known-gaps.md) G17).
 
+### Daily checks and their mail
+
+Once an hour the API looks for merchants whose Shopify, PayPal and Stripe
+are all connected and whose own daily check last ran a day or more ago,
+and runs the check for each (`okwan_api/schedule.py`). The first round
+starts two minutes after the server does. A daily check is stored (surface
+*Daily check*), metered to the merchant, and shown in the access log as
+*Okwan's daily check* from *Okwan's servers*.
+
+When a merchant is due, what its account has been told and what is still
+to mail are the scheduler's own record (the `daily_checks` table, one row
+a merchant). A check run from the dashboard, a key or an agent changes
+none of it.
+
+- **A round.** Accounts take turns, one check each a turn, the account
+  served longest ago first. A round starts no check past 200 or past
+  twenty minutes; the rest are due the next hour. A merchant's slot is
+  taken before its rails are read, so a check that fails is tried again a
+  day later, not an hour later.
+- **Mail.** When a check finds something the account has not been told
+  of, the account gets a mail, one a day at most: a finding from a check
+  later that day is in the next day's mail. It needs `RESEND_API_KEY`,
+  `OKWAN_MAIL_FROM` and `OKWAN_MAIL_POSTAL_ADDRESS` on the `okwan` Render
+  service; without the address the checks run and no mail goes
+  (`findings for ten_… not mailed: OKWAN_MAIL_POSTAL_ADDRESS is not set`),
+  and nothing is marked as told, so the first mail after the address is
+  set says what is there. The address is one line: the company's name and
+  postal address. A mail the provider refuses is tried again next round.
+- **Pause everything:** set `OKWAN_DAILY_CHECKS=off` on the service. No
+  round runs; every account's own choices are kept.
+- **One account:** its owner turns daily checks, or only the mail, off in
+  *Settings › Daily checks*. The link in any mail turns the mail off
+  without signing in. There is no operator switch for one account.
+- **The log** says, per round, `daily checks: N run, N failed, N accounts
+  out of plan, N mailed`, and names a tenant id for a failure. It never
+  holds a merchant's name or a figure. `daily checks round failed` with a
+  database error means the scheduler could not write its record and
+  stopped before reading any rail; the next round tries again.
+- **"Why didn't I get a mail?"** Nothing was new; today's mail already
+  went, and the finding is in tomorrow's (G18); the account's mail is off
+  (Settings, or it pressed the link); the plan was used up, so no check
+  ran; or a rail is not connected. The finding is in the dashboard either
+  way, marked *New*.
+- **A check that is slow.** One merchant's rows can make its check take
+  many seconds (G19). The log shows the round running long and fewer
+  checks than were due; they run the next hour.
+- **A check that fails** (a revoked key, a rail down) is stored as a failed
+  run and tried again a day later, not every hour.
+- One API instance only (G7): a second instance would run each due
+  merchant's check twice.
+
 ### Gusto (Connect Gusto)
 
 Gusto has no key to type. A business's Gusto admin presses *Connect Gusto*

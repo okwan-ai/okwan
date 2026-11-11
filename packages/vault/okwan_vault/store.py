@@ -25,10 +25,12 @@ from .models import (
     IMPORT_KEPT_MONTHS,
     KEY_SCOPES,
     LAYOUTS_KEPT,
+    NOTIFY_DEFAULTS,
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
     ApiKey,
+    DailyCheck,
     DuplicateImport,
     ImportFile,
     RunRecord,
@@ -37,6 +39,7 @@ from .models import (
     SupportTicket,
     Tenant,
     add_months,
+    new_unsubscribe_token,
 )
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
@@ -160,6 +163,17 @@ class Store(Protocol):
         target: str = "", at: datetime | None = None,
     ) -> Seen: ...
     async def access_entries(self, root_id: str, since: datetime, limit: int = 200) -> list[dict]: ...
+    async def get_notify(self, tenant_id: str) -> dict: ...
+    async def set_notify(
+        self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
+    ) -> dict: ...
+    async def notify_token(self, tenant_id: str) -> str: ...
+    async def notify_mailed(self, tenant_id: str, at: datetime) -> None: ...
+    async def daily_checks(self, tenant_ids: list[str]) -> dict[str, DailyCheck]: ...
+    async def claim_daily_check(self, tenant_id: str, at: datetime) -> None: ...
+    async def settle_daily_check(
+        self, tenant_id: str, *, told: list[str], news_run: str | None,
+    ) -> None: ...
     async def add_access_alert(
         self, tenant_id: str, *, kind: str, credential: str, detail: dict, at: datetime | None = None,
     ) -> dict: ...
@@ -206,6 +220,8 @@ class MemoryStore:
         #: Access rows, oldest first, and the alerts they raised, by id.
         self._access: list[dict] = []
         self._alerts: dict[str, dict] = {}
+        self._notify: dict[str, dict] = {}
+        self._daily: dict[str, DailyCheck] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -251,6 +267,8 @@ class MemoryStore:
         self._layouts = {k: v for k, v in self._layouts.items() if k[0] not in gone}
         self._access = [r for r in self._access if r["tenant_id"] not in gone]
         self._alerts = {k: v for k, v in self._alerts.items() if v["tenant_id"] not in gone}
+        self._notify = {k: v for k, v in self._notify.items() if k not in gone}
+        self._daily = {k: v for k, v in self._daily.items() if k not in gone}
         return sorted(gone)
 
     async def save_billing(
@@ -870,6 +888,56 @@ class MemoryStore:
                 out.append({"tenant_id": tenant_id, "credential": credential,
                             "requests": n, "busiest": busiest})
         return out
+
+    # ── the daily check's settings ────────────────────────────────────
+
+    async def get_notify(self, tenant_id: str) -> dict:
+        return dict(self._notify.get(tenant_id, NOTIFY_DEFAULTS))
+
+    async def set_notify(
+        self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
+    ) -> dict:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        row = dict(self._notify.get(tenant_id, NOTIFY_DEFAULTS))
+        if daily_checks is not None:
+            row["daily_checks"] = daily_checks
+        if finding_emails is not None:
+            row["finding_emails"] = finding_emails
+        self._notify[tenant_id] = row
+        return dict(row)
+
+    async def notify_token(self, tenant_id: str) -> str:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        row = dict(self._notify.get(tenant_id, NOTIFY_DEFAULTS))
+        row["unsubscribe_token"] = row["unsubscribe_token"] or new_unsubscribe_token(tenant_id)
+        self._notify[tenant_id] = row
+        return row["unsubscribe_token"]
+
+    async def notify_mailed(self, tenant_id: str, at: datetime) -> None:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        self._notify[tenant_id] = {**self._notify.get(tenant_id, NOTIFY_DEFAULTS), "mailed_at": at}
+
+    # ── the daily check's own record ──────────────────────────────────
+
+    async def daily_checks(self, tenant_ids: list[str]) -> dict[str, DailyCheck]:
+        return {t: self._daily[t] for t in tenant_ids if t in self._daily}
+
+    async def claim_daily_check(self, tenant_id: str, at: datetime) -> None:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        held = self._daily.get(tenant_id)
+        self._daily[tenant_id] = (
+            replace(held, checked_at=at) if held else DailyCheck(tenant_id=tenant_id, checked_at=at))
+
+    async def settle_daily_check(
+        self, tenant_id: str, *, told: list[str], news_run: str | None,
+    ) -> None:
+        held = self._daily.get(tenant_id)
+        if held is not None:
+            self._daily[tenant_id] = replace(held, told=tuple(told), news_run=news_run)
 
     async def sweep_access(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)

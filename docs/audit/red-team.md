@@ -27,6 +27,7 @@ that matters comes from somewhere else. Three layers do that
 | Files customers upload | `apps/api/okwan_api/imports.py`, `packages/connectors/files/okwan_files/` |
 | The dashboard's session and its changes | `apps/dashboard/lib/api.ts`, `apps/dashboard/lib/respond.ts`, `apps/dashboard/app/**/route.ts` |
 | The operator console | `apps/api/okwan_api/ops.py` |
+| The daily check and its mail (Okwan reads rails and sends mail unasked) | `apps/api/okwan_api/schedule.py`, `apps/api/okwan_api/notify.py`, `apps/dashboard/app/unsubscribe/` |
 
 ## How to run it (owner, about ten minutes)
 
@@ -93,13 +94,16 @@ is real, say so and say what would prove it.
 | 2026-11-10 | An attacker's pass (fresh agent, attacker's brief, every finding proven by a running exploit) | **High:** a stored rail credential reached a read-only key through the data routes when a rail quoted the key it rejected (connector REST, `/v1/query`, reconciliations, the hosted MCP's query tool); only the connection test and run history scrubbed it. Confirmed again, already known: a query with no memory limit or timeout (G6), and sign-up verification limited per spoofable address (G17) | The high: reproduced by its exploit, then fixed where the error is made (C45, T22) with the exploit turned into `tests/test_upstream_redaction.py`. G6 and G17 stay as ranked in known-gaps.md. Held, with tries listed: a read key administering, cross-tenant reads on every surface, the SQL sandbox, SSRF through a Postgres DSN, Gusto state replay, dashboard cross-site changes, billing webhook forgery |
 | 2026-11-10 | Bandit 1.9 (static analyser, local) | 33 items: 20 SQL built from strings, 2 XML parsing of uploads, 4 "hardcoded passwords", 7 low notes on running subprocesses | None real. The SQL interpolates only fixed column lists or quoted identifiers, every value is a bound parameter, and the Postgres connector's own query runs the customer's SQL on their own database in a read-only transaction by design; the XML parser already refuses a DOCTYPE or ENTITY and caps the unpacked size; the "passwords" are an empty default and the local test server's dummy values |
 | 2026-11-10 | CodeQL, security-extended (first run, on PR 60) | No alert on the code that PR changed | Its first full scan of `main` runs when PR 60 merges; alerts then show in the repository's Security tab and are triaged here |
+| 2026-11-11 | An attacker's pass on the daily check and its mail, before they were merged (fresh agent, attacker's brief, eight findings each proven by a running exploit, all reproduced by the author) | **High:** a run the database could not store was run, charged and mailed every hour; one account's failing merchants took every slot of every round; a merchant's name wrote lines, a link and a would-be header into the account's mail. **Medium:** a tenant nested nine levels down was checked past its account's plan and mailed about, though the account could not open it (the plan gap is older than the daily check); an account could be mailed every hour, and the same findings again after ten failed runs; a read-only key kept a merchant's findings out of the mail; an order's currency wrote a line into the mail; a merchant's own rows make its check take many seconds of the one worker (older than the daily check) | Seven closed before merge by reworking the scheduler around its own record (C46 to C49, T25 to T28), each exploit turned around in `tests/test_daily_check_attacks.py`. The eighth is open as G19, ranked in known-gaps.md, with a round time budget so it cannot hold a round up; its fix is the next pull request. Held, with tries listed: forging or guessing an unsubscribe token, using one on another account, turning anything on with one, the notify settings across accounts or with a read key, row-level security on the new table, mail to an address the caller chose, an order, customer or secret in the mail |
 
 ## What happens to a finding
 
 - It is reproduced first: a test that passes when the attack works, run
   against the code as it is.
 - A reproduced finding is fixed in its own pull request, and its test is
-  turned around to assert the attack fails, so it stays fixed.
+  turned around to assert the attack fails, so it stays fixed. A finding
+  against a change that is not merged yet is fixed in that change, before
+  it merges.
 - A finding that does not reproduce is answered with the test that was
   tried. It is never dismissed on the author's word.
 - Each pass is recorded in OKWAN_PROJECT.md §9: the platform, the date,

@@ -5,12 +5,14 @@ import { requireTenant } from "@/lib/guard";
 import { configured, connectors } from "@/lib/merchants";
 import { SETTINGS_TABS, settingsTabOf } from "@/lib/settings-tabs";
 import { accessFor } from "@/lib/access";
+import { notifySettings } from "@/lib/notify";
 import { billing } from "@/lib/billing";
 import { myUsage, usageFor } from "@/lib/usage";
 import { ConnectionsGrid } from "../_components/connections-grid";
 import { KeyIssuer } from "../_components/issue-key";
 import { AccessLog } from "../_components/settings/access-log";
 import { BillingCard } from "../_components/settings/billing-card";
+import { DailyChecks } from "../_components/settings/daily-checks";
 import { PlanUsage } from "../_components/settings/plan-usage";
 import { RevokeKey } from "../_components/settings/revoke-key";
 import { UsageScope } from "../_components/settings/usage-scope";
@@ -70,6 +72,13 @@ export default async function SettingsPage({ searchParams }: {
               <KeyValueRow label="Merchants">{tree.children.length}</KeyValueRow>
               <KeyValueRow label="Sign-in">Email and password. You are signed out after 30 minutes without activity, and 12 hours after signing in; Sign out in the account menu ends it now.</KeyValueRow>
             </KeyValueList>
+            <Section
+              id="daily-checks"
+              title="Daily checks"
+              description="Okwan checks your connected merchants once a day and tells you what is new."
+            >
+              <DailyChecksCard accountId={tree.self.id} />
+            </Section>
             <Section
               id="own-connections"
               title="Your workspace's own connections"
@@ -340,3 +349,11 @@ const SECURITY: { id: string; label: string; lead: string; text: ReactNode }[] =
     text: "Sign-in and sign-up are limited per address and per account, connection tests per address and per merchant, and verification per address.",
   },
 ];
+
+
+/** The account's daily-check choices, read with the page. */
+async function DailyChecksCard({ accountId }: { accountId: string }) {
+  const settings = await notifySettings(accountId);
+  if (!settings) return <p className="text-sm text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
+  return <DailyChecks initial={settings} />;
+}
