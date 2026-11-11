@@ -6,9 +6,9 @@ the author's conclusions (docs/audit/red-team.md, 2026-11-11). It proved
 eight faults in the first version, each with an exploit that ran. Seven
 are closed here and each exploit is kept below, turned around: a test
 passes only when the attack fails. The eighth, the matcher's cost on rows
-a merchant chooses, is older than the daily check and open as
-docs/audit/known-gaps.md G19; what is tested here is that it cannot hold
-up a round.
+a merchant chooses, is older than the daily check and was closed after it
+(tests/test_engine_bounds.py); what is tested here is that no check, slow
+for whatever reason, can hold up a round.
 
 1. One account's failing merchants took every slot of every round.
 2. A read-only key kept a merchant's findings out of the account's mail.
@@ -592,9 +592,9 @@ async def test_no_daily_check_runs_on_a_spent_plan_at_any_depth(world):
 # ── 7. a slow check cannot hold up a round ───────────────────────────
 
 async def test_no_check_starts_once_a_round_has_used_its_time(world, monkeypatch):
-    """One merchant's check may be slow (its own rows decide: known-gaps
-    G19). The round stops starting checks at its budget, and the merchant
-    that waited is the first one checked next hour."""
+    """One merchant's check may be slow (a slow rail). The round stops
+    starting checks at its budget, and the merchant that waited is the
+    first one checked next hour."""
     slow = await world.merchant("Slow Store", parent=world.root)
     other = await world.account("Other ISV", "owner@other.test")
     waited = [await world.merchant(f"Waiting {i}", parent=other) for i in range(2)]

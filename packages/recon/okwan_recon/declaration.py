@@ -91,15 +91,17 @@ class SettlementLag(Frozen):
 
     def days(self, left: Any, right: Any) -> int | None:
         """Business days from the earlier side to the later, or None when
-        either date is missing or they run the wrong way."""
+        either date is missing or they run the wrong way. Counted no
+        further than one past `max_days`: beyond the lag, how far beyond
+        is not a question anything asks."""
         from .calendar import as_date, business_days_after
 
         l_day, r_day = as_date(left, self.timezone), as_date(right, self.timezone)
         if l_day is None or r_day is None:
             return None
         if self.direction == "right_after_left":
-            return business_days_after(l_day, r_day)
-        return business_days_after(r_day, l_day)
+            return business_days_after(l_day, r_day, at_most=self.max_days)
+        return business_days_after(r_day, l_day, at_most=self.max_days)
 
     def admits(self, left: Any, right: Any) -> bool:
         n = self.days(left, right)

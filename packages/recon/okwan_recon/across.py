@@ -10,6 +10,7 @@ tool, a REST route and a DuckDB view, with no per-fold code.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -378,7 +379,10 @@ def _verdicts(
         out[id(a.left)] = RailVerdict(
             rail=name, reconciliation=spec.name, status="ambiguous",
             candidates=len(a.candidates),
-            reason=f"{len(a.candidates)} equal candidates on {name}; none identifiable",
+            # More than were listed, or a rule that stopped (engine, E7): the
+            # engine's own words, not a count that would understate it.
+            reason=(f"{a.reason} (on {name})" if a.more and a.reason
+                    else f"{len(a.candidates)} equal candidates on {name}; none identifiable"),
         )
     for u in result.unverifiable_left:
         out[id(u.record)] = RailVerdict(
@@ -500,5 +504,7 @@ async def run_across(
         right, right_cov = await read(
             member.right, resolver, cap, side_overrides(member.right, window, overrides)
         )
-        results.append((member, rail, match(member, ledger, right, ledger_cov, right_cov)))
-    return fold(spec, ledger, results, ledger_cov)
+        # Matching is bounded (engine, E7) but can still be a second of
+        # plain computing: off the event loop, so the API answers meanwhile.
+        results.append((member, rail, await asyncio.to_thread(match, member, ledger, right, ledger_cov, right_cov)))
+    return await asyncio.to_thread(fold, spec, ledger, results, ledger_cov)
