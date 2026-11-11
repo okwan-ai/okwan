@@ -223,13 +223,14 @@ NOTIFY_DEFAULTS = {"daily_checks": True, "finding_emails": True, "unsubscribe_to
 class DailyCheck:
     """What the daily check keeps about one merchant, and nothing else may
     write: when it last tried, the findings the account has been told of
-    (as fingerprints, never the order reference), and the stored run that
-    holds findings not yet mailed."""
+    (as fingerprints, never the order reference), and the findings not yet
+    mailed (each one's fingerprint, outcome, currency code and amounts:
+    what the mail's line is made of, and no reference)."""
 
     tenant_id: str
     checked_at: datetime
     told: tuple[str, ...] = ()
-    news_run: str | None = None
+    news: tuple[dict, ...] = ()
 
 
 #: `unsub_<tenant id>.<random>`: the tenant is named so the token is looked

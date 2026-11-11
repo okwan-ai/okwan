@@ -418,14 +418,16 @@ CREATE TABLE IF NOT EXISTS notify_settings (
 -- What the daily check keeps about one merchant, written by the scheduler
 -- and by nothing a caller can reach: when it last tried (so a merchant is
 -- due once a day whatever else runs a check), the findings the account has
--- been told of, and the stored run holding findings not yet mailed. `told`
--- is fingerprints (a hash of the order reference and the outcome), so no
--- order reference is kept here.
+-- been told of, and the findings not yet mailed. `told` is fingerprints (a
+-- hash of the order reference and the outcome); `news` is, per finding, its
+-- fingerprint, outcome, currency code and amounts in minor units. No order
+-- reference is kept here, and nothing here is read back from stored runs,
+-- which any key can add to and so push out of history.
 CREATE TABLE IF NOT EXISTS daily_checks (
     tenant_id   text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
     checked_at  timestamptz NOT NULL,
     told        jsonb NOT NULL DEFAULT '[]',
-    news_run    text
+    news        jsonb NOT NULL DEFAULT '[]'
 );
 
 -- ── row-level security: the database keeps tenants apart too ────────

@@ -159,7 +159,7 @@ async def two(store):
                                      detail={"network": "203.0.113.0/24"})
         await store.set_notify(t.id, finding_emails=False)
         await store.claim_daily_check(t.id, now)
-        await store.settle_daily_check(t.id, told=[f"{name}-told"], news_run=None)
+        await store.settle_daily_check(t.id, told=[f"{name}-told"], news=[])
         out.append(t)
     return out
 

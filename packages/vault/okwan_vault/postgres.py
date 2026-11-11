@@ -1227,8 +1227,9 @@ class PostgresStore:
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
 
-    async def notify_mailed(self, tenant_id: str, at: datetime) -> None:
-        """When the account was last mailed findings: at most one a day."""
+    async def notify_mailed(self, tenant_id: str, at: datetime | None) -> None:
+        """When the account was last mailed findings: at most one a day.
+        None puts back "never", for a mail that did not go."""
         try:
             async with self._scoped(tenant_id) as con:
                 await con.execute(
@@ -1246,11 +1247,11 @@ class PostgresStore:
             return {}
         async with self._scoped(*tenant_ids) as con:
             rows = await con.fetch(
-                "SELECT tenant_id, checked_at, told, news_run FROM daily_checks "
+                "SELECT tenant_id, checked_at, told, news FROM daily_checks "
                 "WHERE tenant_id = ANY($1::text[])", list(tenant_ids))
         return {r["tenant_id"]: DailyCheck(
             tenant_id=r["tenant_id"], checked_at=r["checked_at"],
-            told=tuple(_loads(r["told"]) or ()), news_run=r["news_run"]) for r in rows}
+            told=tuple(_loads(r["told"]) or ()), news=tuple(_loads(r["news"]) or ())) for r in rows}
 
     async def claim_daily_check(self, tenant_id: str, at: datetime) -> None:
         """Say the merchant's check for today is taken, before it runs: a
@@ -1266,13 +1267,13 @@ class PostgresStore:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
 
     async def settle_daily_check(
-        self, tenant_id: str, *, told: list[str], news_run: str | None,
+        self, tenant_id: str, *, told: list[str], news: list[dict],
     ) -> None:
-        """What the account has now been told of, and the run still to mail."""
+        """What the account has now been told of, and what is still to mail."""
         async with self._scoped(tenant_id) as con:
             await con.execute(
-                "UPDATE daily_checks SET told = $2::jsonb, news_run = $3 WHERE tenant_id = $1",
-                tenant_id, _dumps(list(told)), news_run)
+                "UPDATE daily_checks SET told = $2::jsonb, news = $3::jsonb WHERE tenant_id = $1",
+                tenant_id, _dumps(list(told)), _dumps(list(news)))
 
     async def sweep_access(self, now: datetime | None = None) -> int:
         """Delete access rows past RETENTION and alerts past ALERT_RETENTION.

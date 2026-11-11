@@ -168,11 +168,11 @@ class Store(Protocol):
         self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
     ) -> dict: ...
     async def notify_token(self, tenant_id: str) -> str: ...
-    async def notify_mailed(self, tenant_id: str, at: datetime) -> None: ...
+    async def notify_mailed(self, tenant_id: str, at: datetime | None) -> None: ...
     async def daily_checks(self, tenant_ids: list[str]) -> dict[str, DailyCheck]: ...
     async def claim_daily_check(self, tenant_id: str, at: datetime) -> None: ...
     async def settle_daily_check(
-        self, tenant_id: str, *, told: list[str], news_run: str | None,
+        self, tenant_id: str, *, told: list[str], news: list[dict],
     ) -> None: ...
     async def add_access_alert(
         self, tenant_id: str, *, kind: str, credential: str, detail: dict, at: datetime | None = None,
@@ -915,7 +915,7 @@ class MemoryStore:
         self._notify[tenant_id] = row
         return row["unsubscribe_token"]
 
-    async def notify_mailed(self, tenant_id: str, at: datetime) -> None:
+    async def notify_mailed(self, tenant_id: str, at: datetime | None) -> None:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         self._notify[tenant_id] = {**self._notify.get(tenant_id, NOTIFY_DEFAULTS), "mailed_at": at}
@@ -933,11 +933,11 @@ class MemoryStore:
             replace(held, checked_at=at) if held else DailyCheck(tenant_id=tenant_id, checked_at=at))
 
     async def settle_daily_check(
-        self, tenant_id: str, *, told: list[str], news_run: str | None,
+        self, tenant_id: str, *, told: list[str], news: list[dict],
     ) -> None:
         held = self._daily.get(tenant_id)
         if held is not None:
-            self._daily[tenant_id] = replace(held, told=tuple(told), news_run=news_run)
+            self._daily[tenant_id] = replace(held, told=tuple(told), news=tuple(dict(n) for n in news))
 
     async def sweep_access(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)

@@ -368,10 +368,24 @@ async def test_the_scheduler_keeps_fingerprints_and_no_order_reference(world):
     kofi = await world.merchant("Kofi's Store")
     await schedule.run_due(NOW)
     state = (await world.store.daily_checks([kofi.id]))[kofi.id]
-    assert state.checked_at == NOW and state.news_run is None and len(state.told) == 3
+    assert state.checked_at == NOW and state.news == () and len(state.told) == 3
     for mark in state.told:
         assert re.fullmatch(r"[0-9a-f]{20}", mark), "a hash, not a reference"
     assert not any(ref in "".join(state.told) for ref in ("2043", "2046", "2047"))
+
+
+async def test_what_waits_for_the_mail_is_figures_and_no_reference(world, monkeypatch):
+    """A finding not yet mailed is kept as what its line in the mail needs:
+    a fingerprint, the outcome, a currency code and amounts."""
+    kofi = await world.merchant("Kofi's Store")
+    monkeypatch.delenv("OKWAN_MAIL_POSTAL_ADDRESS")           # so nothing is mailed, and it waits
+    await schedule.run_due(NOW)
+    state = (await world.store.daily_checks([kofi.id]))[kofi.id]
+    assert state.told == () and len(state.news) == 3
+    for waiting in state.news:
+        assert set(waiting) == {"mark", "outcome", "order", "order_total_minor", "collected_minor"}
+        assert waiting["order"] == {"currency": "USD"} and waiting["outcome"] in schedule.FINDINGS
+    assert not any(ref in str(state.news) for ref in ("#2043", "#2046", "#2047", "SAMPLE", "ch_sample"))
 
 
 async def test_an_account_gets_one_mail_for_all_its_merchants(world):
@@ -569,6 +583,9 @@ async def test_postgres_keeps_the_choices_and_one_token_per_account():
             await store.notify_mailed(a.id, NOW)
             kept = await store.get_notify(a.id)
             assert (kept["mailed_at"], kept["finding_emails"], kept["unsubscribe_token"]) == (NOW, False, token)
+            await store.notify_mailed(a.id, None)                # a mail that did not go
+            assert (await store.get_notify(a.id))["mailed_at"] is None
+            await store.notify_mailed(a.id, NOW)
             assert await store.get_notify(b.id) == fresh
             with pytest.raises(KeyError):
                 await store.set_notify(f"ten_{'0' * 16}", daily_checks=False)
@@ -591,13 +608,15 @@ async def test_postgres_keeps_the_schedulers_record_one_row_a_merchant():
             assert await store.daily_checks([a.id, b.id]) == {} and await store.daily_checks([]) == {}
             await store.claim_daily_check(a.id, NOW)
             assert (await store.daily_checks([a.id, b.id]))[a.id] == DailyCheck(tenant_id=a.id, checked_at=NOW)
-            await store.settle_daily_check(a.id, told=["aa", "bb"], news_run="run_x")
+            news = [{"mark": "cc", "outcome": "uncollected", "order": {"currency": "USD"},
+                     "order_total_minor": 9740, "collected_minor": None}]
+            await store.settle_daily_check(a.id, told=["aa", "bb"], news=news)
             later = NOW + timedelta(days=1)
             await store.claim_daily_check(a.id, later)          # the next day's slot keeps what was told
-            assert (await store.daily_checks([a.id]))[a.id] == DailyCheck(a.id, later, ("aa", "bb"), "run_x")
-            await store.settle_daily_check(a.id, told=[], news_run=None)
+            assert (await store.daily_checks([a.id]))[a.id] == DailyCheck(a.id, later, ("aa", "bb"), tuple(news))
+            await store.settle_daily_check(a.id, told=[], news=[])
             assert (await store.daily_checks([a.id]))[a.id] == DailyCheck(a.id, later)
-            await store.settle_daily_check(b.id, told=["zz"], news_run=None)    # no row: nothing is made
+            await store.settle_daily_check(b.id, told=["zz"], news=[])    # no row: nothing is made
             assert list(await store.daily_checks([a.id, b.id])) == [a.id]
             with pytest.raises(KeyError):
                 await store.claim_daily_check(f"ten_{'0' * 16}", NOW)

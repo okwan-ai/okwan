@@ -19,9 +19,11 @@ names, counts and totals.
 What the scheduler decides, it decides from its own record
 (`daily_checks`, one row a merchant, written here and by nothing a caller
 can reach): when the merchant was last checked, which findings the account
-has been told of, and which stored run holds findings not yet mailed. A
-run made with an API key, the dashboard or an agent changes none of it, so
-no key can put a check off, hide a finding from the mail or have one sent
+has been told of, and the findings not yet mailed (each as the figures its
+line in the mail needs, with no reference). None of it is read back from
+stored runs, which any key can add to and so push out of history. A run
+made with an API key, the dashboard or an agent changes none of it, so no
+key can put a check off, hide a finding from the mail or have one sent
 again. The slot is taken before the check runs, so a check that fails, or
 whose result cannot be stored, is still not due again until tomorrow.
 
@@ -300,10 +302,31 @@ async def _check(
     await meter(tenant, f"{SURFACE}:across", target=TARGET)
     found = _findings(result.trimmed_rows(spec.ledger_currency, limit=MAX_ROWS))
     seen = {fingerprint(r) for r in found}
-    new = [r for r in found if fingerprint(r) not in told]
+    new = [_news(r) for r in found if fingerprint(r) not in told]
     # A finding that has gone is forgotten, so it is news if it comes back.
-    await store.settle_daily_check(tenant.id, told=sorted(told & seen), news_run=run_id if new else None)
+    # What is new is kept here until it is mailed, not looked up in the
+    # stored run later: any key can add runs and push that one out of history.
+    await store.settle_daily_check(tenant.id, told=sorted(told & seen), news=new)
     return new
+
+
+def _news(row: dict[str, Any]) -> dict[str, Any]:
+    """What the mail's line needs of one finding, and nothing more: its
+    fingerprint, the outcome, a currency code and the amounts. No reference
+    and no record; and only values of the expected kind, so nothing a rail
+    sent as text is kept for the mail."""
+    currency = (row.get("order") or {}).get("currency")
+
+    def minor(value: Any) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    return {
+        "mark": fingerprint(row),
+        "outcome": row.get("outcome"),
+        "order": {"currency": currency if isinstance(currency, str) and _CURRENCY.fullmatch(currency) else None},
+        "order_total_minor": minor(row.get("order_total_minor")),
+        "collected_minor": minor(row.get("collected_minor")),
+    }
 
 
 # ── the mail ───────────────────────────────────────────────────────────
@@ -319,8 +342,8 @@ def mail_blocked() -> str | None:
 
 async def _mail_due(account: _Account, now: datetime) -> bool:
     """The account's mail for today, if it is owed one: every finding its
-    merchants' latest daily checks hold that it has not been told of. True
-    when a mail went."""
+    merchants' daily checks hold that it has not been told of. True when a
+    mail went."""
     settings, root = account.settings, account.root
     if not settings["finding_emails"]:
         return False
@@ -329,7 +352,7 @@ async def _mail_due(account: _Account, now: datetime) -> bool:
         return False
     store = get_store()
     states = await store.daily_checks([t.id for t in account.members])
-    waiting = [(t, states[t.id]) for t in account.members if t.id in states and states[t.id].news_run]
+    waiting = [(t, states[t.id]) for t in account.members if t.id in states and states[t.id].news]
     if not waiting:
         return False
     blocked = mail_blocked()
@@ -340,36 +363,22 @@ async def _mail_due(account: _Account, now: datetime) -> bool:
     if not email:
         return False
 
-    found: list[Found] = []
-    settle: list[tuple[str, list[str]]] = []
-    for tenant, state in waiting:
-        run = await store.get_run(tenant.id, state.news_run)
-        # Only a run the scheduler itself stored is mailed from.
-        rows = _findings(run.rows) if run is not None and run.surface == SURFACE and run.status == "ok" else []
-        told = set(state.told)
-        new = [r for r in rows if fingerprint(r) not in told]
-        if new:
-            found.append(Found(tenant, new))
-            settle.append((tenant.id, sorted({fingerprint(r) for r in rows})))
-        else:
-            # The run is gone, or holds nothing new after all.
-            await store.settle_daily_check(tenant.id, told=list(state.told), news_run=None)
-    if not found:
-        return False
-
+    found = [Found(tenant, [dict(n) for n in state.news]) for tenant, state in waiting]
     link = unsubscribe_link(await store.notify_token(root.id))
     subject, text = message(root.name, found, link, postal_address())
+    # Today's mail is marked as sent before it goes: whatever fails after
+    # this, the account is not mailed a second time today.
+    await store.notify_mailed(root.id, now)
     try:
         await get_mailer().send_notice(email, subject, text, headers={"List-Unsubscribe": f"<{link}>"})
-    except MailNotSent as e:
-        logger.error("findings for %s not mailed: %s", root.id, e)
-        return False
     except Exception as e:  # noqa: BLE001 — a mail that fails must not end the round
-        logger.error("findings for %s not mailed: %s", root.id, type(e).__name__)
+        logger.error("findings for %s not mailed: %s", root.id, e if isinstance(e, MailNotSent) else type(e).__name__)
+        # It did not go: put the mark back, so the next round tries again.
+        await store.notify_mailed(root.id, last)
         return False
-    await store.notify_mailed(root.id, now)
-    for tenant_id, told in settle:
-        await store.settle_daily_check(tenant_id, told=told, news_run=None)
+    for tenant, state in waiting:
+        marks = {n["mark"] for n in state.news}
+        await store.settle_daily_check(tenant.id, told=sorted(set(state.told) | marks), news=[])
     return True
 
 
@@ -385,15 +394,25 @@ def _plural(n: int, one: str, many: str) -> str:
 
 _CURRENCY = re.compile(r"[A-Z]{3}")
 _LINK = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://|\bwww\.")
+#: A full stop, in any of the forms a mail client reads as one, with a
+#: letter or digit straight after it: what makes "shop.example.com" a link.
+_DOT = re.compile(r"[.\uff0e\u3002\uff61](?=\w)")
 
 
-def shown(name: str, limit: int = NAME_SHOWN) -> str:
+def shown(name: str, limit: int = NAME_SHOWN, *, own: bool = False) -> str:
     """A tenant's name as a mail shows it: one line, bounded, with no
-    control or invisible character and no web address scheme. Whoever can
-    name a merchant chooses these words in the account's mail and nothing
-    else: not a line, not a header, not a link Okwan appears to give."""
+    control or invisible character, no web address scheme, and a space
+    after any full stop that would join two words into an address a mail
+    client makes a link ("shop. example. com"). Whoever can name a merchant
+    chooses these words in the account's mail and nothing else: not a
+    line, not a header, not a link Okwan appears to give. `own` is the
+    account's own name, set at sign-up or by the operator: its full stops
+    are left alone."""
     text = "".join(" " if unicodedata.category(c)[0] in "CZ" else c for c in str(name))
-    text = " ".join(_LINK.sub(" ", text).split())
+    text = _LINK.sub(" ", text)
+    if not own:
+        text = _DOT.sub(". ", text)
+    text = " ".join(text.split())
     if len(text) > limit:
         text = text[: limit - 1].rstrip() + "…"
     return text or "(no name)"
@@ -440,7 +459,7 @@ def message(account: str, found: list[Found], unsubscribe: str, address: str) ->
     what = _plural(total, "new finding", "new findings")
     subject = f"Okwan: {what}" + (f" across {len(found)} merchants" if len(found) > 1 else "")
     base = dashboard_url()
-    account = shown(account)
+    account = shown(account, own=True)
     parts = [f"Okwan's daily check found something new for {account}.", ""]
     for f in found:
         parts.append(shown(f.tenant.name))

@@ -47,6 +47,7 @@ from okwan_vault import (
 )
 from okwan_vault.accounts import SESSION_PREFIX, new_token
 from okwan_vault.authz import MAX_DEPTH
+from okwan_vault.models import RUNS_KEPT
 from okwan_vault.usage import PLANS, hour_bucket
 
 NOW = datetime(2026, 11, 11, 15, 0, tzinfo=UTC)
@@ -241,20 +242,63 @@ async def test_a_read_key_cannot_keep_a_finding_out_of_the_accounts_mail(world, 
     assert surfaces.count("schedule") == 5 and surfaces.count("rest") == 5, "Okwan's check ran every day"
 
 
-async def test_a_run_someone_else_stored_is_never_mailed_from(world):
-    """A stored run is mailed from only when the scheduler made it: the
-    record names one of its own, and a run of any other surface is not it."""
-    kofi = await world.merchant("Kofi's Store", parent=world.root)
-    await world.store.claim_daily_check(kofi.id, NOW)
-    forged = await world.store.add_run(
-        kofi.id, kind="across", name="rails", surface="rest", status="ok", started_at=NOW, finished_at=NOW,
+async def test_a_read_key_cannot_push_a_waiting_finding_out_of_reach(world, client):
+    """Found by the second pass, on the reworked version: the account's mail
+    went at one hour, the merchant's check ran two hours later, and its
+    finding waited for the next day's mail as a pointer to the stored run.
+    Fifty runs with a read-only key pushed that run out of history
+    (RUNS_KEPT), every day, and the account was never told. What waits is
+    now kept in the scheduler's own record."""
+    clean = ("#2043", "#2046", "#2047")
+
+    def busy_rows(day: int):                                   # a new unpaid order every day
+        rows = week(without=clean)
+        for d in range(day + 1):
+            rows["shopify"].append({**rows["shopify"][0], "id": 900000 + d, "name": f"#9{d:03d}"})
+        return rows
+
+    busy = await world.merchant("Busy Store", rows=busy_rows(0), parent=world.root)
+    kofi = await world.merchant("Kofi's Store", rows=week(without=clean), parent=world.root)
+    key, _ = await world.store.issue_key(kofi.id, scope=READ)
+    await world.store.claim_daily_check(kofi.id, NOW - timedelta(hours=22))    # its check falls two hours later
+    for day in range(4):
+        t0 = NOW + timedelta(days=day, minutes=day)
+        world.set_rows(busy, busy_rows(day))
+        world.clock(t0)
+        assert (await schedule.run_due(t0)).mailed == 1, f"day {day}: the account's mail"
+        if day == 1:
+            world.set_rows(kofi, week())                       # two collected twice, one unpaid, from now on
+        world.clock(t0 + timedelta(hours=2))
+        assert (await schedule.run_due(t0 + timedelta(hours=2))).mailed == 0, "today's mail has gone"
+        if day >= 1:
+            [stored] = [r for r in await world.store.list_runs(kofi.id, limit=RUNS_KEPT) if r.surface == "schedule"][:1]
+            world.clock(t0 + timedelta(hours=2, minutes=5))
+            for _ in range(RUNS_KEPT):
+                got = await client.get("/v1/reconciliations/across/rails", headers={"Authorization": f"Bearer {key}"})
+                assert got.status_code == 200
+            assert await world.store.get_run(kofi.id, stored.id) is None, "the run is out of history"
+    told_of_kofi = [m["text"] for m in world.outbox.sent if "Kofi's Store" in m["text"]]
+    assert len(told_of_kofi) == 1, "the day after it appeared, once"
+    assert "2 orders collected twice: $501.99 owed back" in told_of_kofi[0]
+    assert world.outbox.sent.index(next(m for m in world.outbox.sent if "Kofi's Store" in m["text"])) == 2
+
+
+async def test_only_the_scheduler_writes_what_waits_for_the_mail(world, client):
+    """No route reads or writes the scheduler's record: a caller's own run,
+    whatever it holds, puts nothing in the account's mail."""
+    kofi = await world.merchant("Kofi's Store", rows=week(without=("#2043", "#2046", "#2047")), parent=world.root)
+    await schedule.run_due(NOW)
+    await world.store.add_run(
+        kofi.id, kind="across", name="rails", surface="schedule", status="ok", started_at=NOW, finished_at=NOW,
         summary={}, error=None,
         rows=[{"outcome": "collected_twice", "order": {"ref": "#9", "currency": "USD"},
                "order_total_minor": 100, "collected_minor": 980100}])
-    await world.store.settle_daily_check(kofi.id, told=[], news_run=forged.id)
-    r = await schedule.run_due(NOW + timedelta(hours=1))
-    assert r.mailed == 0 and world.outbox.sent == []
-    assert (await world.store.daily_checks([kofi.id]))[kofi.id].news_run is None
+    for hour in range(1, 30):
+        await schedule.run_due(NOW + timedelta(hours=hour))
+    assert world.outbox.sent == [], "a stored run is not where the mail is made from"
+    from okwan_api.main import app
+
+    assert not any("daily" in path for path in app.openapi()["paths"]), "and no route names the record"
 
 
 # ── 3. a name is words on one line, and nothing else ─────────────────
@@ -265,7 +309,12 @@ LURE = ("Kofi's Store\n  1 order collected twice: $9,800.00 owed back\n\n"
 CRLF = "Shop\r\nBcc: attacker@evil.example\r\nX-Injected: yes"
 
 
-@pytest.mark.parametrize("name", [LURE, CRLF, "tab\there", "nul\x00", "flipped \u202e txet", "\u2028", "   "])
+@pytest.mark.parametrize("name", [
+    LURE, CRLF, "tab\there", "nul\x00", "flipped \u202e txet", "\u2028", "   ",
+    # Found by the second pass: invisible characters the first rule let through.
+    "Pay\u200dPal Support", "Acme\u2060", "\u200b\u200b\u200b\u200b\u200b", "\u200d", "soft\u00adhyphen", "\ufeffAcme",
+    "\u0646\u06cc\u0645\u200c", "\u0301\u0301",
+])
 async def test_a_tenant_cannot_be_named_with_a_line_break_or_a_control_character(world, client, name):
     merchant = await world.store.create_tenant("Honest-looking merchant", parent_id=world.root.id)
     key, _ = await world.store.issue_key(merchant.id, scope=ADMIN)
@@ -276,7 +325,9 @@ async def test_a_tenant_cannot_be_named_with_a_line_break_or_a_control_character
 
 async def test_an_ordinary_name_is_kept_as_it_was_typed(world, client):
     auth = await world.session_for(world.root)
-    for name in ("Kofi's Store", "Café Ünïcode 東京店", "shop.example.com", "A & B (Accra) Ltd."):
+    # The last two are written with a joiner inside a word: Persian, and an emoji sequence.
+    for name in ("Kofi's Store", "Café Ünïcode 東京店", "shop.example.com", "A & B (Accra) Ltd.",
+                 "\u0646\u06cc\u0645\u200c\u0641\u0627\u0635\u0644\u0647", "Family \U0001f468\u200d\U0001f469 Store"):
         made = await client.post("/v1/tenants", headers=auth, json={"name": f"  {name} "})
         assert made.status_code == 201 and made.json()["name"] == name
 
@@ -307,7 +358,13 @@ def test_what_a_mail_shows_of_a_name():
     assert schedule.shown("Kofi's Store") == "Kofi's Store"
     assert schedule.shown("Café Ünïcode 東京店") == "Café Ünïcode 東京店"
     assert schedule.shown(" a\r\n\tb\u2028c\x00d\u200b\u202ee ") == "a b c d e"
-    assert schedule.shown("see https://evil.example/x or WWW.evil.example") == "see evil.example/x or evil.example"
+    assert schedule.shown("see https://evil.example/x or WWW.evil.example") == "see evil. example/x or evil. example"
+    # Found by the second pass: a bare address is a link in most mail clients.
+    assert schedule.shown("paypal.com/okwan-refund") == "paypal. com/okwan-refund"
+    assert schedule.shown("\u0440\u0430ypal.com/verify") == "\u0440\u0430ypal. com/verify"
+    assert schedule.shown("evil\uff0ecom and evil\u3002com") == "evil. com and evil. com"
+    assert schedule.shown("Accra Coffee Co.") == "Accra Coffee Co." and schedule.shown("A. B. Ltd.") == "A. B. Ltd."
+    assert schedule.shown("owner@acme.test", own=True) == "owner@acme.test", "the account's own name is left alone"
     assert schedule.shown("x" * 500) == "x" * (schedule.NAME_SHOWN - 1) + "…"
     assert schedule.shown("\n \u200b") == "(no name)"
 
@@ -579,6 +636,39 @@ async def test_a_crafted_currency_never_reaches_the_sent_mail(world):
 
 
 # ── and what held is still held ──────────────────────────────────────
+
+async def test_a_bare_address_in_a_name_is_not_a_link_in_the_mail(world):
+    await world.merchant("paypal.com/okwan-refund", parent=world.root)
+    await schedule.run_due(NOW)
+    body = world.outbox.sent[0]["text"]
+    assert "paypal.com" not in body and "paypal. com/okwan-refund\n" in body
+    links = [w for w in body.split() if "://" in w]
+    assert links and all(w.startswith("https://app.okwan.test/") for w in links), "every link is Okwan's own"
+
+
+async def test_the_days_mail_is_marked_before_it_goes(world, monkeypatch):
+    """If something fails after the mail has gone, the account is still not
+    mailed again that day."""
+    await world.merchant("Kofi's Store", parent=world.root)
+    settle, broken = world.store.settle_daily_check, [False]
+
+    async def flaky(*args, **kwargs):
+        if broken[0]:
+            raise RuntimeError("the database refused the write")
+        return await settle(*args, **kwargs)
+
+    monkeypatch.setattr(world.store, "settle_daily_check", flaky)
+    await world.store.claim_daily_check((await world.store.children_of(world.root.id))[0].id, NOW - timedelta(days=2))
+    world.clock(NOW)
+    broken[0] = False
+    first = await schedule.run_due(NOW)                      # the check settles; then the mail's settle fails
+    assert first.checked == 1
+    sent = len(world.outbox.sent)
+    broken[0] = True
+    for hour in range(1, 24):
+        await schedule.run_due(NOW + timedelta(hours=hour))
+    assert len(world.outbox.sent) == sent == 1, "one mail that day, whatever failed afterwards"
+
 
 async def test_a_failed_mail_is_not_counted_as_the_days_mail(world):
     class Failing(Outbox):

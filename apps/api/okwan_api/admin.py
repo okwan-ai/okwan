@@ -47,8 +47,10 @@ from .runs import record_run, run_clock, run_dict, twice_currency
 from .scrub import scrub as _scrub
 from .scrub import secrets_of as _secrets_of
 
-#: Characters that reorder the text around them when shown.
-_BIDI = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+#: The two invisible characters a name may hold: the joiners that Persian,
+#: Indic scripts and emoji sequences are written with, and only between two
+#: characters of such a script.
+_JOINERS = frozenset("\u200c\u200d")
 TOO_DEEP = (f"Merchants can be nested {MAX_DEPTH} levels below an account and no deeper: below that, the "
             "account could not open them and its plan would not cover them.")
 
@@ -61,12 +63,20 @@ class CreateTenantIn(BaseModel):
     @classmethod
     def _one_line(cls, value: str) -> str:
         """A name is shown in the dashboard, in logs and in the account's
-        mail, so it is one line: no line break, control character or
-        character that reorders the text around it."""
-        if any(unicodedata.category(c) in {"Cc", "Cs", "Zl", "Zp"} or c in _BIDI for c in value):
-            raise ValueError("a name is one line of text, with no line breaks or control characters")
+        mail, so it is one line of visible text: no line break, no control
+        character, and no invisible one (a zero-width space, a character that
+        reorders the text around it) other than a joiner inside a word of a
+        script that is written with one."""
         value = value.strip()
-        if not value:
+        for i, c in enumerate(value):
+            kind = unicodedata.category(c)
+            if kind in {"Cc", "Cs", "Zl", "Zp"} or (kind == "Cf" and c not in _JOINERS):
+                raise ValueError("a name is one line of text, with no line breaks, control or invisible characters")
+            if c in _JOINERS:
+                around = value[i - 1:i] + value[i + 1:i + 2]
+                if len(around) < 2 or any(ord(n) < 128 or unicodedata.category(n)[0] in "CZ" for n in around):
+                    raise ValueError("a name is one line of text, with no line breaks, control or invisible characters")
+        if not any(unicodedata.category(c)[0] in "LNPS" for c in value):
             raise ValueError("a name needs at least one visible character")
         return value
 
