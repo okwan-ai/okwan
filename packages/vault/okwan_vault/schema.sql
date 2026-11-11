@@ -401,9 +401,38 @@ CREATE TABLE IF NOT EXISTS access_alerts (
 
 CREATE INDEX IF NOT EXISTS access_alerts_read_idx ON access_alerts (tenant_id, at);
 
+-- An account's choices about the daily check (okwan_api.schedule): whether
+-- its merchants are checked once a day, whether a new finding is mailed,
+-- and the token in that mail's unsubscribe link. A row exists once a choice
+-- is made or a mail is sent; no row means both are on. The token can only
+-- turn the mail off, so it is kept as it is, behind row-level security.
+CREATE TABLE IF NOT EXISTS notify_settings (
+    tenant_id          text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    daily_checks       boolean NOT NULL DEFAULT true,
+    finding_emails     boolean NOT NULL DEFAULT true,
+    unsubscribe_token  text,
+    mailed_at          timestamptz,
+    updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+-- What the daily check keeps about one merchant, written by the scheduler
+-- and by nothing a caller can reach: when it last tried (so a merchant is
+-- due once a day whatever else runs a check), the findings the account has
+-- been told of, and the findings not yet mailed. `told` is fingerprints (a
+-- hash of the order reference and the outcome); `news` is, per finding, its
+-- fingerprint, outcome, currency code and amounts in minor units. No order
+-- reference is kept here, and nothing here is read back from stored runs,
+-- which any key can add to and so push out of history.
+CREATE TABLE IF NOT EXISTS daily_checks (
+    tenant_id   text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    checked_at  timestamptz NOT NULL,
+    told        jsonb NOT NULL DEFAULT '[]',
+    news        jsonb NOT NULL DEFAULT '[]'
+);
+
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
--- stored runs, support conversations and tickets, imported files, the access log) runs as okwan_tenant, inside one transaction that names
+-- stored runs, support conversations and tickets, imported files, the access log, notification choices, the daily check's record) runs as okwan_tenant, inside one transaction that names
 -- the tenants it may touch (PostgresStore._scoped). The policy below lets
 -- that role see, and write, only rows whose tenant_id is in that scope.
 -- With no scope it sees nothing and can write nothing. The WHERE
@@ -466,7 +495,7 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs',
                              'support_conversations', 'support_tickets', 'support_replies',
                              'import_files', 'import_rows', 'import_layouts',
-                             'access_log', 'access_alerts'] LOOP
+                             'access_log', 'access_alerts', 'notify_settings', 'daily_checks'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

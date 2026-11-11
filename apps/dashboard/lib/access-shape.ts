@@ -7,7 +7,8 @@ import { channelOf } from "./usage-shape";
 export type AccessEntry = {
   tenant_id: string;
   at: string;
-  /** An API key's public prefix (`okw_` and eight characters), "session", or "unknown". */
+  /** An API key's public prefix (`okw_` and eight characters), "session",
+   *  "schedule" (Okwan's own daily check) or "unknown". */
   credential: string;
   ip: string;
   network: string;
@@ -56,6 +57,7 @@ export function isKey(credential: string): boolean {
 /** Who read: a key by its prefix, or the dashboard. */
 export function who(credential: string): string {
   if (isKey(credential)) return credential;
+  if (credential === "schedule") return "Okwan's daily check";
   return credential === "session" ? "Dashboard session" : "Unknown";
 }
 

@@ -39,10 +39,12 @@ from .models import (
     IMPORT_KEPT_MONTHS,
     KEY_SCOPES,
     LAYOUTS_KEPT,
+    NOTIFY_DEFAULTS,
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
     ApiKey,
+    DailyCheck,
     DuplicateImport,
     ImportFile,
     RunRecord,
@@ -51,6 +53,7 @@ from .models import (
     SupportTicket,
     Tenant,
     add_months,
+    new_unsubscribe_token,
 )
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
@@ -68,6 +71,8 @@ TENANT_TABLES = (
     "credentials", "usage", "plans", "reconciliation_runs",
     "support_conversations", "support_tickets", "support_replies",
     "import_files", "import_rows", "import_layouts", "access_log", "access_alerts",
+    "notify_settings",
+    "daily_checks",
 )
 
 
@@ -1179,6 +1184,97 @@ class PostgresStore:
             out.extend(dict(r) for r in rows)
         return out
 
+    # ── the daily check's settings ────────────────────────────────────
+
+    async def get_notify(self, tenant_id: str) -> dict:
+        """An account's choices about the daily check; both on when it has
+        made none. `unsubscribe_token` is None until a mail needs one."""
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                "SELECT daily_checks, finding_emails, unsubscribe_token, mailed_at FROM notify_settings "
+                "WHERE tenant_id = $1", tenant_id)
+        return dict(row) if row else dict(NOTIFY_DEFAULTS)
+
+    async def set_notify(
+        self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
+    ) -> dict:
+        """Change one choice or both; what is not given keeps its value."""
+        try:
+            async with self._scoped(tenant_id) as con:
+                row = await con.fetchrow(
+                    "INSERT INTO notify_settings (tenant_id, daily_checks, finding_emails) "
+                    "VALUES ($1, COALESCE($2, true), COALESCE($3, true)) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET "
+                    "daily_checks = COALESCE($2, notify_settings.daily_checks), "
+                    "finding_emails = COALESCE($3, notify_settings.finding_emails), updated_at = now() "
+                    "RETURNING daily_checks, finding_emails, unsubscribe_token, mailed_at",
+                    tenant_id, daily_checks, finding_emails)
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+        return dict(row)
+
+    async def notify_token(self, tenant_id: str) -> str:
+        """The account's unsubscribe token, made on first use and kept, so
+        the link in every mail it was ever sent goes on working."""
+        try:
+            async with self._scoped(tenant_id) as con:
+                return await con.fetchval(
+                    "INSERT INTO notify_settings (tenant_id, unsubscribe_token) VALUES ($1, $2) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET unsubscribe_token = "
+                    "COALESCE(notify_settings.unsubscribe_token, EXCLUDED.unsubscribe_token) "
+                    "RETURNING unsubscribe_token",
+                    tenant_id, new_unsubscribe_token(tenant_id))
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+
+    async def notify_mailed(self, tenant_id: str, at: datetime | None) -> None:
+        """When the account was last mailed findings: at most one a day.
+        None puts back "never", for a mail that did not go."""
+        try:
+            async with self._scoped(tenant_id) as con:
+                await con.execute(
+                    "INSERT INTO notify_settings (tenant_id, mailed_at) VALUES ($1, $2) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET mailed_at = EXCLUDED.mailed_at",
+                    tenant_id, at)
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+
+    # ── the daily check's own record ──────────────────────────────────
+
+    async def daily_checks(self, tenant_ids: list[str]) -> dict[str, DailyCheck]:
+        """The scheduler's record for each of these merchants that has one."""
+        if not tenant_ids:
+            return {}
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                "SELECT tenant_id, checked_at, told, news FROM daily_checks "
+                "WHERE tenant_id = ANY($1::text[])", list(tenant_ids))
+        return {r["tenant_id"]: DailyCheck(
+            tenant_id=r["tenant_id"], checked_at=r["checked_at"],
+            told=tuple(_loads(r["told"]) or ()), news=tuple(_loads(r["news"]) or ())) for r in rows}
+
+    async def claim_daily_check(self, tenant_id: str, at: datetime) -> None:
+        """Say the merchant's check for today is taken, before it runs: a
+        check that then fails, or cannot be stored, is still not due again
+        until tomorrow."""
+        try:
+            async with self._scoped(tenant_id) as con:
+                await con.execute(
+                    "INSERT INTO daily_checks (tenant_id, checked_at) VALUES ($1, $2) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET checked_at = EXCLUDED.checked_at",
+                    tenant_id, at)
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+
+    async def settle_daily_check(
+        self, tenant_id: str, *, told: list[str], news: list[dict],
+    ) -> None:
+        """What the account has now been told of, and what is still to mail."""
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "UPDATE daily_checks SET told = $2::jsonb, news = $3::jsonb WHERE tenant_id = $1",
+                tenant_id, _dumps(list(told)), _dumps(list(news)))
+
     async def sweep_access(self, now: datetime | None = None) -> int:
         """Delete access rows past RETENTION and alerts past ALERT_RETENTION.
 
@@ -1241,7 +1337,27 @@ _RUN_COLS_NO_ROWS = ("id, tenant_id, kind, name, surface, status, started_at, "
 
 
 def _dumps(value) -> str | None:
-    return None if value is None else json.dumps(value, default=str)
+    return None if value is None else json.dumps(_storable(value), default=str)
+
+
+def _storable(value):
+    """The same value with the two things jsonb refuses in a string taken
+    out: U+0000 and a surrogate with no pair. Both can arrive in a rail's own
+    text (an order reference), and one of them in one row would otherwise
+    stop the whole run from being stored."""
+    if isinstance(value, str):
+        if "\x00" in value:
+            value = value.replace("\x00", "\ufffd")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            value = value.encode("utf-8", "replace").decode("utf-8")
+        return value
+    if isinstance(value, dict):
+        return {_storable(k) if isinstance(k, str) else k: _storable(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_storable(v) for v in value]
+    return value
 
 
 def _loads(value):

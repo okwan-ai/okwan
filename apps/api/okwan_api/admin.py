@@ -21,6 +21,7 @@ MCP) stay key-only.
 """
 from __future__ import annotations
 
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -36,9 +37,9 @@ from okwan_recon.registry import get as get_reconciliation
 from okwan_recon.registry import get_across
 from okwan_recon.runner import run
 from okwan_vault import READ
-from okwan_vault.authz import Forbidden, require_administer
+from okwan_vault.authz import MAX_DEPTH, Forbidden, ancestors, require_administer
 from okwan_vault.usage import month_start
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .auth import admin_actor, check_quota, get_store, meter, quota_for
 from .ratelimit import TEST_IP, TEST_TENANT, client_ip, enforce
@@ -46,10 +47,38 @@ from .runs import record_run, run_clock, run_dict, twice_currency
 from .scrub import scrub as _scrub
 from .scrub import secrets_of as _secrets_of
 
+#: The two invisible characters a name may hold: the joiners that Persian,
+#: Indic scripts and emoji sequences are written with, and only between two
+#: characters of such a script.
+_JOINERS = frozenset("\u200c\u200d")
+TOO_DEEP = (f"Merchants can be nested {MAX_DEPTH} levels below an account and no deeper: below that, the "
+            "account could not open them and its plan would not cover them.")
+
 
 class CreateTenantIn(BaseModel):
     name: str = Field(min_length=1, max_length=200,
-                      description="Merchant or workspace name")
+                      description="Merchant or workspace name: one line of text")
+
+    @field_validator("name")
+    @classmethod
+    def _one_line(cls, value: str) -> str:
+        """A name is shown in the dashboard, in logs and in the account's
+        mail, so it is one line of visible text: no line break, no control
+        character, and no invisible one (a zero-width space, a character that
+        reorders the text around it) other than a joiner inside a word of a
+        script that is written with one."""
+        value = value.strip()
+        for i, c in enumerate(value):
+            kind = unicodedata.category(c)
+            if kind in {"Cc", "Cs", "Zl", "Zp"} or (kind == "Cf" and c not in _JOINERS):
+                raise ValueError("a name is one line of text, with no line breaks, control or invisible characters")
+            if c in _JOINERS:
+                around = value[i - 1:i] + value[i + 1:i + 2]
+                if len(around) < 2 or any(ord(n) < 128 or unicodedata.category(n)[0] in "CZ" for n in around):
+                    raise ValueError("a name is one line of text, with no line breaks, control or invisible characters")
+        if not any(unicodedata.category(c)[0] in "LNPS" for c in value):
+            raise ValueError("a name needs at least one visible character")
+        return value
 
 
 class IssueKeyIn(BaseModel):
@@ -97,6 +126,11 @@ def build_router() -> APIRouter:
         body: CreateTenantIn, actor=Depends(admin_actor)
     ) -> dict[str, Any]:
         """Provision a tenant beneath the caller."""
+        # Deeper than this the account above could not open the tenant
+        # (authz.ancestors) and its usage would not reach the account's plan
+        # (usage.billing_root): refused here, so no such tenant exists.
+        if len(await ancestors(get_store(), actor.id)) >= MAX_DEPTH:
+            raise HTTPException(400, TOO_DEEP)
         tenant = await get_store().create_tenant(body.name, parent_id=actor.id)
         return _public(tenant)
 

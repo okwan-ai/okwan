@@ -45,7 +45,7 @@ class Mailer(Protocol):
     async def send_verification(self, email: str, link: str) -> None: ...
     async def send_notice(
         self, to: str, subject: str, text: str, html: str | None = None,
-        reply_to: str | None = None,
+        reply_to: str | None = None, headers: dict[str, str] | None = None,
     ) -> None: ...
 
 
@@ -138,16 +138,19 @@ class ResendMailer:
 
     async def send_notice(
         self, to: str, subject: str, text: str, html: str | None = None,
-        reply_to: str | None = None,
+        reply_to: str | None = None, headers: dict[str, str] | None = None,
     ) -> None:
         """A message that is not a verification link: a support escalation
-        to the operator, or a person's reply to a customer. Plain text, and
-        HTML when given. Tracking is off on the domain."""
-        payload = {"from": self._sender, "to": [to], "subject": subject, "text": text}
+        to the operator, a person's reply to a customer, or the daily
+        check's findings. Plain text, and HTML when given. `headers` are
+        mail headers (List-Unsubscribe). Tracking is off on the domain."""
+        payload: dict[str, object] = {"from": self._sender, "to": [to], "subject": subject, "text": text}
         if html is not None:
             payload["html"] = html
         if reply_to:
             payload["reply_to"] = [reply_to]
+        if headers:
+            payload["headers"] = dict(headers)
         try:
             async with httpx.AsyncClient(
                 transport=self._transport, timeout=SEND_TIMEOUT
@@ -173,7 +176,7 @@ class DevLogMailer:
 
     async def send_notice(
         self, to: str, subject: str, text: str, html: str | None = None,
-        reply_to: str | None = None,
+        reply_to: str | None = None, headers: dict[str, str] | None = None,
     ) -> None:
         logger.warning("dev mailer — notice to %s: %s", to, subject)
 
@@ -218,3 +221,10 @@ def set_mailer(mailer: Mailer | None) -> None:
 
 def dashboard_url() -> str:
     return os.environ.get("OKWAN_DASHBOARD_URL", "http://localhost:3000").rstrip("/")
+
+
+def postal_address() -> str:
+    """The sender's name and postal address for the foot of a mail Okwan
+    sends unasked (the daily check's findings): `OKWAN_MAIL_POSTAL_ADDRESS`,
+    one line. US law requires it on such mail, so none goes out without it."""
+    return " ".join(os.environ.get("OKWAN_MAIL_POSTAL_ADDRESS", "").split())

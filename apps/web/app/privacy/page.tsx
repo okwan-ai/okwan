@@ -65,7 +65,8 @@ const parts: Part[] = [
           </li>
           <li>
             <strong>Records from connected services.</strong> Okwan reads them when you run a check or call the API
-            or MCP server, and holds them in memory only for that request. What we store is the result of a
+            or MCP server, and once a day for the daily check described below, and holds them in memory only for
+            that read. What we store is the result of a
             reconciliation: a summary, and for each order its reference, currency, totals, the amount each service
             reported, and the outcome and reason. A short error message is kept if a check failed. We keep the
             newest 50 results of each check. We do not store the raw records, card numbers, or your customers&rsquo;
@@ -102,6 +103,19 @@ const parts: Part[] = [
             like a secret (a key, token, password or connection string) is removed automatically before it is
             stored or sent anywhere. If your request is handed to a person, we also keep a ticket with a summary of
             the issue and the replies we send you.
+          </li>
+          <li>
+            <strong>Daily checks and their email.</strong> Unless you turn them off in Settings, Okwan runs the
+            check once a day for each merchant whose Shopify, PayPal and Stripe are all connected. It is the same
+            check you can run yourself: it counts toward your plan, its result is stored the same way, and it is
+            listed in your access records as Okwan&rsquo;s own read. When a daily check finds something we have not
+            told you of, we email your sign-in address, once a day at most: the name of each merchant with
+            something new, how many orders, and the amounts. The email never contains an order, a customer or a
+            payment record. Every such email carries a link that turns them off without signing in. We keep your
+            two choices (daily checks, and their email), the token in that link, when you were last emailed, and
+            for each merchant when it was last checked, a fingerprint of each finding you have been told of, and,
+            until it is emailed, the outcome and amounts of a finding you have not. A fingerprint is a one-way
+            hash: it lets us not tell you twice and does not contain the order.
           </li>
           <li>
             <strong>Access records.</strong> Each time your data is read, through the API, the MCP server or the
@@ -159,7 +173,7 @@ const parts: Part[] = [
           <li>To provide Okwan: signing you in, connecting your services, running checks, answering API and MCP requests, and applying plan limits.</li>
           <li>To keep it secure: protecting accounts, preventing and investigating abuse and incidents.</li>
           <li>To support you: answering questions and fixing problems.</li>
-          <li>To contact you about your account: verification, security and service notices, and replies. We do not send marketing email unless you ask for it.</li>
+          <li>To contact you about your account: verification, security and service notices, replies, and, unless you turn it off, an email when a daily check finds something new. We do not send marketing email unless you ask for it.</li>
           <li>To meet legal obligations and enforce our Terms.</li>
         </ul>
         <p>
@@ -202,7 +216,7 @@ const parts: Part[] = [
             ["Render", "Runs the API, the MCP server and the dashboard", "United States (Oregon)"],
             ["Neon", "The database where everything above is stored", "United States (Ohio)"],
             ["Vercel", "Runs the website okwan.ai and its DNS", "Global network"],
-            ["Resend", "Sends our email: your address and the message", "United States (Virginia)"],
+            ["Resend", "Sends our email: your address and the message. For a daily check's email, that is merchant names, counts and amounts", "United States (Virginia)"],
             ["Anthropic", "The support assistant: support conversations, secrets removed", "United States"],
             ["Stripe", "Takes payment for Pro: your card, name, email and billing address, entered on Stripe's page", "United States"],
             ["Google Fonts", "Fonts on the website and dashboard: IP address and browser details", "Global network"],
@@ -251,6 +265,7 @@ const parts: Part[] = [
             ["Usage counts", "As long as your account exists"],
             ["Access records: when, the API key's prefix, the IP address and network, what was read", "90 days, then deleted within the hour; at once with your account"],
             ["Alerts about how your keys were used", "400 days, or until your account is deleted"],
+            ["Your choices about daily checks and their email, the token in the unsubscribe link, and the daily check's own record (when each merchant was last checked, fingerprints of the findings you have been told of, the amounts of those not yet emailed)", "As long as your account exists"],
             ["Support conversations", "30 days after the last message"],
             ["Support tickets and our replies", "As long as your account exists"],
             ["The log of staff actions in our console", "Permanently, as a security record. It names which account or ticket was opened, not what it contains"],
@@ -288,6 +303,10 @@ const parts: Part[] = [
       <>
         <ul>
           <li>You can remove saved connections and revoke API keys yourself in the dashboard at any time.</li>
+          <li>
+            You can turn daily checks, or only their email, off and on in Settings. The link in any of those emails
+            also turns them off, without signing in.
+          </li>
           <li>
             You can delete an imported file or a saved column mapping yourself, on the merchant&rsquo;s Files tab or
             through the API. It is deleted at once.
@@ -346,7 +365,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 9, 2026"
+      updated="November 11, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

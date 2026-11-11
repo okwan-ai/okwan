@@ -56,3 +56,16 @@ def money_to_minor(value: Any, currency: str | None) -> int | None:
         return None
     scaled = amount * minor_unit_factor(currency)
     return int(scaled.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def format_minor(amount_minor: int, currency: str | None) -> str:
+    """A minor-unit amount for a person to read: "$1,449.00" for US
+    dollars, "1,449.00 EUR" otherwise, no decimals where the currency has
+    none. `Decimal` throughout; a float never touches the figure."""
+    code = (currency or "").upper()
+    factor = minor_unit_factor(code)
+    value = Decimal(int(amount_minor)) / factor
+    figure = f"{value:,.2f}" if factor == 100 else f"{value:,.0f}"
+    if code == "USD":
+        return f"-${figure[1:]}" if value < 0 else f"${figure}"
+    return f"{figure} {code}".rstrip()

@@ -134,8 +134,12 @@ function ReadsTable({ entries, nameOf, merchantColumn }: Rows) {
               {merchantColumn && <Td>{nameOf(e.tenant_id)}</Td>}
               <Td className="whitespace-nowrap"><Key credential={e.credential} /></Td>
               <Td className="whitespace-nowrap">
-                <code className="font-mono text-[13px]">{e.ip}</code>
-                {e.network !== e.ip && <span className="block text-xs text-ink-soft">{e.network}</span>}
+                {e.credential === "schedule" ? <span className="text-ink-soft">Okwan&apos;s servers</span> : (
+                  <>
+                    <code className="font-mono text-[13px]">{e.ip}</code>
+                    {e.network !== e.ip && <span className="block text-xs text-ink-soft">{e.network}</span>}
+                  </>
+                )}
               </Td>
               <Td>
                 <span className="block">{read.thing}</span>
@@ -167,7 +171,9 @@ function ReadsList({ entries, nameOf, merchantColumn }: Rows) {
                 {merchantColumn && <span className="text-sm text-ink-soft">{nameOf(e.tenant_id)}</span>}
               </>
             }
-            meta={<>From <code className="font-mono">{e.ip}</code>{e.network !== e.ip && ` (${e.network})`} · {read.channel}</>}
+            meta={e.credential === "schedule"
+              ? <>From Okwan&apos;s servers · {read.channel}</>
+              : <>From <code className="font-mono">{e.ip}</code>{e.network !== e.ip && ` (${e.network})`} · {read.channel}</>}
           />
         );
       })}
