@@ -615,15 +615,22 @@ it is cancelled at period end, unpaid or expired.
 - **Refunds and invoices** are done in the Stripe dashboard. Refunding
   does not cancel: cancel the subscription there too, and the webhook
   returns the account to Free.
-- **The refund policy** is published at okwan.ai/refunds and is one
-  policy in three places: the page (`apps/web/app/refunds/page.tsx`), the
-  Terms' *Plans and fees* it is drawn from, and `okwan_api/policy.py`,
-  which puts it beside Stripe Checkout's pay button and holds its words
-  for a dispute. `tests/test_refund_policy.py` fails if they differ. To
-  change it: the page, `policy.py` and its `VERSION`, and the Terms if the
-  rule itself changes, in one pull request. A payment is covered by the
-  version shown when it was made, and each account's record says which
-  that was (`billing.policy_version`, with the time and address).
+- **The refund policy** is published at okwan.ai/refunds and is written
+  in one place, `okwan_api/policy.py`. The page renders a file that module
+  writes (`apps/web/app/refunds/policy.json`) and has no words of its own;
+  the same module puts the policy beside Stripe Checkout's pay button and
+  gives the copy sent to a bank in a dispute. To change it, in one pull
+  request: change the words in `policy.py`; give it a new `VERSION` and
+  `UPDATED`; move what `policy.text()` returned before into its `ARCHIVE`
+  under the old version; write the page's file again
+  (`python -m okwan_api.policy > apps/web/app/refunds/policy.json`); add
+  the new digest in `tests/test_refund_policy.py`; and change the Terms'
+  *Plans and fees* if the rule itself changes. The tests fail until every
+  one of those is done, and the site's build fails if the built page does
+  not say exactly the file. A payment is covered by the version shown when
+  it was made: each Checkout session has a row in `billing_checkouts` with
+  the version, the time and the address, and the row of the session that
+  was paid is marked with when and with its subscription.
 - **A customer asks for a refund.** The policy: a month is not refunded
   once it has started; a payment taken by mistake (twice for one month,
   or after a cancellation took effect) is refunded in full. Refund it in
