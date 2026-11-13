@@ -706,16 +706,30 @@ class PostgresStore:
                 session_id, tenant_id, policy_version, at, ip)
 
     async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
-                            terms_accepted_at: datetime | None) -> bool:
+                            terms_accepted_at: datetime | None) -> bool | None:
         """Stripe reported this session paid. Marks the row Okwan wrote
         when it opened that session for that account, the first time only:
-        a repeated event changes nothing. False when there is no such row."""
-        await self.pool.execute(
+        a repeated event changes nothing. True when this marked it, False
+        when it was marked before, None when there is no such row."""
+        done = await self.pool.execute(
             "UPDATE billing_checkouts SET paid_at = $3, subscription_id = $4, terms_accepted_at = $5 "
             "WHERE session_id = $2 AND tenant_id = $1 AND paid_at IS NULL",
             tenant_id, session_id, at, subscription_id, terms_accepted_at)
-        return bool(await self.pool.fetchval(
-            "SELECT 1 FROM billing_checkouts WHERE session_id = $2 AND tenant_id = $1", tenant_id, session_id))
+        if done.endswith(" 1"):
+            return True
+        known = await self.pool.fetchval(
+            "SELECT 1 FROM billing_checkouts WHERE session_id = $2 AND tenant_id = $1", tenant_id, session_id)
+        return False if known else None
+
+    async def sweep_checkouts(self, now: datetime | None = None) -> int:
+        """Forget every account's unpaid checkout sessions more than a week
+        old: Stripe ended them long before, and what they hold (a time and
+        an address) is kept no longer than the privacy policy says. As the
+        login role, across accounts, like the other hourly sweeps."""
+        done = await self.pool.execute(
+            "DELETE FROM billing_checkouts WHERE paid_at IS NULL AND opened_at < $1",
+            (now or datetime.now(UTC)) - UNPAID_CHECKOUT_KEPT)
+        return int(done.rsplit(" ", 1)[1])
 
     async def drop_checkout(self, tenant_id: str, session_id: str) -> None:
         """Forget an unpaid session Stripe has ended: it can never take a

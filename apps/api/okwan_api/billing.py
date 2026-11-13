@@ -36,6 +36,7 @@ instead of a button.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -70,6 +71,9 @@ MAX_OPEN_CHECKOUTS = 20
 #: Subscription states that keep Pro. past_due is Stripe retrying a failed
 #: payment; the plan holds while it does, and ends if Stripe gives up.
 PAID = frozenset({"active", "trialing", "past_due"})
+#: The events that say a Checkout session took its payment: at once for a
+#: card, later for a payment method that settles in its own time.
+PAID_SESSION = frozenset({"checkout.session.completed", "checkout.session.async_payment_succeeded"})
 #: How Stripe reports a new subscription until its first payment is confirmed.
 NOT_YET = "incomplete"
 #: How long an unpaid Checkout session can still take a payment: Stripe ends
@@ -114,25 +118,32 @@ async def _stripe(path: str, form: dict[str, str]) -> dict[str, Any]:
     async with httpx.AsyncClient(transport=_transport, timeout=20) as client:
         r = await client.post(f"{STRIPE_API}{path}", data=form,
                               headers={"Authorization": f"Bearer {_env('OKWAN_BILLING_STRIPE_SECRET_KEY')}"})
-    if r.status_code >= 400:
+    try:
+        answer = r.json() if r.content else {}
+    except ValueError:
+        answer = None          # an error page, not Stripe's JSON
+    if r.status_code >= 400 or not isinstance(answer, dict):
         # Stripe's error type only: a message can echo request values.
-        kind = (r.json().get("error") or {}).get("type", "error") if r.content else "error"
+        error = answer.get("error") if isinstance(answer, dict) else None
+        kind = error.get("type", "error") if isinstance(error, dict) else "error"
         logger.error("billing: Stripe refused %s (%s %s)", path, r.status_code, kind)
         raise HTTPException(502, "the payment provider did not answer; try again in a moment")
-    return r.json()
+    return answer
 
 
 async def _stripe_ends(session_id: str) -> bool:
-    """Ask Stripe to end an unpaid Checkout session. True when Stripe says
-    it is ended; False for anything else (it is already paid, already
-    ended, or Stripe did not answer). Never raises."""
+    """Ask Stripe to end an unpaid Checkout session. True only when Stripe
+    answers with the session and says it is expired; False for anything
+    else (it is already paid, already ended, or Stripe did not answer as
+    expected). Never raises."""
     try:
         async with httpx.AsyncClient(transport=_transport, timeout=5) as client:
             r = await client.post(f"{STRIPE_API}/checkout/sessions/{quote(session_id, safe='')}/expire",
                                   headers={"Authorization": f"Bearer {_env('OKWAN_BILLING_STRIPE_SECRET_KEY')}"})
-    except httpx.HTTPError:
+        answer = r.json() if r.status_code < 300 else None
+    except (httpx.HTTPError, ValueError):
         return False
-    return r.status_code < 300
+    return isinstance(answer, dict) and answer.get("status") == "expired"
 
 
 async def end_other_sessions(tenant_id: str, *, keep: str, before: datetime | None = None) -> int:
@@ -144,17 +155,31 @@ async def end_other_sessions(tenant_id: str, *, keep: str, before: datetime | No
     at once the newest stands."""
     store = get_store()
     oldest = datetime.now(UTC) - SESSION_LIFE
-    ended = 0
-    for c in await store.checkouts_for(tenant_id):
-        if (c["paid_at"] is not None or c["session_id"] == keep or c["opened_at"] < oldest
-                or (before is not None and c["opened_at"] >= before)):
-            continue
-        if ended >= END_AT_MOST:
-            break
-        if await _stripe_ends(c["session_id"]):
-            await store.drop_checkout(tenant_id, c["session_id"])
-            ended += 1
-    return ended
+    others = [c["session_id"] for c in await store.checkouts_for(tenant_id)
+              if c["paid_at"] is None and c["session_id"] != keep and c["opened_at"] >= oldest
+              and (before is None or c["opened_at"] < before)][:END_AT_MOST]
+    # Side by side, each with its own five seconds: the request or Stripe's
+    # event that asked for this is not held for the sum of them.
+    answers = await asyncio.gather(*(_stripe_ends(session) for session in others))
+    ended = [session for session, gone in zip(others, answers, strict=True) if gone]
+    for session in ended:
+        await store.drop_checkout(tenant_id, session)
+    return len(ended)
+
+
+def _event_time(event: dict[str, Any]) -> datetime:
+    """When Stripe made the event; now, if it does not say in a way that can be read."""
+    stamp = event.get("created")
+    if isinstance(stamp, int | float) and not isinstance(stamp, bool) and 0 < stamp < 4_102_444_800:
+        return datetime.fromtimestamp(int(stamp), UTC)
+    return datetime.now(UTC)
+
+
+def _ref(value: Any) -> str:
+    """A Stripe id, given as itself or as the object it names; "" otherwise."""
+    if isinstance(value, dict):
+        value = value.get("id")
+    return value if isinstance(value, str) else ""
 
 
 async def _paying_for_another(tenant_id: str, subscription_id: str) -> dict | None:
@@ -170,7 +195,8 @@ async def _paying_for_another(tenant_id: str, subscription_id: str) -> dict | No
 async def _tell_paid_twice(tenant_id: str, kept: str, second: str, customer: str) -> None:
     """An account has two paying subscriptions. The record keeps the first;
     the operator is told once, to cancel and refund the second."""
-    logger.error("billing: %s is paying for a second subscription (%s) while %s is active", tenant_id, second, kept)
+    # The account only: Stripe's ids go in the operator's mail, not the log.
+    logger.error("billing: %s is paying for a second subscription while its first is active", tenant_id)
     if (tenant_id, second) in _told_twice:
         return
     _told_twice.add((tenant_id, second))
@@ -265,6 +291,20 @@ async def _tenant_for(obj: dict[str, Any]) -> str | None:
     return tenant.id if tenant is not None and tenant.parent_id is None else None
 
 
+async def sweeper(interval: float = 3600.0, first_after: float = 90.0) -> None:
+    """Hourly: forget unpaid checkout sessions more than a week old, whoever
+    opened them. The privacy policy says a payment page opened and not paid
+    on is kept about a week; an account that never comes back would
+    otherwise keep its row."""
+    await asyncio.sleep(first_after)
+    while True:
+        try:
+            await get_store().sweep_checkouts()
+        except Exception:  # a bad hour must not end the sweep
+            logger.exception("billing: sweep of unpaid checkouts failed")
+        await asyncio.sleep(interval)
+
+
 def build_router() -> APIRouter:
     # Dashboard-only (an API key is refused), so not in the API reference.
     router = APIRouter(prefix="/v1/billing", include_in_schema=False)
@@ -355,36 +395,41 @@ def build_router() -> APIRouter:
         event = json.loads(payload)
         kind = event.get("type", "")
         obj = (event.get("data") or {}).get("object") or {}
-        if (kind == "checkout.session.completed" and obj.get("mode") == "subscription"
+        if (kind in PAID_SESSION and obj.get("mode") == "subscription"
                 and obj.get("payment_status") in ("paid", "no_payment_required")):
             tenant_id = await _tenant_for(obj)
             store = get_store()
-            if tenant_id and obj.get("subscription"):
+            session_id, subscription, customer = _ref(obj.get("id")), _ref(obj.get("subscription")), _ref(obj.get("customer"))
+            if tenant_id and subscription:
                 # The record first. This session was paid, whatever state the
                 # subscription is in by the time this event is handled: Stripe
                 # does not order its events, and one that is sent late, or
                 # sent again by hand, still says which session took the money.
-                stamp = event.get("created")
-                when = datetime.fromtimestamp(int(stamp), UTC) if stamp else datetime.now(UTC)
-                ticked = (obj.get("consent") or {}).get("terms_of_service") == "accepted"
-                if not await store.checkout_paid(
-                        tenant_id, str(obj.get("id") or ""), at=when, subscription_id=str(obj["subscription"]),
-                        terms_accepted_at=when if ticked else None):
+                when = _event_time(event)
+                consent = obj.get("consent")
+                ticked = isinstance(consent, dict) and consent.get("terms_of_service") == "accepted"
+                marked = await store.checkout_paid(tenant_id, session_id, at=when, subscription_id=subscription,
+                                                   terms_accepted_at=when if ticked else None)
+                if marked is None:
                     # Paid, but not through a session this service opened, so
                     # there is no record of what it showed.
                     logger.warning("billing: paid checkout for %s has no record of what it showed", tenant_id)
+                known = await store.billing_for(tenant_id)
+                if marked is False and known and known["subscription_id"] and known["subscription_id"] != subscription:
+                    # This session's payment was recorded before, and the
+                    # account has since moved on to another subscription: an
+                    # old event sent again. It changes nothing.
+                    return {"received": True}
                 # Paid: nothing else the account has open may take a second payment.
-                await end_other_sessions(tenant_id, keep=str(obj.get("id") or ""))
-                first = await _paying_for_another(tenant_id, str(obj["subscription"]))
+                await end_other_sessions(tenant_id, keep=session_id)
+                first = await _paying_for_another(tenant_id, subscription)
                 if first:
                     # It did anyway (two pages paid before either was heard
                     # of). The record keeps the first subscription, which is
                     # the one Manage billing opens; a person undoes the second.
-                    await _tell_paid_twice(tenant_id, first["subscription_id"], str(obj["subscription"]),
-                                           str(obj.get("customer") or ""))
+                    await _tell_paid_twice(tenant_id, first["subscription_id"], subscription, customer)
                     return {"received": True, "plan": PRO, "second_subscription": True}
-                known = await store.billing_for(tenant_id)
-                if (known and known["subscription_id"] == obj["subscription"]
+                if (known and known["subscription_id"] == subscription
                         and known["status"] not in PAID and known["status"] != NOT_YET):
                     # The subscription is already known to have ended: a late
                     # retry of this event must not bring Pro back. One that is
@@ -392,8 +437,7 @@ def build_router() -> APIRouter:
                     # this event is that payment.
                     return {"received": True}
                 await store.save_billing(
-                    tenant_id, customer_id=str(obj.get("customer") or ""),
-                    subscription_id=str(obj["subscription"]), status="active",
+                    tenant_id, customer_id=customer, subscription_id=subscription, status="active",
                     cancel_at_period_end=False, current_period_end=None)
                 await store.set_plan(tenant_id, PRO)
                 return {"received": True, "plan": PRO}

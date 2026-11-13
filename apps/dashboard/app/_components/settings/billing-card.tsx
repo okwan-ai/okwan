@@ -53,7 +53,6 @@ export function BillingCard({ enabled, plan, price, notice, refundsUrl, termsUrl
             <h2 id="billing-title" className="text-base font-semibold">Upgrade to Pro</h2>
             <p className="mt-1 text-sm text-ink-soft">
               100,000 requests a month instead of 5,000, for <span className="font-medium text-ink">${price} a month</span>.
-              Cancel any time; Pro stays on to the end of the month you paid for.
             </p>
             {/* Ahead of the button (beside it on a wide screen, above it on a
                 phone), so it is read before any card is asked for. The

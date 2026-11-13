@@ -10,7 +10,8 @@
      fails;
    - nothing is written by a stylesheet (::before, ::after), and no text
      is there but unreadable (transparent, the colour of what is behind
-     it, too small, off the page);
+     it, too small, off the page, struck through, pushed aside, filtered
+     or covered by something else), on a phone, a tablet and a desktop;
    - around it the page has only its frame, the site's own navigation: a
      sentence above or below the policy fails too;
    - every link in the policy goes where the policy says.
@@ -76,71 +77,114 @@ const expected = squeeze(
   ].join(" "),
 );
 
-const browser = await chromium.launch();
-let seen;
-try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-  const answer = await page.goto(`http://127.0.0.1:${server.address().port}/refunds`, { waitUntil: "networkidle" });
-  if (!answer || !answer.ok()) fail(`the built page did not load (${answer?.status()})`);
-  seen = await page.evaluate(() => {
-    const main = document.querySelector("main");
-    const colour = (value) => (value.match(/[\d.]+/g) ?? []).map(Number);
-    const behind = (element) => {
-      for (let at = element; at; at = at.parentElement) {
-        const [r, g, b, a = 1] = colour(getComputedStyle(at).backgroundColor);
-        if (a > 0.5) return [r, g, b];
-      }
-      return [255, 255, 255];
-    };
-    const written = [];
-    const unreadable = [];
-    for (const element of document.body.querySelectorAll("*")) {
-      for (const pseudo of ["::before", "::after"]) {
-        const content = getComputedStyle(element, pseudo).content;
-        if (/[\p{L}\p{N}]/u.test(content.replace(/^(none|normal)$/, ""))) written.push(`${element.tagName.toLowerCase()}${pseudo} ${content}`);
-      }
-      if (!main.contains(element)) continue;
-      const own = [...element.childNodes].filter((node) => node.nodeType === 3 && node.textContent.trim()).map((node) => node.textContent.trim()).join(" ");
-      if (!own || !element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue; // not rendered: not in innerText either
-      const style = getComputedStyle(element);
-      const box = element.getBoundingClientRect();
-      const [r, g, b, a = 1] = colour(style.color);
-      const [br, bg, bb] = behind(element);
-      const why =
-        parseFloat(style.fontSize) < 9 ? "smaller than a reader can read"
-        : a < 0.5 ? "transparent"
-        : Math.abs(r - br) + Math.abs(g - bg) + Math.abs(b - bb) < 60 ? "the colour of what is behind it"
-        : box.width < 1 || box.height < 1 ? "given no room"
-        : box.right < 1 || box.left > document.documentElement.scrollWidth - 1 || box.bottom + scrollY < 1 ? "off the page"
-        : style.clipPath !== "none" || (style.clip !== "auto" && style.position === "absolute") ? "clipped away"
-        : null;
-      if (why) unreadable.push(`"${own.slice(0, 60)}" is ${why}`);
+const lines = [policy.intro, ...policy.parts.flatMap((part) => part.blocks.flatMap((block) => block.lines))];
+const links = lines.flatMap((line) => [...line.matchAll(LINK)].map(([, words, address]) => [words, address]));
+const framed = `${ABOVE} ${expected} ${BELOW}`;
+
+/* What a reader is shown, at one width. Runs in the page. */
+function look() {
+  const main = document.querySelector("main");
+  const colour = (value) => (value.match(/[\d.]+/g) ?? []).map(Number);
+  const behind = (element) => {
+    for (let at = element; at; at = at.parentElement) {
+      const [r, g, b, a = 1] = colour(getComputedStyle(at).backgroundColor);
+      if (a > 0.5) return [r, g, b];
     }
-    return {
-      main: main.innerText,
-      body: document.body.innerText,
-      written,
-      unreadable,
-      links: [...main.querySelectorAll("a[href]")].map((a) => [a.innerText.trim(), a.getAttribute("href")]),
-    };
-  });
+    return [255, 255, 255];
+  };
+  const written = [];
+  const unreadable = [];
+  for (const element of document.body.querySelectorAll("*")) {
+    for (const pseudo of ["::before", "::after"]) {
+      const content = getComputedStyle(element, pseudo).content;
+      if (/[\p{L}\p{N}]/u.test(content.replace(/^(none|normal)$/, ""))) written.push(`${element.tagName.toLowerCase()}${pseudo} ${content}`);
+    }
+    if (!main.contains(element)) continue;
+    const own = [...element.childNodes].filter((node) => node.nodeType === 3 && node.textContent.trim());
+    if (!own.length || !element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue; // not rendered: not in innerText either
+    const style = getComputedStyle(element);
+    const range = document.createRange();
+    range.selectNodeContents(own[0]);
+    const box = range.getBoundingClientRect(); // where the words themselves are drawn
+    const [r, g, b, a = 1] = colour(style.color);
+    const [fr, fg, fb, fa = 1] = colour(style.webkitTextFillColor || style.color);
+    const [br, bg, bb] = behind(element);
+    const near = (x, y, z) => Math.abs(x - br) + Math.abs(y - bg) + Math.abs(z - bb) < 60;
+    let dimmed = 1;
+    let filtered = false;
+    for (let at = element; at && at !== document.documentElement; at = at.parentElement) {
+      const st = getComputedStyle(at);
+      dimmed *= Number(st.opacity);
+      if (st.filter !== "none" || st.mixBlendMode !== "normal") filtered = true;
+    }
+    // An ancestor that hides what overflows it, with these words outside its box.
+    let cut = false;
+    for (let at = element.parentElement; at && at !== document.body; at = at.parentElement) {
+      const st = getComputedStyle(at);
+      if (!/hidden|clip/.test(`${st.overflowX} ${st.overflowY}`)) continue;
+      const within = at.getBoundingClientRect();
+      if (box.bottom <= within.top + 1 || box.top >= within.bottom - 1 || box.right <= within.left + 1 || box.left >= within.right - 1) cut = true;
+    }
+    // What is drawn on top where the words are: the element itself or
+    // something inside it. Anything else, an ancestor's overlay included, covers them.
+    const top = document.elementFromPoint(box.left + box.width / 2, box.top + Math.min(box.height / 2, 8));
+    const onScreen = box.top >= 0 && box.top < innerHeight - 8;
+    const why =
+      parseFloat(style.fontSize) < 9 ? "smaller than a reader can read"
+      : a < 0.5 || fa < 0.5 || dimmed < 0.5 ? "transparent"
+      : near(r, g, b) || near(fr, fg, fb) ? "the colour of what is behind it"
+      : filtered ? "drawn through a filter"
+      : /line-through/.test(style.textDecorationLine) || element.closest("s, strike, del") ? "struck through"
+      : box.width < 1 || box.height < 1 ? "given no room"
+      : box.right < 1 || box.left > document.documentElement.clientWidth - 1 || box.bottom + scrollY < 1 ? "off the page"
+      : style.clipPath !== "none" || (style.clip !== "auto" && style.position === "absolute") ? "clipped away"
+      : cut ? "clipped away"
+      : onScreen && top && !(element === top || element.contains(top)) ? "covered by something else"
+      : null;
+    if (why) unreadable.push(`"${own[0].textContent.trim().slice(0, 60)}" is ${why}`);
+  }
+  return {
+    main: main.innerText,
+    body: document.body.innerText,
+    written,
+    unreadable,
+    links: [...main.querySelectorAll("a[href]")].map((link) => [link.innerText.trim(), link.getAttribute("href")]),
+    pictures: main.querySelectorAll("img, svg, canvas, video, iframe, object, embed").length,
+  };
+}
+
+const WIDTHS = [[390, 844], [768, 1024], [1280, 900]];
+const browser = await chromium.launch();
+const problems = [];
+try {
+  for (const [width, height] of WIDTHS) {
+    const page = await browser.newPage({ viewport: { width, height } });
+    const answer = await page.goto(`http://127.0.0.1:${server.address().port}/refunds`, { waitUntil: "networkidle" });
+    if (!answer || !answer.ok()) fail(`the built page did not load (${answer?.status()})`);
+    // Each part in turn at the top of the window, so "covered" is asked of all of it.
+    const seen = await page.evaluate(look);
+    for (const id of policy.parts.map((part) => part.id)) {
+      await page.evaluate((part) => document.getElementById(part)?.scrollIntoView({ behavior: "instant", block: "start" }), id);
+      seen.unreadable.push(...(await page.evaluate(look)).unreadable);
+    }
+    await page.close();
+    const at = `at ${width}px`;
+    const shown = squeeze(seen.main);
+    if (shown !== expected) parted(shown, expected, `${at}, the words on the screen are not the policy's`);
+    if (seen.written.length) problems.push(`${at}, a stylesheet writes words onto the page: ${seen.written.join("; ")}`);
+    if (seen.unreadable.length) problems.push(`${at}, text is on the page but not readable: ${[...new Set(seen.unreadable)].join("; ")}`);
+    if (seen.pictures) problems.push(`${at}, the policy has a picture in it: words in an image cannot be read here`);
+    const whole = squeeze(seen.body);
+    if (whole !== framed) parted(whole, framed, `${at}, the page shows more than its frame and the policy`);
+    for (const [words, address] of links) {
+      if (!seen.links.some(([text, href]) => text === words && href === address)) problems.push(`${at}, "${words}" does not link to ${address}`);
+    }
+    if (seen.links.filter(([, href]) => !href.startsWith("#")).length !== links.length) problems.push(`${at}, the page links somewhere the policy does not`);
+  }
 } finally {
   await browser.close();
   server.close();
 }
+if (problems.length) fail(problems.join("\n  "));
 
-const shown = squeeze(seen.main);
-if (shown !== expected) parted(shown, expected, "the words on the screen are not the policy's");
-if (seen.written.length) fail(`a stylesheet writes words onto the page: ${seen.written.join("; ")}`);
-if (seen.unreadable.length) fail(`text is on the page but not readable: ${seen.unreadable.join("; ")}`);
-const whole = squeeze(seen.body);
-const framed = `${ABOVE} ${expected} ${BELOW}`;
-if (whole !== framed) parted(whole, framed, "the page shows more than its frame and the policy");
-const lines = [policy.intro, ...policy.parts.flatMap((part) => part.blocks.flatMap((block) => block.lines))];
-const links = lines.flatMap((line) => [...line.matchAll(LINK)].map(([, words, address]) => [words, address]));
-for (const [words, address] of links) {
-  if (!seen.links.some(([text, href]) => text === words && href === address)) fail(`"${words}" does not link to ${address}`);
-}
-if (seen.links.filter(([, href]) => !href.startsWith("#")).length !== links.length) fail("the page links somewhere the policy does not");
-
-console.log(`refund page: ${expected.length} characters shown, version ${policy.version}, exactly the policy.`);
+console.log(`refund page: ${expected.length} characters shown at ${WIDTHS.map(([width]) => width).join(", ")}px, version ${policy.version}, exactly the policy.`);

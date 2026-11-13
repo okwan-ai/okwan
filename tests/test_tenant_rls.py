@@ -39,7 +39,7 @@ OPERATOR_READS = {"list_tickets", "get_ticket"}
 #: Maintenance across every tenant, as the login role, like deleting a
 #: tenant: the hourly sweeps delete expired imports and aged access rows,
 #: and read nothing back.
-MAINTENANCE = {"sweep_imports", "sweep_access"}
+MAINTENANCE = {"sweep_imports", "sweep_access", "sweep_checkouts"}
 
 
 # ── static: every query over tenant data enters a scope ────────────────

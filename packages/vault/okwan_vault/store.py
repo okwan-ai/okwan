@@ -99,7 +99,8 @@ class Store(Protocol):
     async def open_checkout(self, tenant_id: str, session_id: str, *, policy_version: str,
                             at: datetime, ip: str) -> None: ...
     async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
-                            terms_accepted_at: datetime | None) -> bool: ...
+                            terms_accepted_at: datetime | None) -> bool | None: ...
+    async def sweep_checkouts(self, now: datetime | None = None) -> int: ...
     async def checkouts_for(self, tenant_id: str) -> list[dict]: ...
     async def drop_checkout(self, tenant_id: str, session_id: str) -> None: ...
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None: ...
@@ -321,14 +322,22 @@ class MemoryStore:
             "opened_at": at, "ip": ip, "paid_at": None, "subscription_id": None, "terms_accepted_at": None})
 
     async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
-                            terms_accepted_at: datetime | None) -> bool:
+                            terms_accepted_at: datetime | None) -> bool | None:
         row = self._checkouts.get(session_id)
         if row is None or row["tenant_id"] != tenant_id:
+            return None
+        if row["paid_at"] is not None:
             return False
-        if row["paid_at"] is None:
-            self._checkouts[session_id] = {**row, "paid_at": at, "subscription_id": subscription_id,
-                                           "terms_accepted_at": terms_accepted_at}
+        self._checkouts[session_id] = {**row, "paid_at": at, "subscription_id": subscription_id,
+                                       "terms_accepted_at": terms_accepted_at}
         return True
+
+    async def sweep_checkouts(self, now: datetime | None = None) -> int:
+        cutoff = (now or datetime.now(UTC)) - UNPAID_CHECKOUT_KEPT
+        gone = [k for k, v in self._checkouts.items() if v["paid_at"] is None and v["opened_at"] < cutoff]
+        for k in gone:
+            del self._checkouts[k]
+        return len(gone)
 
     async def drop_checkout(self, tenant_id: str, session_id: str) -> None:
         row = self._checkouts.get(session_id)

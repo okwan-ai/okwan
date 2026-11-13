@@ -103,9 +103,10 @@ async function checkPage(page, w, h, path) {
 const PLAN_NOTICE = "Pro is 99 US dollars a month and renews each month until you cancel. To cancel, use Manage billing on this page: Pro stays on to the end of the month you have paid for. A payment is not refunded once its month has started. Refunds and cancellation · Terms";
 
 // And the card it sits in says nothing else about paying: its whole text,
-// as a free account sees it, ending in whichever button the deployment shows.
-const PLAN_CARD = `Upgrade to Pro 100,000 requests a month instead of 5,000, for $99 a month. Cancel any time; Pro stays on to the end of the month you paid for. ${PLAN_NOTICE}`;
+// as a free account sees it, with whichever button the deployment shows.
+const PLAN_CARD = `Upgrade to Pro 100,000 requests a month instead of 5,000, for $99 a month. ${PLAN_NOTICE}`;
 const PLAN_BUTTONS = ["Upgrade for $99/month", "Talk to us about Pro"];
+const PLAN_FOOT = "Card payments are handled by Stripe; Okwan never sees your card. Need more than 100,000 requests? Talk to us.";
 
 async function checkPlanNotice(page, w, h) {
   await page.goto(`${BASE}/settings?tab=plan`, { waitUntil: "networkidle" });
@@ -140,7 +141,7 @@ async function checkPlanNotice(page, w, h) {
   });
   if (found.missing) return note(page, where, `${found.missing} is not on the page`);
   if (found.text !== PLAN_NOTICE) await note(page, where, `it says "${found.text}"`);
-  if (!PLAN_BUTTONS.some((button) => found.card === `${PLAN_CARD} ${button}`)) await note(page, where, `the card around it says "${found.card}"`);
+  if (!PLAN_BUTTONS.some((button) => found.card === `${PLAN_CARD} ${button} ${PLAN_FOOT}`)) await note(page, where, `the card around it says "${found.card}"`);
   if (!found.readable) await note(page, where, "it is on the page but not readable");
   if (!found.first || !found.placed) await note(page, where, "it does not come before the Upgrade button");
   if (found.links.length !== 2 || !found.links[0].endsWith("/refunds") || !found.links[1].endsWith("/terms")) {

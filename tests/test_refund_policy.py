@@ -239,7 +239,7 @@ def test_the_plan_page_shows_the_policys_own_words_before_the_upgrade_button():
     check = _read("apps/dashboard/scripts/layout-check.mjs")
     assert f'const PLAN_NOTICE = "{policy.plan_page()} Refunds and cancellation · Terms";' in check
     assert "await checkPlanNotice(page, w, h);" in check
-    assert f"for ${policy.PRO_PRICE_USD} a month. Cancel any time;" in check, "the card's own line, read whole in a browser"
+    assert f"for ${policy.PRO_PRICE_USD} a month. ${{PLAN_NOTICE}}`" in check, "the card's own line, read whole in a browser"
     assert f'"Upgrade for ${policy.PRO_PRICE_USD}/month"' in check
 
 
@@ -295,15 +295,20 @@ class FakeStripe:
         self.ended: list[str] = []            # sessions Okwan asked Stripe to end, and Stripe ended
         self.will_not_end: set[str] = set()   # already paid, as Stripe sees it
         self.ends = True
+        self.end_says = "expired"             # the session's state in Stripe's answer to "end this"
+        self.error_page = False               # an error that is not Stripe's JSON
 
     async def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/expire"):
             session = request.url.path.split("/")[-2]
             if not self.ends or session in self.will_not_end or session in self.ended:    # ended once, as at Stripe
                 return httpx.Response(400, json={"error": {"type": "invalid_request_error"}})
-            self.ended.append(session)
-            return httpx.Response(200, json={"id": session, "status": "expired"})
+            if self.end_says == "expired":
+                self.ended.append(session)
+            return httpx.Response(200, json={"id": session, "status": self.end_says})
         self.forms.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+        if self.error_page:
+            return httpx.Response(502, content=b"<html><body>Bad gateway</body></html>")
         nth = len(self.forms)
         await asyncio.sleep(self.delay)      # Stripe takes its time to answer
         if self.status != 200:
@@ -835,7 +840,7 @@ async def test_a_payment_ends_every_other_session_the_account_has_open(client, s
 
 
 async def test_a_second_subscription_does_not_take_over_the_record_and_the_operator_is_told(
-        client, store, stripe, outbox):
+        client, store, stripe, outbox, caplog):
     """Both pages were paid before either was heard of. The record keeps
     the first subscription, the one Manage billing opens; the second's
     events change nothing; and a person is told to cancel and refund it."""
@@ -860,6 +865,10 @@ async def test_a_second_subscription_does_not_take_over_the_record_and_the_opera
     assert mail["to"] == "owner-inbox@okwan.test" and mail["subject"] == "[Billing] An account has paid for Pro twice"
     for said in (tenant.id, "Kept:     sub_A", "Second:   sub_B, Stripe customer cus_B", "refund its payment in full"):
         assert said in mail["text"], said
+    told = [r.getMessage() for r in caplog.records if "second subscription" in r.getMessage()]
+    assert told and all(tenant.id in line for line in told), "the log names the account"
+    assert not any(stripe_id in line for line in told for stripe_id in ("sub_A", "sub_B", "cus_A", "cus_B")), (
+        "and none of Stripe's ids: those are in the operator's mail")
 
     # The operator cancels the second in Stripe: the account stays on Pro, through the first.
     assert (await _send(client, second("customer.subscription.deleted", "canceled"))).json()["plan"] == "pro"
@@ -923,6 +932,117 @@ async def test_instances_starting_together_all_start():
     finally:
         await admin.execute(f"DROP SCHEMA {name} CASCADE")
         await admin.close()
+
+
+# ── second pass 5: seen in its report without an exploit, closed all the same ──
+
+async def test_a_signed_event_with_fields_that_cannot_be_read_still_marks_the_record_and_sets_the_plan(
+        client, store, stripe):
+    """Only Stripe can send one. A time or a consent of the wrong shape
+    raised half-way: the subscription saved, the plan not set, and every
+    retry failing the same way."""
+    tenant, headers = await _account(store)
+    session = await _open(client, headers)
+    before = datetime.now(UTC) - timedelta(seconds=2)
+    odd = {"type": "checkout.session.completed", "created": "soon", "data": {"object": {
+        "id": session, "mode": "subscription", "payment_status": "paid", "customer": {"id": "cus_1"},
+        "subscription": {"id": "sub_1"}, "metadata": {"tenant_id": tenant.id}, "consent": "accepted"}}}
+    assert (await _send(client, odd)).json() == {"received": True, "plan": "pro"}
+    row = await _row(store, tenant.id, session)
+    assert row["paid_at"] >= before and row["subscription_id"] == "sub_1" and row["terms_accepted_at"] is None
+    bill = await store.billing_for(tenant.id)
+    assert (bill["customer_id"], bill["subscription_id"], bill["status"]) == ("cus_1", "sub_1", "active")
+
+
+async def test_a_payment_that_settles_later_marks_the_record_when_it_settles(client, store, stripe):
+    """A bank debit completes the session unpaid and is reported paid in
+    its own time, by another event."""
+    tenant, headers = await _account(store)
+    session = await _open(client, headers)
+    assert (await _paid(client, tenant.id, session, payment_status="unpaid")).json() == {"received": True}
+    assert (await _row(store, tenant.id, session))["paid_at"] is None and (await store.get_plan(tenant.id))[0] == "free"
+    settled = {"type": "checkout.session.async_payment_succeeded", "created": int(time.time()), "data": {"object": {
+        "id": session, "mode": "subscription", "payment_status": "paid", "customer": "cus_1", "subscription": "sub_1",
+        "metadata": {"tenant_id": tenant.id}}}}
+    assert (await _send(client, settled)).json() == {"received": True, "plan": "pro"}
+    assert (await _row(store, tenant.id, session))["paid_at"] is not None
+
+
+async def test_an_old_sessions_event_sent_again_after_the_account_moved_on_changes_nothing(
+        client, store, stripe, outbox):
+    tenant, headers = await _account(store)
+    first = await _open(client, headers)
+    assert (await _paid(client, tenant.id, first, subscription="sub_1")).json()["plan"] == "pro"
+    await _send(client, {"type": "customer.subscription.deleted", "data": {"object": {
+        "id": "sub_1", "customer": "cus_1", "status": "canceled", "metadata": {"tenant_id": tenant.id}}}})
+    second = await _open(client, headers)
+    assert (await _paid(client, tenant.id, second, subscription="sub_2")).json()["plan"] == "pro"
+
+    # The first session's event again, while the second subscription pays: not a second payment.
+    assert (await _paid(client, tenant.id, first, subscription="sub_1")).json() == {"received": True}
+    assert outbox.sent == [] and (await store.billing_for(tenant.id))["subscription_id"] == "sub_2"
+    assert (await store.get_plan(tenant.id))[0] == "pro"
+
+    # And again after the second has ended: it does not bring Pro back.
+    await _send(client, {"type": "customer.subscription.deleted", "data": {"object": {
+        "id": "sub_2", "customer": "cus_1", "status": "canceled", "metadata": {"tenant_id": tenant.id}}}})
+    assert (await _paid(client, tenant.id, first, subscription="sub_1")).json() == {"received": True}
+    assert (await store.get_plan(tenant.id))[0] == "free"
+    bill = await store.billing_for(tenant.id)
+    assert (bill["subscription_id"], bill["status"]) == ("sub_2", "canceled")
+
+
+async def test_an_error_page_from_stripe_is_the_providers_fault_not_a_crash(client, store, stripe):
+    tenant, headers = await _account(store)
+    stripe.error_page = True
+    r = await client.post("/v1/billing/checkout", headers=headers)
+    assert r.status_code == 502 and "payment provider" in r.json()["detail"]
+    assert await store.checkouts_for(tenant.id) == []
+
+
+async def test_a_session_is_forgotten_only_when_stripe_says_it_is_expired(client, store, stripe):
+    """A 200 is not enough: the answer has to be the session, expired. One
+    that was paid a moment ago keeps its row for the payment's event."""
+    tenant, headers = await _account(store)
+    first = await _open(client, headers)
+    stripe.end_says = "complete"
+    second = await _open(client, headers)
+    assert stripe.ended == [] and {c["session_id"] for c in await store.checkouts_for(tenant.id)} == {first, second}
+
+
+async def test_unpaid_sessions_more_than_a_week_old_are_swept_whoever_opened_them(store):
+    """The privacy policy says about a week. A row used to go only when
+    its account next opened a checkout, which some never do."""
+    now = datetime.now(UTC).replace(microsecond=0)
+    old = now - UNPAID_CHECKOUT_KEPT - timedelta(hours=1)
+    tag = os.urandom(4).hex()
+    a, b = await store.create_tenant("Never came back"), await store.create_tenant("Paying ISV")
+    await store.open_checkout(a.id, f"cs_{tag}_left", policy_version="2026-11-13", at=old, ip="203.0.113.24")
+    await store.open_checkout(b.id, f"cs_{tag}_paid", policy_version="2026-11-13", at=old, ip="203.0.113.24")
+    assert await store.checkout_paid(b.id, f"cs_{tag}_paid", at=old, subscription_id="sub_1", terms_accepted_at=None)
+    await store.open_checkout(b.id, f"cs_{tag}_recent", policy_version="2026-11-13",
+                              at=now - timedelta(days=6), ip="203.0.113.24")
+    assert await store.sweep_checkouts(now) >= 1
+    assert await store.checkouts_for(a.id) == []
+    assert [c["session_id"] for c in await store.checkouts_for(b.id)] == [f"cs_{tag}_recent", f"cs_{tag}_paid"]
+    assert await store.sweep_checkouts(now) == 0
+
+
+def test_marking_a_session_says_whether_it_was_news():
+    """True the first time, False for a repeat, None for a session this
+    account never opened: what the webhook's guards are built on."""
+    import asyncio as aio
+
+    async def run() -> list:
+        store = MemoryStore(EnvMasterKey(new_key()))
+        tenant, other = await store.create_tenant("A"), await store.create_tenant("B")
+        now = datetime.now(UTC)
+        await store.open_checkout(tenant.id, "cs_x", policy_version="v", at=now, ip="203.0.113.24")
+        mark = {"at": now, "subscription_id": "sub_1", "terms_accepted_at": None}
+        return [await store.checkout_paid(tenant.id, "cs_x", **mark), await store.checkout_paid(tenant.id, "cs_x", **mark),
+                await store.checkout_paid(other.id, "cs_x", **mark), await store.checkout_paid(tenant.id, "cs_none", **mark)]
+
+    assert aio.run(run()) == [True, False, None, None]
 
 
 # ── attacker's pass 4: the page cannot say what the policy does not ────

@@ -794,8 +794,10 @@ In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
    method. Save.
 3. **Webhook:** Developers → Webhooks → Add endpoint
    `https://api.okwan.ai/v1/billing/webhook`, with events
-   `checkout.session.completed`, `customer.subscription.created`,
-   `customer.subscription.updated`, `customer.subscription.deleted`.
+   `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded`,
+   `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`.
    Copy its **signing secret** (`whsec_...`).
 4. **Key:** Developers → API keys → Create restricted key, with write on
    *Checkout Sessions* and *Customer portal*, nothing else. Copy it
