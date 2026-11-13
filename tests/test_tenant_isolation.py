@@ -339,13 +339,14 @@ ADMIN_OTHER = {
 }
 #: The operator console: Okwan's own staff, across accounts by design. Every
 #: route answers a plain 404 to anyone but an allowlisted operator whose
-#: session is unlocked with an authenticator code: tests/test_ops.py.
+#: session is unlocked with an authenticator code: tests/test_ops.py, and
+#: for the two dispute routes tests/test_disputes.py.
 OPERATOR = {
     ("GET", "/v1/ops/me"), ("POST", "/v1/ops/unlock"), ("POST", "/v1/ops/lock"),
     ("GET", "/v1/ops/tickets"), ("GET", "/v1/ops/tickets/{ticket_id}"),
     ("POST", "/v1/ops/tickets/{ticket_id}/reply"), ("POST", "/v1/ops/tickets/{ticket_id}/status"),
     ("GET", "/v1/ops/log"), ("GET", "/v1/ops/accounts"), ("GET", "/v1/ops/accounts/{tenant_id}"),
-    ("GET", "/v1/ops/health"),
+    ("GET", "/v1/ops/health"), ("GET", "/v1/ops/disputes"), ("GET", "/v1/ops/disputes/{dispute_id}"),
 }
 #: Mounted apps. /mcp is the hosted MCP server; its tools are listed next.
 MOUNTS = {("MOUNT", "/mcp")}

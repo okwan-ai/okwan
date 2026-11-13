@@ -35,6 +35,7 @@ from okwan_vault import accounts, totp
 from okwan_vault.usage import month_start, quota
 from pydantic import BaseModel, Field
 
+from . import disputes
 from .auth import get_store
 from .mail import MailNotSent, get_mailer
 from .ratelimit import OPS_UNLOCK, OPS_UNLOCK_IP, client_ip, enforce
@@ -417,6 +418,46 @@ def build_router() -> APIRouter:
             "runs": [{**_run(r), "tenant_id": r.tenant_id} for r in runs],
             "tickets": tickets,
         }
+
+    async def _dispute_row(d: dict[str, Any], now: datetime) -> dict[str, Any]:
+        tenant = await get_store().get_tenant(d["tenant_id"]) if d["tenant_id"] else None
+        return {
+            "id": d["dispute_id"], "kind": d["kind"], "status": d["status"], "reason": d["reason"],
+            "stage": disputes.stage(d), "amount": disputes.amount(d), "charge_id": d["charge_id"],
+            "opened_at": d["opened_at"].isoformat(), "due_by": d["due_by"].isoformat() if d["due_by"] else None,
+            "days_left": disputes.days_left(d["due_by"], now),
+            # Waiting for an answer is Stripe's state. `submitted`: an
+            # answer is with the bank. `answered_before`: one was sent at
+            # an earlier stage and the bank is waiting again. `saved`:
+            # evidence is in Stripe, not sent, and the bank still waits.
+            "needs_answer": disputes.waits(d), "submitted": d["submitted"] and not disputes.waits(d),
+            "answered_before": d["submitted"] and disputes.waits(d),
+            "saved": d["has_evidence"] and disputes.waits(d),
+            # False: its charge is not a payment Okwan has on record.
+            "matched": d["okwan"],
+            "account": {"id": tenant.id, "name": tenant.name} if tenant else None,
+        }
+
+    @router.get("/disputes")
+    async def disputes_list(op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
+        """Disputed payments with Okwan's rate: what is waiting for an
+        answer first, the nearest date at the top, then the rest newest first."""
+        now = datetime.now(UTC)
+        rows = [await _dispute_row(d, now) for d in await get_store().disputes(200)]
+        await _log(op, "list_disputes", count=len(rows))
+        act = await disputes.activity(now)
+        return {"activity": {**act, "said": disputes.activity_line(act)}, "data": rows}
+
+    @router.get("/disputes/{dispute_id}")
+    async def dispute(dispute_id: str, op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
+        """One dispute with what Okwan holds, in the fields of Stripe's form."""
+        now = datetime.now(UTC)
+        d = await get_store().dispute(dispute_id)
+        if d is None:
+            raise HTTPException(404, "no such dispute")
+        await _log(op, "view_dispute", dispute_id, tenant_id=d["tenant_id"])
+        return {**await _dispute_row(d, now), "evidence": await disputes.evidence(d, now),
+                "stripe_url": f"https://dashboard.stripe.com/payments/{d['charge_id']}"}
 
     @router.get("/health")
     async def health(op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:

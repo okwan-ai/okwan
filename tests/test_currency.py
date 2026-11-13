@@ -77,3 +77,19 @@ def test_the_factor_and_display_conversion_agree():
     assert minor_unit_factor(None) == 100
     assert to_major(money_to_minor("299.10", "USD"), "USD") == 299.10
     assert to_major(money_to_minor("5000", "XOF"), "XOF") == 5000
+
+
+def test_a_currency_counted_in_thousandths_uses_a_thousand():
+    """ISO 4217 gives the dinars of Bahrain, Jordan, Kuwait and Tunisia and
+    the Omani rial three decimals, and Stripe sends them in thousandths.
+    Read as hundredths, a 9.900 KWD amount was shown as 99.00 KWD."""
+    for code in ("BHD", "JOD", "KWD", "OMR", "TND", "kwd"):
+        assert minor_unit_factor(code) == 1000
+        assert money_to_minor("9.900", code) == 9900
+        assert to_major(9900, code) == 9.9
+    assert currency.format_minor(9900, "KWD") == "9.900 KWD"
+    assert currency.format_minor(1_449_000, "bhd") == "1,449.000 BHD"
+    assert currency.format_minor(144_900, "USD") == "$1,449.00"
+    assert currency.format_minor(144_900, "EUR") == "1,449.00 EUR"
+    assert currency.format_minor(1449, "JPY") == "1,449 JPY"
+    assert currency.format_minor(-455, "USD") == "-$4.55"

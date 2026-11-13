@@ -123,6 +123,65 @@ export async function account(id: string) {
   return api<AccountDetail>(`/v1/ops/accounts/${encodeURIComponent(id)}`, { session: await session() });
 }
 
+/** A disputed payment: a dispute, the inquiry before one, or a bank's early
+ *  warning of fraud. `matched` false: its charge is not a payment Okwan has
+ *  on record, so it may be another product's on the same Stripe account. */
+export type DisputeRow = {
+  id: string;
+  kind: "dispute" | "warning";
+  status: string;
+  stage: "inquiry" | "open" | "appeal" | "ended";
+  reason: string | null;
+  amount: string;
+  charge_id: string;
+  opened_at: string;
+  due_by: string | null;
+  days_left: number | null;
+  needs_answer: boolean;
+  /** An answer is with the bank. */
+  submitted: boolean;
+  /** One was sent at an earlier stage, and the bank is waiting again. */
+  answered_before: boolean;
+  /** Evidence saved in Stripe and not sent: still waiting for an answer. */
+  saved: boolean;
+  matched: boolean;
+  account: { id: string; name: string } | null;
+};
+export type DisputeActivity = {
+  days: number;
+  payments: number;
+  disputes: number;
+  inquiries: number;
+  warnings: number;
+  unmatched: number;
+  rate: string | null;
+  with_warnings: string | null;
+  said: string;
+  lines: { at: string; whose: string; of: string; over: boolean }[];
+};
+export type EvidenceField = { text: string | null; add: string | null };
+export type DisputeDetail = DisputeRow & {
+  stripe_url: string;
+  evidence: {
+    matched: boolean;
+    reason: { code: string | null; says: string; show: string };
+    for_this_reason: string[];
+    fields: Record<string, EvidenceField>;
+    attach: { field: string; what: string }[];
+    characters: number;
+    policy_version: string | null;
+  };
+};
+export const DISPUTE_ID = /^[A-Za-z0-9_]{1,255}$/;
+
+export async function disputes() {
+  return api<{ activity: DisputeActivity; data: DisputeRow[] }>("/v1/ops/disputes", { session: await session() });
+}
+
+export async function dispute(id: string) {
+  return api<DisputeDetail>(`/v1/ops/disputes/${encodeURIComponent(id)}`, { session: await session() });
+}
+
 /**
  * A ticket's issue as a title. The assistant writes one sentence now, but
  * tickets from before briefs carry a paragraph: those are cut to their

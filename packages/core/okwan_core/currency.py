@@ -19,11 +19,15 @@ from typing import Any
 ZERO_DECIMAL_CURRENCIES: frozenset[str] = frozenset(
     {"XOF", "XAF", "JPY", "KRW", "VND", "CLP", "ISK", "PYG", "RWF", "UGX", "VUV", "XPF"}
 )
+#: ISO-4217 currencies whose minor unit is a thousandth (exponent 3): the
+#: dinars of Bahrain, Jordan, Kuwait and Tunisia, and the Omani rial.
+THREE_DECIMAL_CURRENCIES: frozenset[str] = frozenset({"BHD", "JOD", "KWD", "OMR", "TND"})
 
 
 def minor_unit_factor(currency: str | None) -> int:
     """Multiplier between major and minor units for `currency`."""
-    return 1 if (currency or "").upper() in ZERO_DECIMAL_CURRENCIES else 100
+    code = (currency or "").upper()
+    return 1 if code in ZERO_DECIMAL_CURRENCIES else 1000 if code in THREE_DECIMAL_CURRENCIES else 100
 
 
 def to_major(amount_minor: float, currency: str | None) -> float:
@@ -61,11 +65,12 @@ def money_to_minor(value: Any, currency: str | None) -> int | None:
 def format_minor(amount_minor: int, currency: str | None) -> str:
     """A minor-unit amount for a person to read: "$1,449.00" for US
     dollars, "1,449.00 EUR" otherwise, no decimals where the currency has
-    none. `Decimal` throughout; a float never touches the figure."""
+    none and three where its minor unit is a thousandth. `Decimal`
+    throughout; a float never touches the figure."""
     code = (currency or "").upper()
     factor = minor_unit_factor(code)
     value = Decimal(int(amount_minor)) / factor
-    figure = f"{value:,.2f}" if factor == 100 else f"{value:,.0f}"
+    figure = f"{value:,.{len(str(factor)) - 1}f}"
     if code == "USD":
         return f"-${figure[1:]}" if value < 0 else f"${figure}"
     return f"{figure} {code}".rstrip()

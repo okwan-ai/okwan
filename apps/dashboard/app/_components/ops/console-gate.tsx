@@ -9,7 +9,7 @@ import { LockButton, UnlockForm } from "./console-actions";
 export const CONSOLE_TITLE = "Console";
 export const CONSOLE_DESCRIPTION = "Every account and every support request, across all customers. Only you can open this page.";
 
-type Section = "inbox" | "accounts" | "health";
+type Section = "inbox" | "accounts" | "disputes" | "health";
 
 /** The console's sections, under its header. */
 export function ConsoleTabs({ active }: { active: Section }) {
@@ -20,6 +20,7 @@ export function ConsoleTabs({ active }: { active: Section }) {
         items={[
           { href: "/ops", label: "Support inbox", active: active === "inbox" },
           { href: "/ops/accounts", label: "Accounts", active: active === "accounts" },
+          { href: "/ops/disputes", label: "Disputes", active: active === "disputes" },
           { href: "/ops/health", label: "Health", active: active === "health" },
         ]}
       />

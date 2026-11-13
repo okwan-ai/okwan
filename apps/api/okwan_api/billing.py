@@ -15,6 +15,9 @@ untouched.
   changes nothing by itself.
 * **Manage billing.** Stripe's customer portal: change card, see invoices,
   cancel. Cancelling keeps Pro to the end of the paid month.
+* **Disputes.** The same signed webhook hears of each payment taken, each
+  payment a bank disputes and each early warning of one; `disputes.py`
+  keeps them, tells the operator and prepares the answer.
 * **The policy is shown before the card is charged.** Checkout carries the
   price, that it renews, how to cancel and that a month is not refunded,
   with links to the refund policy and the Terms (`policy.at_checkout`),
@@ -51,7 +54,7 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from okwan_vault import accounts
 
-from . import access, policy
+from . import access, disputes, policy
 from .auth import get_store, quota_for
 from .mail import get_mailer
 from .ratelimit import BILLING_TENANT, client_ip, enforce
@@ -273,17 +276,34 @@ async def apply_subscription(tenant_id: str, sub: dict[str, Any]) -> str:
     return plan
 
 
-async def _tenant_for(obj: dict[str, Any]) -> str | None:
+def _another_products(sub: dict[str, Any]) -> bool:
+    """A subscription that says what it is for, and it is not Pro. The
+    Stripe account sells other products, and Stripe sends this endpoint
+    their events too."""
+    items = sub.get("items")
+    data = items.get("data") if isinstance(items, dict) else None
+    prices = {_ref(i.get("price")) for i in data if isinstance(i, dict)} - {""} if isinstance(data, list) else set()
+    pro = _env("OKWAN_BILLING_PRO_PRICE_ID")
+    return bool(prices) and bool(pro) and pro not in prices
+
+
+async def _tenant_for(obj: dict[str, Any], *, by_customer: bool = True) -> str | None:
     """Whose subscription this is: our own tenant id, put in the metadata at
     Checkout, else the customer we already linked. Only a root account.
 
     Never `client_reference_id`: on a Stripe payment link or pricing table
     that is a value the buyer writes into the address, so it would let a
     buyer name the account their payment is for. Metadata is set only with
-    Okwan's Stripe key."""
+    Okwan's Stripe key.
+
+    The customer alone is not enough where the event could be another
+    product's on the same Stripe account: a paid session is Okwan's only
+    with Okwan's metadata on it (`by_customer` false), and a subscription
+    without it is not Okwan's when it names a price that is not Pro's."""
     store = get_store()
-    tenant_id = (obj.get("metadata") or {}).get("tenant_id")
-    if not tenant_id and obj.get("customer"):
+    meta = obj.get("metadata")
+    tenant_id = meta.get("tenant_id") if isinstance(meta, dict) else None
+    if not tenant_id and by_customer and obj.get("customer") and not _another_products(obj):
         tenant_id = await store.tenant_for_billing_customer(str(obj["customer"]))
     if not tenant_id:
         return None
@@ -392,12 +412,23 @@ def build_router() -> APIRouter:
         payload = await request.body()
         if not secret or not verify_signature(payload, stripe_signature, secret):
             raise HTTPException(400, "signature check failed")
-        event = json.loads(payload)
-        kind = event.get("type", "")
-        obj = (event.get("data") or {}).get("object") or {}
+        try:
+            event = json.loads(payload)
+        except (ValueError, RecursionError):
+            # Signed, and not JSON this can read (not text, nested past any
+            # use, a number of thousands of digits): acknowledged like any
+            # other event this cannot read. An error would have Stripe
+            # send it again for three days.
+            return {"received": True}
+        data = event.get("data") if isinstance(event, dict) else None
+        obj = data.get("object") if isinstance(data, dict) else None
+        if not isinstance(event, dict) or not isinstance(obj, dict):
+            # Signed, and not an event this can read: acknowledged, never an error.
+            return {"received": True}
+        kind = event.get("type") if isinstance(event.get("type"), str) else ""
         if (kind in PAID_SESSION and obj.get("mode") == "subscription"
                 and obj.get("payment_status") in ("paid", "no_payment_required")):
-            tenant_id = await _tenant_for(obj)
+            tenant_id = await _tenant_for(obj, by_customer=False)
             store = get_store()
             session_id, subscription, customer = _ref(obj.get("id")), _ref(obj.get("subscription")), _ref(obj.get("customer"))
             if tenant_id and subscription:
@@ -406,6 +437,12 @@ def build_router() -> APIRouter:
                 # does not order its events, and one that is sent late, or
                 # sent again by hand, still says which session took the money.
                 when = _event_time(event)
+                # Whose Stripe customer paid, before anything below can
+                # return: an account can come to have two (two pay pages
+                # opened before either was paid), the record below keeps
+                # one, and a payment by either is Okwan's to answer for.
+                if customer:
+                    await store.link_customer(customer, tenant_id)
                 consent = obj.get("consent")
                 ticked = isinstance(consent, dict) and consent.get("terms_of_service") == "accepted"
                 marked = await store.checkout_paid(tenant_id, session_id, at=when, subscription_id=subscription,
@@ -445,6 +482,8 @@ def build_router() -> APIRouter:
                     "customer.subscription.deleted"):
             tenant_id = await _tenant_for(obj)
             if tenant_id:
+                if _ref(obj.get("customer")):
+                    await get_store().link_customer(_ref(obj.get("customer")), tenant_id)
                 first = await _paying_for_another(tenant_id, str(obj.get("id") or ""))
                 if first:
                     # About a subscription that is not the one on record while
@@ -457,6 +496,9 @@ def build_router() -> APIRouter:
                 if kind == "customer.subscription.deleted":
                     obj = {**obj, "status": "canceled"}
                 return {"received": True, "plan": await apply_subscription(tenant_id, obj)}
+        if disputes.handles(kind):
+            # A payment taken, a payment disputed, a bank's early warning.
+            return await disputes.handle(kind, obj, event)
         # Anything else, or an account we do not know: acknowledged, so
         # Stripe does not retry it forever.
         return {"received": True}

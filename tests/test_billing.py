@@ -236,6 +236,48 @@ async def test_an_event_without_metadata_finds_the_account_by_its_customer(clien
     assert (await store.get_plan(tenant.id))[0] == "free"
 
 
+async def test_another_products_subscription_on_a_customer_okwan_knows_changes_nothing(client, store, stripe):
+    """The Stripe account sells other products and sends this endpoint
+    their events. If one of them bills a Stripe customer that an Okwan
+    account is linked to, its subscription is not Okwan's: it names a
+    price that is not Pro's, and carries none of Okwan's metadata."""
+    tenant, _, _ = await _account(store)
+    await _send(client, {"type": "customer.subscription.updated", "data": {"object": _subscription(tenant.id, "active")}})
+    theirs = {**_subscription(tenant.id, "canceled"), "id": "sub_other", "metadata": {"product": "another"},
+              "items": {"data": [{"price": {"id": "price_another_product"}}]}}
+    r = await _send(client, {"type": "customer.subscription.deleted", "data": {"object": theirs}})
+    assert r.json() == {"received": True}
+    assert (await store.get_plan(tenant.id))[0] == "pro", "their cancellation is not a cancellation of Pro"
+    assert (await store.billing_for(tenant.id))["subscription_id"] == "sub_1"
+    # And theirs starting does not make a free account Pro.
+    free, _, _ = await _account(store, "Free ISV")
+    await store.save_billing(free.id, customer_id="cus_free", subscription_id="", status="canceled",
+                             cancel_at_period_end=False, current_period_end=None)
+    await _send(client, {"type": "customer.subscription.created", "data": {"object": {
+        **theirs, "customer": "cus_free", "status": "active"}}})
+    assert (await store.get_plan(free.id))[0] == "free"
+    # Okwan's own, named by its price and found by its customer, still is.
+    own = {**_subscription(free.id, "active"), "id": "sub_own", "customer": "cus_free", "metadata": {},
+           "items": {"data": [{"price": {"id": PRICE}}]}}
+    await _send(client, {"type": "customer.subscription.created", "data": {"object": own}})
+    assert (await store.get_plan(free.id))[0] == "pro"
+
+
+async def test_a_paid_session_without_okwans_own_metadata_is_not_a_payment_for_pro(client, store, stripe):
+    """A paid Checkout session names its account through the metadata
+    Okwan put on it, and no other way: another product's session paid by a
+    customer Okwan knows is not a payment for Pro."""
+    tenant, _, _ = await _account(store)
+    await store.save_billing(tenant.id, customer_id="cus_known", subscription_id="", status="canceled",
+                             cancel_at_period_end=False, current_period_end=None)
+    r = await _send(client, {"type": "checkout.session.completed", "data": {"object": {
+        "id": "cs_theirs", "mode": "subscription", "payment_status": "paid", "client_reference_id": tenant.id,
+        "customer": "cus_known", "subscription": "sub_theirs", "metadata": {"product": "another"}}}})
+    assert r.json() == {"received": True}
+    assert (await store.get_plan(tenant.id))[0] == "free"
+    assert (await store.billing_for(tenant.id))["subscription_id"] is None
+
+
 async def test_an_event_for_an_unknown_account_or_a_merchant_changes_nothing(client, store, stripe):
     tenant, _, _ = await _account(store)
     merchant = await store.create_tenant("A merchant", parent_id=tenant.id)

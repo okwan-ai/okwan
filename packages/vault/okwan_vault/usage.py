@@ -104,3 +104,37 @@ async def quota(store, tenant_id: str, now: datetime | None = None) -> Quota:
 UNPAID_CHECKOUT_KEPT = timedelta(days=7)
 #: The most checkout rows read for one account, paid and unpaid each.
 CHECKOUTS_LISTED = 500
+
+#: A dispute's states at Stripe in which the bank is waiting for the seller,
+#: and those in which it is over (Stripe's documentation, the Dispute
+#: object's `status`, read 2026-11-13).
+DISPUTE_NEEDS = frozenset({"needs_response", "warning_needs_response", "appeal_needs_response"})
+DISPUTE_ENDED = frozenset({"won", "lost", "warning_closed", "prevented"})
+#: How long the right to mail about a dispute is held while the mail is
+#: being sent. A send that never reports back (the process stopped, the
+#: database went away) leaves the right held; after this long the next
+#: round takes it and mails. Well over the mail provider's timeout.
+DISPUTE_NOTICE_HELD = timedelta(minutes=15)
+
+
+def dispute_stage(status: str) -> str:
+    """Where a dispute stands: decided, an inquiry before a dispute, an
+    appeal after one, or open. A state Stripe adds later reads as open."""
+    if status in DISPUTE_ENDED:
+        return "ended"
+    return "inquiry" if status.startswith("warning_") else "appeal" if status.startswith("appeal_") else "open"
+
+
+def dispute_heard(status: str, okwan: bool) -> str:
+    """What the operator has heard once mailed about a dispute as it now
+    stands: how it ended, or the stage it is at, and with it whether its
+    charge was a known Okwan payment. A dispute is mailed again whenever
+    this differs from what they were last told, so a decision that changes
+    and a dispute matched to its account after its first mail are both
+    news. `PostgresStore` says the same in SQL (`_HEARD`)."""
+    stage = dispute_stage(status)
+    return status if stage == "ended" else stage + ("" if okwan else ":unmatched")
+#: How long a payment is kept while no Okwan account is known for it. The
+#: Stripe account takes payments for other products too; theirs are heard
+#: of and, never matched, forgotten after this.
+UNMATCHED_PAYMENT_KEPT = timedelta(days=7)

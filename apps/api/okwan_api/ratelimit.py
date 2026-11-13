@@ -153,7 +153,7 @@ def address_from(headers: Mapping[str, str], peer: str | None) -> str:
     # connection from, overwriting anything the client sent. Trusting it
     # assumes every request reaches Render through Cloudflare, which is the
     # same assumption that makes any X-Forwarded-For entry trustworthy.
-    cloudflare = _address(headers.get("cf-connecting-ip", ""))
+    cloudflare = as_address(headers.get("cf-connecting-ip", ""))
     # Fallback when Cloudflare's header is absent (local runs): count from
     # the right, because a client's own entries land to the left of what a
     # trusted proxy appends. One hop errs toward a shared bucket, which is
@@ -161,19 +161,28 @@ def address_from(headers: Mapping[str, str], peer: str | None) -> str:
     hops = int(os.environ.get("OKWAN_TRUSTED_PROXY_HOPS", "1"))
     chain = [p.strip() for p in headers.get("x-forwarded-for", "").split(",")
              if p.strip()]
-    if matched and forwarded:
-        return forwarded
+    # Whichever header it comes from, what is recorded as the caller's
+    # address has to read as one: it is kept in the access log and can be
+    # sent to a bank as evidence.
+    if matched and as_address(forwarded):
+        return as_address(forwarded)
     if cloudflare:
         return cloudflare
-    if hops and len(chain) >= hops:
-        return chain[-hops]
+    if hops and len(chain) >= hops and as_address(chain[-hops]):
+        return as_address(chain[-hops])
     return peer or "unknown"
 
 
-def _address(value: str) -> str:
-    """A well-formed IP address, or empty. Anything else is not trusted."""
+def as_address(value: str) -> str:
+    """A well-formed IP address in its one canonical spelling, or empty.
+    Anything else is not trusted. An IPv6 zone ("fe80::1%eth0") is refused
+    outright: what follows the percent sign is free text, spaces and
+    sentences included, and no caller across the internet has one."""
+    value = str(value).strip()
+    if "%" in value:
+        return ""
     try:
-        return str(ipaddress.ip_address(value.strip()))
+        return str(ipaddress.ip_address(value))
     except ValueError:
         return ""
 

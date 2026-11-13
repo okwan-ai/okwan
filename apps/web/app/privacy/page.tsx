@@ -137,7 +137,12 @@ const parts: Part[] = [
             your payments. Each time you open the payment page, we also record which version of
             our <a className="font-medium text-ink underline underline-offset-4" href="/refunds">refund policy</a> it
             showed, when, and the IP address the request came from, and, once it is paid, when; so that a payment
-            questioned later can be answered with what you saw before you paid.
+            questioned later can be answered with what you saw before you paid. We keep a record of each payment
+            Stripe tells us it took for Pro (its Stripe id, the amount and the date). If a payment is disputed with
+            your bank, we answer through Stripe with what bears on it: your account&rsquo;s name and sign-in address,
+            the address the payment page was opened from, the policy you were shown, and the times and addresses of
+            requests made to Okwan with your account after the payment. Stripe passes that to the bank that issued
+            the card.
           </li>
           <li>
             <strong>Email.</strong> The messages we send you (a verification link when you sign up, alerts about
@@ -261,7 +266,8 @@ const parts: Part[] = [
             ["Account, merchants, saved credentials and API keys", "Until you remove them or delete your account"],
             ["A signup that is never confirmed", "The link expires after 24 hours; the request is removed when you ask, or with your account"],
             ["Sign-in sessions", "30 minutes without activity, 12 hours at most, or until you sign out"],
-            ["Your Stripe ids and subscription state, and what each payment page you opened showed (the refund policy's version, the time, the IP address)", "As long as your account exists; for a payment page you opened and did not pay on, about a week. Stripe keeps its own payment records as the law requires"],
+            ["Your Stripe subscription's id and state, and what each payment page you opened showed (the refund policy's version, the time, the IP address)", "As long as your account exists; for a payment page you opened and did not pay on, about a week. Stripe keeps its own payment records as the law requires"],
+            ["Payments Stripe took for Pro, and any dispute of one (Stripe's ids for the payment and for you as its customer, amounts, dates, the bank's reason and decision)", "Kept after your account is deleted, without your account's id: a dispute still has to be answered, a payment Stripe takes afterwards has to be recognised as one for Okwan, and the count of payments is what a dispute rate is measured against"],
             ["Reconciliation results", "The newest 50 of each check, until your account is deleted"],
             ["Files you import: their mapped rows and the file's record", "13 months from the upload, then deleted within the hour; at once if you delete the file"],
             ["Column mappings you save", "Until you delete them or your account"],

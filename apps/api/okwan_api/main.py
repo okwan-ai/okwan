@@ -50,6 +50,7 @@ from okwan_api.access import sweeper as access_sweeper
 from okwan_api.notify import build_router as build_notify_router
 from okwan_api.schedule import sweeper as schedule_sweeper
 from okwan_api.billing import sweeper as billing_sweeper
+from okwan_api.disputes import sweeper as disputes_sweeper
 from okwan_api.auth import get_store as _get_store
 from okwan_api.sample import build_router as build_sample_router
 from okwan_api.signup import build_router as build_signup_router
@@ -104,7 +105,8 @@ async def lifespan(_: FastAPI):
     """
     await open_store()
     sweeps = [asyncio.create_task(imports_sweeper()), asyncio.create_task(access_sweeper()),
-              asyncio.create_task(schedule_sweeper()), asyncio.create_task(billing_sweeper())]
+              asyncio.create_task(schedule_sweeper()), asyncio.create_task(billing_sweeper()),
+              asyncio.create_task(disputes_sweeper())]
     try:
         async with _mcp.session_manager.run():
             yield

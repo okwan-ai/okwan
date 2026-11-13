@@ -167,6 +167,26 @@ def test_the_command_deletes_after_the_id_is_typed_again(monkeypatch, capsys):
     assert (entry["operator"], entry["action"], entry["target"]) == ("cli", "delete_account", w["root"].id)
 
 
+def test_the_command_says_when_a_subscription_is_still_running(monkeypatch, capsys):
+    """Deleting an account does not reach Stripe. With the subscription
+    left running the card is charged again next month, for an account that
+    no longer exists; the command says so before it asks for the id."""
+    store, w = _cli_store(monkeypatch)
+    asyncio.run(store.save_billing(w["root"].id, customer_id="cus_leaving", subscription_id="sub_leaving",
+                                   status="active", cancel_at_period_end=False, current_period_end=None))
+    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
+    with pytest.raises(SystemExit, match="not deleted"):
+        cli.main(["tenant", "delete", w["root"].id])
+    out = capsys.readouterr().out
+    assert 'subscription sub_leaving is "active" at Stripe' in out and "CANCEL IT IN STRIPE FIRST" in out
+    # Cancelled, it says nothing about billing.
+    asyncio.run(store.save_billing(w["root"].id, customer_id="", subscription_id="", status="canceled",
+                                   cancel_at_period_end=False, current_period_end=None))
+    with pytest.raises(SystemExit, match="not deleted"):
+        cli.main(["tenant", "delete", w["root"].id])
+    assert "billing" not in capsys.readouterr().out
+
+
 def test_the_command_deletes_nothing_on_a_mismatch(monkeypatch):
     store, w = _cli_store(monkeypatch)
     monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
