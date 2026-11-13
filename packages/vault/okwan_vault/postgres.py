@@ -661,8 +661,24 @@ class PostgresStore:
     async def billing_for(self, tenant_id: str) -> dict | None:
         row = await self.pool.fetchrow(
             "SELECT tenant_id, customer_id, subscription_id, status, cancel_at_period_end, "
-            "current_period_end, updated_at FROM billing WHERE tenant_id = $1", tenant_id)
+            "current_period_end, updated_at, policy_version, checkout_at, checkout_ip, terms_accepted_at "
+            "FROM billing WHERE tenant_id = $1", tenant_id)
         return dict(row) if row else None
+
+    async def note_checkout(self, tenant_id: str, *, policy_version: str, at: datetime, ip: str) -> None:
+        """What the account was shown as it went to pay: the policy's
+        version, when, and from which address. The latest checkout wins."""
+        await self.pool.execute(
+            "INSERT INTO billing (tenant_id, status, policy_version, checkout_at, checkout_ip) "
+            "VALUES ($1, 'none', $2, $3, $4) ON CONFLICT (tenant_id) DO UPDATE SET "
+            "policy_version = EXCLUDED.policy_version, checkout_at = EXCLUDED.checkout_at, "
+            "checkout_ip = EXCLUDED.checkout_ip",
+            tenant_id, policy_version, at, ip)
+
+    async def note_terms_accepted(self, tenant_id: str, at: datetime) -> None:
+        """Stripe reported the terms as agreed to at checkout."""
+        await self.pool.execute(
+            "UPDATE billing SET terms_accepted_at = $2 WHERE tenant_id = $1", tenant_id, at)
 
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return await self.pool.fetchval("SELECT tenant_id FROM billing WHERE customer_id = $1", customer_id)

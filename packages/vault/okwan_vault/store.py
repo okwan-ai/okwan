@@ -43,6 +43,9 @@ from .models import (
 )
 from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
 
+#: A billing record before any checkout was opened for it.
+_NO_CHECKOUT = {"policy_version": None, "checkout_at": None, "checkout_ip": None, "terms_accepted_at": None}
+
 
 class Store(Protocol):
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
@@ -86,6 +89,8 @@ class Store(Protocol):
         cancel_at_period_end: bool, current_period_end: datetime | None,
     ) -> None: ...
     async def billing_for(self, tenant_id: str) -> dict | None: ...
+    async def note_checkout(self, tenant_id: str, *, policy_version: str, at: datetime, ip: str) -> None: ...
+    async def note_terms_accepted(self, tenant_id: str, at: datetime) -> None: ...
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
@@ -281,6 +286,7 @@ class MemoryStore:
             raise ValueError(f"no such tenant: {tenant_id}")
         old = self._billing.get(tenant_id, {})
         self._billing[tenant_id] = {
+            **_NO_CHECKOUT, **old,
             "tenant_id": tenant_id, "customer_id": customer_id or old.get("customer_id") or None,
             "subscription_id": subscription_id or old.get("subscription_id") or None,
             "status": status, "cancel_at_period_end": cancel_at_period_end,
@@ -291,6 +297,19 @@ class MemoryStore:
     async def billing_for(self, tenant_id: str) -> dict | None:
         found = self._billing.get(tenant_id)
         return dict(found) if found else None
+
+    async def note_checkout(self, tenant_id: str, *, policy_version: str, at: datetime, ip: str) -> None:
+        if tenant_id not in self._tenants:
+            raise ValueError(f"no such tenant: {tenant_id}")
+        old = self._billing.get(tenant_id) or {
+            "tenant_id": tenant_id, "customer_id": None, "subscription_id": None, "status": "none",
+            "cancel_at_period_end": False, "current_period_end": None, "updated_at": datetime.now(UTC),
+            **_NO_CHECKOUT}
+        self._billing[tenant_id] = {**old, "policy_version": policy_version, "checkout_at": at, "checkout_ip": ip}
+
+    async def note_terms_accepted(self, tenant_id: str, at: datetime) -> None:
+        if tenant_id in self._billing:
+            self._billing[tenant_id] = {**self._billing[tenant_id], "terms_accepted_at": at}
 
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return next((t for t, b in self._billing.items() if b["customer_id"] == customer_id), None)

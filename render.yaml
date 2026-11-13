@@ -102,6 +102,12 @@ services:
         sync: false
       - key: OKWAN_BILLING_PRO_PRICE_ID
         sync: false
+      # Checkout always shows the refund policy beside the pay button. "on"
+      # also makes the customer tick agreement to the Terms and the policy.
+      # Only after the Terms' address is set in the Stripe account's public
+      # details: Stripe refuses every checkout otherwise (RUNBOOK, Billing).
+      - key: OKWAN_BILLING_REQUIRE_TERMS
+        value: "off"
       # Postgres DSNs may only reach public addresses. Name deliberate
       # exceptions here (hostnames or CIDRs, comma-separated).
       - key: OKWAN_EGRESS_ALLOW

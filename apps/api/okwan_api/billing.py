@@ -15,6 +15,16 @@ untouched.
   changes nothing by itself.
 * **Manage billing.** Stripe's customer portal: change card, see invoices,
   cancel. Cancelling keeps Pro to the end of the paid month.
+* **The policy is shown before the card is charged.** Checkout carries the
+  price, that it renews, how to cancel and that a month is not refunded,
+  with links to the refund policy and the Terms (`policy.at_checkout`),
+  beside the pay button. What was shown is recorded on the account: the
+  policy's version, when, and from which address. A cardholder who
+  disputes a payment is answered with it. With OKWAN_BILLING_REQUIRE_TERMS
+  on, Checkout also makes the customer tick a box agreeing to both, and
+  the record keeps when Stripe reported it ticked; Stripe refuses such a
+  session until the Terms' address is set in the Stripe account's public
+  details, which is why it is a switch and not the default.
 
 Off until OKWAN_BILLING_STRIPE_SECRET_KEY, OKWAN_BILLING_STRIPE_WEBHOOK_SECRET
 and OKWAN_BILLING_PRO_PRICE_ID are set; the dashboard then offers a call
@@ -35,7 +45,9 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from okwan_vault import accounts
 
+from . import policy
 from .auth import admin_actor, get_store, quota_for
+from .ratelimit import client_ip
 
 logger = logging.getLogger("okwan.billing")
 
@@ -65,6 +77,13 @@ def enabled() -> bool:
     return all(_env(n) for n in ("OKWAN_BILLING_STRIPE_SECRET_KEY",
                                  "OKWAN_BILLING_STRIPE_WEBHOOK_SECRET",
                                  "OKWAN_BILLING_PRO_PRICE_ID"))
+
+
+def require_terms() -> bool:
+    """Whether Checkout makes the customer tick agreement to the Terms and
+    the refund policy. Off unless the operator says so: Stripe refuses the
+    session if the Terms' address is not in the account's public details."""
+    return _env("OKWAN_BILLING_REQUIRE_TERMS").lower() in {"on", "true", "1", "yes"}
 
 
 def dashboard_url() -> str:
@@ -153,7 +172,8 @@ def build_router() -> APIRouter:
         record = await get_store().billing_for(tenant.id)
         return {
             "enabled": enabled(), "plan": q.plan, "pro_price_usd": PRO_PRICE_USD,
-            "subscription": None if record is None else {
+            # A record with no subscription is a checkout that was opened and not paid.
+            "subscription": None if record is None or not record["subscription_id"] else {
                 "status": record["status"], "cancel_at_period_end": record["cancel_at_period_end"],
                 "current_period_end": record["current_period_end"].isoformat() if record["current_period_end"] else None,
             },
@@ -161,7 +181,7 @@ def build_router() -> APIRouter:
         }
 
     @router.post("/checkout")
-    async def checkout(tenant=Depends(session_owner)) -> dict[str, str]:
+    async def checkout(request: Request, tenant=Depends(session_owner)) -> dict[str, str]:
         if not enabled():
             raise HTTPException(503, "card payments are not switched on yet")
         store = get_store()
@@ -179,7 +199,15 @@ def build_router() -> APIRouter:
             "success_url": f"{app}/settings?tab=plan&upgraded=1",
             "cancel_url": f"{app}/settings?tab=plan",
             "allow_promotion_codes": "true",
+            # Beside the pay button, before the card is charged.
+            "custom_text[submit][message]": policy.at_checkout(),
+            # Which policy that was, kept by Stripe with the payment.
+            "metadata[refund_policy]": policy.VERSION,
+            "subscription_data[metadata][refund_policy]": policy.VERSION,
         }
+        if require_terms():
+            form["consent_collection[terms_of_service]"] = "required"
+            form["custom_text[terms_of_service_acceptance][message]"] = policy.acceptance()
         if record and record["customer_id"]:
             form["customer"] = record["customer_id"]
         else:
@@ -187,6 +215,8 @@ def build_router() -> APIRouter:
             if email:
                 form["customer_email"] = email
         session = await _stripe("/checkout/sessions", form)
+        await store.note_checkout(tenant.id, policy_version=policy.VERSION, at=datetime.now(UTC),
+                                  ip=client_ip(request))
         return {"url": session["url"]}
 
     @router.post("/portal")
@@ -222,6 +252,10 @@ def build_router() -> APIRouter:
                     tenant_id, customer_id=str(obj.get("customer") or ""),
                     subscription_id=str(obj["subscription"]), status="active",
                     cancel_at_period_end=False, current_period_end=None)
+                if (obj.get("consent") or {}).get("terms_of_service") == "accepted":
+                    stamp = event.get("created")
+                    await store.note_terms_accepted(
+                        tenant_id, datetime.fromtimestamp(int(stamp), UTC) if stamp else datetime.now(UTC))
                 await store.set_plan(tenant_id, PRO)
                 return {"received": True, "plan": PRO}
         if kind in ("customer.subscription.created", "customer.subscription.updated",

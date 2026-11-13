@@ -482,6 +482,26 @@ CREATE TABLE IF NOT EXISTS billing (
     updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
+-- What the account was shown when it opened its checkout: the version of
+-- the refund policy, when, and the address it came from; and when Stripe
+-- reported the terms as agreed to, where a tick is required. Kept so a
+-- disputed payment can be answered with what the customer saw (okwan_api
+-- .policy). Checked first, like every step here, so a start takes no lock.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'billing'
+          AND column_name = 'policy_version'
+    ) THEN
+        ALTER TABLE billing
+            ADD COLUMN policy_version    text,
+            ADD COLUMN checkout_at       timestamptz,
+            ADD COLUMN checkout_ip       text,
+            ADD COLUMN terms_accepted_at timestamptz;
+    END IF;
+END $$;
+
 -- Every step checks before it acts. This runs on every start, and ALTER
 -- TABLE and GRANT take locks that a running instance's queries, or
 -- autovacuum, would wait for or deadlock against; once the database is

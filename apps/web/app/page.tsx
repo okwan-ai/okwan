@@ -639,7 +639,7 @@ function Footer() {
   const cols: [string, [string, string][]][] = [
     ["Product", [["Retail", "#retail"], ["Industries", "#industries"], ["How it works", "#how"], ["Security", "/security"]]],
     ["Developers", [["API docs", API_DOCS], ["GitHub", GITHUB], ["Apache-2.0 license", `${GITHUB}/blob/main/LICENSE`]]],
-    ["Company", [["Contact", CONTACT], ["Privacy", "/privacy"], ["Terms", "/terms"]]],
+    ["Company", [["Contact", CONTACT], ["Privacy", "/privacy"], ["Terms", "/terms"], ["Refunds", "/refunds"]]],
   ];
   return (
     <footer className="border-t border-night-line bg-night text-night-soft">

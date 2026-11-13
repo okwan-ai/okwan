@@ -135,6 +135,10 @@ const parts: Part[] = [
           Larger plans are agreed with us in writing, by an order form or by email, and billed as agreed. Fees are
           non-refundable except where the law or our agreement says otherwise, and taxes are extra where they apply.
         </li>
+        <li>
+          Our <a className="font-medium text-ink underline underline-offset-4" href="/refunds">Refunds and cancellation</a>{" "}
+          policy says how cancelling and refunds work in practice, and is part of these Terms.
+        </li>
         <li>We may change plans and prices with 30 days&rsquo; notice. A change does not affect a paid term already agreed.</li>
       </ul>
     ),

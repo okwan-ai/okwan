@@ -15,6 +15,8 @@ type Props = {
 };
 
 const CALL = "mailto:info@globaltechstartup.com?subject=Okwan%20%E2%80%94%20plan";
+const REFUNDS = "https://okwan.ai/refunds";
+const TERMS = "https://okwan.ai/terms";
 
 /** Upgrade to Pro, or manage what is already paid for. Card details go to
  *  Stripe's own page and never reach Okwan. */
@@ -51,6 +53,15 @@ export function BillingCard({ enabled, plan, price, canManage, periodEnd, cancel
             <p className="mt-1 text-sm text-ink-soft">
               100,000 requests a month instead of 5,000, for <span className="font-medium text-ink">${price} a month</span>.
               Cancel any time; Pro stays on to the end of the month you paid for.
+            </p>
+            {/* Ahead of the button (beside it on a wide screen, above it on a
+                phone), so it is read before any card is asked for.
+                okwan_api/policy.py says the same on Stripe's page. */}
+            <p className="mt-2 text-sm text-ink-soft">
+              It renews each month until you cancel, and a payment isn&apos;t refunded once its month has started.{" "}
+              <a href={REFUNDS} target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">Refunds and cancellation</a>
+              {" · "}
+              <a href={TERMS} target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">Terms</a>
             </p>
           </div>
           {enabled ? (
