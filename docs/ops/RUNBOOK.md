@@ -665,8 +665,8 @@ it is cancelled at period end, unpaid or expired.
      email as `customer_communication`. Answering carries a fee of its
      own on top of the fee for the dispute, returned if it is won.
   4. To answer: *Open the payment in Stripe* → *Counter dispute*. Copy
-     each field from the console page, add what it marks *To add by
-     hand*, and attach the files it lists (print the console page to a
+     each field from the console page, do what it marks *To check or
+     add*, and attach the files it lists (print the console page to a
      PDF for the policy as shown; the receipt is on the payment's page).
      Read it through, then **submit**. Saving the form in Stripe is not
      sending it: the console keeps saying *Answer due* and the reminders

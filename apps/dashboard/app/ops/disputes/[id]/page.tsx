@@ -39,7 +39,7 @@ function Field({ name, field, wanted }: { name: string; field: EvidenceField; wa
         <p className="mt-2 text-sm text-ink-soft">Nothing on record.</p>
       )}
       {field.add && (
-        <p className="mt-2 text-sm"><span className="font-medium">To add by hand:</span> <span className="text-ink-soft">{field.add}</span></p>
+        <p className="mt-2 text-sm"><span className="font-medium">To check or add:</span> <span className="text-ink-soft">{field.add}</span></p>
       )}
     </li>
   );
@@ -84,13 +84,16 @@ function Dispute({ d }: { d: DisputeDetail }) {
               takes payments for other products too: it may be one of theirs. Look the payment up in Stripe.
             </p>
           )}
-          <ul className="space-y-3">
-            {ordered.map((name) => (
-              <Field key={name} name={name} field={e.fields[name]} wanted={wanted.has(name)} />
-            ))}
-          </ul>
+          {e.matched && (
+            <ul className="space-y-3">
+              {ordered.map((name) => (
+                <Field key={name} name={name} field={e.fields[name]} wanted={wanted.has(name)} />
+              ))}
+            </ul>
+          )}
         </section>
-        <aside className="min-w-0 space-y-4">
+        {/* On a phone the date and the bank's reason come first: they are what to act on. */}
+        <aside className="order-first min-w-0 space-y-4 xl:order-none">
           <section aria-labelledby="due-title" className="rounded-xl border border-line bg-surface p-5">
             <h2 id="due-title" className="text-base font-semibold">{d.kind === "warning" ? "Nothing to answer yet" : "Answer by"}</h2>
             {d.kind === "warning" ? (
@@ -128,22 +131,24 @@ function Dispute({ d }: { d: DisputeDetail }) {
             <p className="mt-2 text-sm">{e.reason.says}</p>
             <p className="mt-2 text-sm text-ink-soft"><span className="font-medium text-ink">To show:</span> {e.reason.show}</p>
           </section>
-          <section aria-labelledby="attach-title" className="rounded-xl border border-line bg-surface p-5">
-            <h2 id="attach-title" className="text-base font-semibold">To attach in Stripe</h2>
-            <ul className="mt-2 space-y-2 text-sm">
-              {e.attach.map((a) => (
-                <li key={a.field}>
-                  <span className="font-mono text-[13px]">{a.field}</span>
-                  <span className="block text-ink-soft">{a.what}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-3 text-xs text-ink-soft">
-              {e.policy_version
-                ? `The policy on record for this payment is version ${e.policy_version}.`
-                : "No policy version is on record for this payment."}
-            </p>
-          </section>
+{e.matched && (
+                    <section aria-labelledby="attach-title" className="rounded-xl border border-line bg-surface p-5">
+              <h2 id="attach-title" className="text-base font-semibold">To attach in Stripe</h2>
+              <ul className="mt-2 space-y-2 text-sm">
+                {e.attach.map((a) => (
+                  <li key={a.field}>
+                    <span className="font-mono text-[13px]">{a.field}</span>
+                    <span className="block text-ink-soft">{a.what}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-xs text-ink-soft">
+                {e.policy_version
+                  ? `The policy on record for this payment is version ${e.policy_version}.`
+                  : "No policy version is on record for this payment."}
+              </p>
+            </section>
+          )}
         </aside>
       </div>
     </>
