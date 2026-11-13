@@ -433,6 +433,22 @@ async def test_odd_values_in_a_readable_event_do_not_break_it(client, store, out
     assert "an amount Stripe did not give" in mail["subject"] and "no date given by Stripe" in mail["text"]
 
 
+async def test_nothing_from_an_event_is_written_to_the_log(client, store, outbox, caplog):
+    """CodeQL, on the pull request: the line that says an event was not
+    kept wrote the event's type, which is text from the request, and a
+    type can carry a line break and a made-up log line after it. Only
+    Stripe can sign one; the log says it in Okwan's own words all the same."""
+    forged = "charge.dispute.created\n2026-11-13 ERROR okwan.vault: master key rotated by ops@okwan.test"
+    with caplog.at_level("WARNING", logger="okwan.disputes"):
+        r = await send(client, forged, {"id": "not an id", "charge": "nor this"})
+        r2 = await send(client, "radar.early_fraud_warning.created\nforged", {"id": 7})
+    assert r.json() == r2.json() == {"received": True}
+    said = [record.getMessage() for record in caplog.records if record.name == "okwan.disputes"]
+    assert said == ["disputes: a dispute event without a readable id or charge, not kept",
+                    "disputes: an early fraud warning without a readable id or charge, not kept"]
+    assert await store.disputes() == [] and outbox.sent == []
+
+
 async def test_an_unsigned_event_keeps_nothing(client, store, outbox):
     who = await paying(store)
     assert (await send(client, "charge.dispute.created", dispute(who), signed=False)).status_code == 400

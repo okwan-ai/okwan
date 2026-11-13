@@ -298,7 +298,10 @@ async def handle(kind: str, obj: Any, event: dict[str, Any]) -> dict[str, Any]:
     warning = kind.startswith("radar.early_fraud_warning.")
     dispute_id, charge_id = _id(obj.get("id")), _id(obj.get("charge"))
     if not dispute_id or not charge_id:
-        logger.warning("disputes: %s without a readable id or charge, not kept", kind)
+        # Okwan's own words for what it was: an event's type is text from
+        # the request, and nothing from the request is written to the log.
+        logger.warning("disputes: %s without a readable id or charge, not kept",
+                       "an early fraud warning" if warning else "a dispute event")
         return {"received": True}
     tenant_id, ours = await _match(charge_id)
     details = obj.get("evidence_details") if isinstance(obj.get("evidence_details"), dict) else {}
