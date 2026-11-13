@@ -615,6 +615,32 @@ it is cancelled at period end, unpaid or expired.
 - **Refunds and invoices** are done in the Stripe dashboard. Refunding
   does not cancel: cancel the subscription there too, and the webhook
   returns the account to Free.
+- **The refund policy** is published at okwan.ai/refunds and is written
+  in one place, `okwan_api/policy.py`. The page renders a file that module
+  writes (`apps/web/app/refunds/policy.json`) and has no words of its own;
+  the same module puts the policy beside Stripe Checkout's pay button and
+  gives the copy sent to a bank in a dispute. To change it, in one pull
+  request: change the words in `policy.py`; give it a new `VERSION` and
+  `UPDATED`; move what `policy.said()` returned before into its `ARCHIVE`
+  under the old version; write the page's file again
+  (`python -m okwan_api.policy > apps/web/app/refunds/policy.json`); add
+  the new digest in `tests/test_refund_policy.py`; and change the Terms'
+  *Plans and fees* if the rule itself changes. The tests fail until every
+  one of those is done, and the site's build fails if the built page does
+  not say exactly the file. A payment is covered by the version shown when
+  it was made: each Checkout session has a row in `billing_checkouts` with
+  the version, the time and the address, and the row of the session that
+  was paid is marked with when and with its subscription.
+- **An account has paid twice** (`[Billing] An account has paid for Pro twice`). Two checkout pages were paid
+  before Okwan heard of either. Okwan ends an account's other open pages at Stripe whenever one is opened or
+  paid, so this needs both to be paid within moments. The account stays on Pro through the first
+  subscription, the one *Manage billing* opens. In Stripe, cancel the second subscription the mail names
+  and refund its payment in full, then tell the customer: the policy promises it.
+- **A customer asks for a refund.** The policy: a month is not refunded
+  once it has started; a payment taken by mistake (twice for one month,
+  or after a cancellation took effect) is refunded in full. Refund it in
+  Stripe (Payments → the payment → Refund). Answer the customer either
+  way: a customer who is not answered asks their bank instead.
 - **Larger plans** (Team, Enterprise) stay agreed in writing and set with
   `plan set`; they do not go through Checkout.
 
@@ -768,8 +794,10 @@ In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
    method. Save.
 3. **Webhook:** Developers → Webhooks → Add endpoint
    `https://api.okwan.ai/v1/billing/webhook`, with events
-   `checkout.session.completed`, `customer.subscription.created`,
-   `customer.subscription.updated`, `customer.subscription.deleted`.
+   `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded`,
+   `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`.
    Copy its **signing secret** (`whsec_...`).
 4. **Key:** Developers → API keys → Create restricted key, with write on
    *Checkout Sessions* and *Customer portal*, nothing else. Copy it
@@ -778,5 +806,19 @@ In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
    `OKWAN_BILLING_STRIPE_WEBHOOK_SECRET` and
    `OKWAN_BILLING_STRIPE_SECRET_KEY` to those three values, and redeploy.
    Health then shows *Card payments (Stripe): on*.
+6. **Policies on Stripe's own pages** (so the bank sees them where the
+   customer paid). Settings → Business → Public details: the Terms of
+   service address `https://okwan.ai/terms`, the Privacy policy
+   `https://okwan.ai/privacy`, and a support email. Then in Checkout
+   settings, enable *Contact information*, *Legal policies*, and *Return
+   and Refund policies* with the link to the full policy,
+   `https://okwan.ai/refunds`. Okwan's own text beside the pay button
+   needs none of this; it is there from the first checkout.
+7. **A box to tick** (optional, after step 6). Set
+   `OKWAN_BILLING_REQUIRE_TERMS=on` on the `okwan` service: Checkout then
+   makes the customer tick agreement to the Terms and the refund policy,
+   and that checkout's record keeps when Stripe reported it ticked. Do one
+   test checkout after switching it on: Stripe refuses every checkout
+   with this set if the Terms' address in step 6 is missing.
 
 Keys go only into Render, never into chat, code or a screenshot.

@@ -134,7 +134,10 @@ const parts: Part[] = [
             <strong>Payments.</strong> If you pay for Pro, you enter your card on Stripe&rsquo;s own page; your card
             details go to Stripe and never reach Okwan. We keep the Stripe customer and subscription ids for your
             account and the subscription&rsquo;s state (active, cancelled, the renewal date), so your plan follows
-            your payments.
+            your payments. Each time you open the payment page, we also record which version of
+            our <a className="font-medium text-ink underline underline-offset-4" href="/refunds">refund policy</a> it
+            showed, when, and the IP address the request came from, and, once it is paid, when; so that a payment
+            questioned later can be answered with what you saw before you paid.
           </li>
           <li>
             <strong>Email.</strong> The messages we send you (a verification link when you sign up, alerts about
@@ -258,7 +261,7 @@ const parts: Part[] = [
             ["Account, merchants, saved credentials and API keys", "Until you remove them or delete your account"],
             ["A signup that is never confirmed", "The link expires after 24 hours; the request is removed when you ask, or with your account"],
             ["Sign-in sessions", "30 minutes without activity, 12 hours at most, or until you sign out"],
-            ["Your Stripe ids and subscription state", "As long as your account exists. Stripe keeps its own payment records as the law requires"],
+            ["Your Stripe ids and subscription state, and what each payment page you opened showed (the refund policy's version, the time, the IP address)", "As long as your account exists; for a payment page you opened and did not pay on, about a week. Stripe keeps its own payment records as the law requires"],
             ["Reconciliation results", "The newest 50 of each check, until your account is deleted"],
             ["Files you import: their mapped rows and the file's record", "13 months from the upload, then deleted within the hour; at once if you delete the file"],
             ["Column mappings you save", "Until you delete them or your account"],
@@ -365,7 +368,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 11, 2026"
+      updated="November 13, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

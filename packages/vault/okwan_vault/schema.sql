@@ -482,6 +482,26 @@ CREATE TABLE IF NOT EXISTS billing (
     updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
+-- One row for each Stripe Checkout session Okwan opened: the version of the
+-- refund policy shown beside its pay button, when it was opened, and the
+-- address the request came from. When Stripe reports that session paid, its
+-- row is marked with when, the subscription it started, and when the terms
+-- were ticked, where a tick is required. A row is written once and marked
+-- paid once: no later checkout or billing event changes it, so a disputed
+-- payment is answered with what was shown for that payment (okwan_api.policy).
+-- An identity table, like billing.
+CREATE TABLE IF NOT EXISTS billing_checkouts (
+    session_id        text PRIMARY KEY,
+    tenant_id         text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    policy_version    text NOT NULL,
+    opened_at         timestamptz NOT NULL,
+    ip                text,
+    paid_at           timestamptz,
+    subscription_id   text,
+    terms_accepted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS billing_checkouts_tenant ON billing_checkouts (tenant_id, opened_at DESC);
+
 -- Every step checks before it acts. This runs on every start, and ALTER
 -- TABLE and GRANT take locks that a running instance's queries, or
 -- autovacuum, would wait for or deadlock against; once the database is
@@ -515,7 +535,8 @@ BEGIN
     END LOOP;
     -- The identity tables: nothing for okwan_tenant, whatever was granted before.
     FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups',
-                             'operator_factors', 'operator_actions', 'billing'] LOOP
+                             'operator_factors', 'operator_actions', 'billing',
+                             'billing_checkouts'] LOOP
         IF has_table_privilege('okwan_tenant', t,
                                'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
             EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);

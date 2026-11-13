@@ -96,6 +96,59 @@ async function checkPage(page, w, h, path) {
   for (const hit of res.hits) await note(page, where, hit);
 }
 
+// The plan page shows the refund policy's own words ahead of the Upgrade
+// button: what a bank is told the customer was shown before paying. They
+// are okwan_api/policy.py's plan_page(), sent by the API, and
+// tests/test_refund_policy.py holds this line to them.
+const PLAN_NOTICE = "Pro is 99 US dollars a month and renews each month until you cancel. To cancel, use Manage billing on this page: Pro stays on to the end of the month you have paid for. A payment is not refunded once its month has started. Refunds and cancellation · Terms";
+
+// And the card it sits in says nothing else about paying: its whole text,
+// as a free account sees it, with whichever button the deployment shows.
+const PLAN_CARD = `Upgrade to Pro 100,000 requests a month instead of 5,000, for $99 a month. ${PLAN_NOTICE}`;
+const PLAN_BUTTONS = ["Upgrade for $99/month", "Talk to us about Pro"];
+const PLAN_FOOT = "Card payments are handled by Stripe; Okwan never sees your card. Need more than 100,000 requests? Talk to us.";
+
+async function checkPlanNotice(page, w, h) {
+  await page.goto(`${BASE}/settings?tab=plan`, { waitUntil: "networkidle" });
+  const where = `${w}x${h} /settings?tab=plan the refund notice`;
+  const found = await page.evaluate(() => {
+    const notice = document.querySelector("[data-policy-notice]");
+    const button = document.querySelector("[data-upgrade]");
+    if (!notice || !button) return { missing: !notice ? "the notice" : "the Upgrade button" };
+    const readable = (el) => {
+      for (let e = el; e && e !== document.body; e = e.parentElement) {
+        const st = getComputedStyle(e);
+        if (st.display === "none" || st.visibility === "hidden" || Number(st.opacity) < 0.5) return false;
+        if (e.hasAttribute("hidden") || e.getAttribute("aria-hidden") === "true") return false;
+      }
+      const st = getComputedStyle(el);
+      const [, , , alpha = "1"] = st.color.match(/[\d.]+/g) ?? [];
+      const box = el.getBoundingClientRect();
+      return parseFloat(st.fontSize) >= 11 && Number(alpha) >= 0.5 && box.width > 40 && box.height > 10
+        && box.left >= 0 && box.right <= document.documentElement.clientWidth + 1;
+    };
+    const n = notice.getBoundingClientRect();
+    const b = button.getBoundingClientRect();
+    return {
+      text: notice.innerText.replace(/\s+/g, " ").trim(),
+      readable: readable(notice),
+      first: Boolean(notice.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING),
+      // Beside the button or above it, never below it.
+      placed: n.top <= b.top + 1 || n.left + n.width <= b.left + 1,
+      links: [...notice.querySelectorAll("a")].map((a) => a.getAttribute("href")),
+      card: notice.closest("section").innerText.replace(/\s+/g, " ").trim(),
+    };
+  });
+  if (found.missing) return note(page, where, `${found.missing} is not on the page`);
+  if (found.text !== PLAN_NOTICE) await note(page, where, `it says "${found.text}"`);
+  if (!PLAN_BUTTONS.some((button) => found.card === `${PLAN_CARD} ${button} ${PLAN_FOOT}`)) await note(page, where, `the card around it says "${found.card}"`);
+  if (!found.readable) await note(page, where, "it is on the page but not readable");
+  if (!found.first || !found.placed) await note(page, where, "it does not come before the Upgrade button");
+  if (found.links.length !== 2 || !found.links[0].endsWith("/refunds") || !found.links[1].endsWith("/terms")) {
+    await note(page, where, `its links go to ${found.links.join(", ")}`);
+  }
+}
+
 // The import page with a file chosen: the column-matching form, the
 // options and the first rows, which only exist once a file is read.
 const SAMPLE = [
@@ -165,6 +218,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", storageState: session });
     const page = await ctx.newPage();
     for (const path of [...SIGNED_IN, ...detail]) await checkPage(page, w, h, path);
+    await checkPlanNotice(page, w, h);
     if (merchant) await checkImport(page, w, h, merchant);
     if (w >= 900) await checkMenu(page, w, h);
     await ctx.close();
@@ -178,4 +232,4 @@ if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade.`);

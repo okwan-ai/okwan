@@ -41,7 +41,17 @@ from .models import (
     add_months,
     new_unsubscribe_token,
 )
-from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
+from .usage import (
+    CHECKOUTS_LISTED,
+    DEFAULT_PLAN,
+    NOT_ROOT_PLAN,
+    PLANS,
+    UNPAID_CHECKOUT_KEPT,
+    PlanRefused,
+    hour_bucket,
+)
+
+#: A billing record before any checkout was opened for it.
 
 
 class Store(Protocol):
@@ -86,6 +96,13 @@ class Store(Protocol):
         cancel_at_period_end: bool, current_period_end: datetime | None,
     ) -> None: ...
     async def billing_for(self, tenant_id: str) -> dict | None: ...
+    async def open_checkout(self, tenant_id: str, session_id: str, *, policy_version: str,
+                            at: datetime, ip: str) -> None: ...
+    async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
+                            terms_accepted_at: datetime | None) -> bool | None: ...
+    async def sweep_checkouts(self, now: datetime | None = None) -> int: ...
+    async def checkouts_for(self, tenant_id: str) -> list[dict]: ...
+    async def drop_checkout(self, tenant_id: str, session_id: str) -> None: ...
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
@@ -205,6 +222,7 @@ class MemoryStore:
         #: When each session was last used, for the idle limit.
         self._session_seen: dict[str, datetime] = {}
         self._billing: dict[str, dict] = {}
+        self._checkouts: dict[str, dict] = {}
         self._runs: dict[str, RunRecord] = {}
         self._conversations: dict[str, SupportConversation] = {}
         self._tickets: dict[str, SupportTicket] = {}
@@ -261,6 +279,7 @@ class MemoryStore:
         self._tickets = {k: v for k, v in self._tickets.items() if v.tenant_id not in gone}
         self._replies = [r for r in self._replies if r["tenant_id"] not in gone]
         self._billing = {k: v for k, v in self._billing.items() if k not in gone}
+        self._checkouts = {k: v for k, v in self._checkouts.items() if v["tenant_id"] not in gone}
         for file_id in [k for k, v in self._imports.items() if v.tenant_id in gone]:
             del self._imports[file_id]
             self._import_rows.pop(file_id, None)
@@ -291,6 +310,49 @@ class MemoryStore:
     async def billing_for(self, tenant_id: str) -> dict | None:
         found = self._billing.get(tenant_id)
         return dict(found) if found else None
+
+    async def open_checkout(self, tenant_id: str, session_id: str, *, policy_version: str,
+                            at: datetime, ip: str) -> None:
+        if tenant_id not in self._tenants:
+            raise ValueError(f"no such tenant: {tenant_id}")
+        self._checkouts = {k: v for k, v in self._checkouts.items() if not (
+            v["tenant_id"] == tenant_id and v["paid_at"] is None and v["opened_at"] < at - UNPAID_CHECKOUT_KEPT)}
+        self._checkouts.setdefault(session_id, {
+            "session_id": session_id, "tenant_id": tenant_id, "policy_version": policy_version,
+            "opened_at": at, "ip": ip, "paid_at": None, "subscription_id": None, "terms_accepted_at": None})
+
+    async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
+                            terms_accepted_at: datetime | None) -> bool | None:
+        row = self._checkouts.get(session_id)
+        if row is None or row["tenant_id"] != tenant_id:
+            return None
+        if row["paid_at"] is not None:
+            return False
+        self._checkouts[session_id] = {**row, "paid_at": at, "subscription_id": subscription_id,
+                                       "terms_accepted_at": terms_accepted_at}
+        return True
+
+    async def sweep_checkouts(self, now: datetime | None = None) -> int:
+        cutoff = (now or datetime.now(UTC)) - UNPAID_CHECKOUT_KEPT
+        gone = [k for k, v in self._checkouts.items() if v["paid_at"] is None and v["opened_at"] < cutoff]
+        for k in gone:
+            del self._checkouts[k]
+        return len(gone)
+
+    async def drop_checkout(self, tenant_id: str, session_id: str) -> None:
+        row = self._checkouts.get(session_id)
+        if row is not None and row["tenant_id"] == tenant_id and row["paid_at"] is None:
+            del self._checkouts[session_id]
+
+    async def checkouts_for(self, tenant_id: str) -> list[dict]:
+        rows = [dict(v) for v in self._checkouts.values() if v["tenant_id"] == tenant_id]
+        rows.sort(key=lambda r: r["session_id"])
+        rows.sort(key=lambda r: r["opened_at"], reverse=True)
+        # The paid ones and the newest unpaid ones, each bounded apart: no
+        # number of unpaid sessions pushes a paid one out of the list.
+        paid = [r for r in rows if r["paid_at"] is not None][:CHECKOUTS_LISTED]
+        unpaid = [r for r in rows if r["paid_at"] is None][:CHECKOUTS_LISTED]
+        return [r for r in rows if r in paid or r in unpaid]
 
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return next((t for t, b in self._billing.items() if b["customer_id"] == customer_id), None)

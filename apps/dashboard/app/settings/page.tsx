@@ -201,6 +201,9 @@ async function PlanTab({ merchants, selfId, merchant, days, upgraded }: {
           enabled={bill.enabled}
           plan={bill.plan}
           price={bill.pro_price_usd}
+          notice={bill.notice}
+          refundsUrl={bill.refunds_url}
+          termsUrl={bill.terms_url}
           canManage={bill.can_manage}
           periodEnd={bill.subscription?.current_period_end ?? null}
           cancelling={bill.subscription?.cancel_at_period_end ?? false}

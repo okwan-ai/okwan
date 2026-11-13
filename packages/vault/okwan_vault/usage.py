@@ -12,7 +12,7 @@ root, because an ISV's merchants are not customers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 #: Requests per calendar month. Free is deliberately usable — the point is
 #: for an ISV to reach a real integration before deciding, not to hit a
@@ -96,3 +96,11 @@ async def quota(store, tenant_id: str, now: datetime | None = None) -> Quota:
     plan, limit = await store.get_plan(root)
     used = await store.usage_since(root, month_start(now))
     return Quota(plan=plan, limit=limit, used=used)
+
+
+#: How long an unpaid checkout session's row is kept. Stripe ends an unpaid
+#: session a day after it opens and retries a webhook for three days; after
+#: a week no event can arrive for one.
+UNPAID_CHECKOUT_KEPT = timedelta(days=7)
+#: The most checkout rows read for one account, paid and unpaid each.
+CHECKOUTS_LISTED = 500

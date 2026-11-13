@@ -12,11 +12,14 @@ export function LegalPage({ title, intro, parts, updated = UPDATED }: { title: s
   return (
     <>
       <header className="border-b border-line/80 bg-paper">
-        <Wrap className="flex h-16 items-center justify-between gap-6">
+        {/* Four links and the logo do not fit one line on a phone: the
+            links drop below it there instead of running off the edge. */}
+        <Wrap className="flex min-h-16 flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3">
           <a href="/" aria-label="Okwan home"><OkwanLogo width={96} /></a>
-          <nav className="flex items-center gap-6 text-[14.5px] text-ink-soft" aria-label="Policies">
+          <nav className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[14.5px] text-ink-soft" aria-label="Policies">
             <a className="hover:text-ink aria-[current=page]:text-ink" href="/privacy" aria-current={title.startsWith("Privacy") ? "page" : undefined}>Privacy</a>
             <a className="hover:text-ink aria-[current=page]:text-ink" href="/terms" aria-current={title.startsWith("Terms") ? "page" : undefined}>Terms</a>
+            <a className="hover:text-ink aria-[current=page]:text-ink" href="/refunds" aria-current={title.startsWith("Refunds") ? "page" : undefined}>Refunds</a>
             <a className="hover:text-ink aria-[current=page]:text-ink" href="/security" aria-current={title.startsWith("Security") ? "page" : undefined}>Security</a>
           </nav>
         </Wrap>
@@ -51,10 +54,11 @@ export function LegalPage({ title, intro, parts, updated = UPDATED }: { title: s
       <footer className="border-t border-night-line bg-night text-night-soft">
         <Wrap className="flex flex-wrap items-center justify-between gap-4 py-8 text-[14px]">
           <p>© 2026 {COMPANY}</p>
-          <nav className="flex gap-6" aria-label="Footer">
+          <nav className="flex flex-wrap gap-x-6 gap-y-2" aria-label="Footer">
             <a className="hover:text-white" href="/">Home</a>
             <a className="hover:text-white" href="/privacy">Privacy</a>
             <a className="hover:text-white" href="/terms">Terms</a>
+            <a className="hover:text-white" href="/refunds">Refunds</a>
             <a className="hover:text-white" href="/security">Security</a>
             <a className="hover:text-white" href={`mailto:${CONTACT_EMAIL}`}>Contact</a>
           </nav>

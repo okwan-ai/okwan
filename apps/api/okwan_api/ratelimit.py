@@ -65,6 +65,11 @@ SAMPLE_IP = Rule("sample:ip", 120, 60)
 #: The unsubscribe link takes a token and no sign-in; this keeps one address
 #: from guessing at tokens (each is 24 random bytes) at any speed.
 UNSUBSCRIBE_IP = Rule("unsubscribe:ip", 30, 900)
+#: Opening Stripe's checkout or billing portal. Each is a request made with
+#: Okwan's own Stripe key, and a checkout is a row as well; a person needs
+#: one or two. Counted before Stripe is asked, so a burst and a call
+#: Stripe refuses both count.
+BILLING_TENANT = Rule("billing:tenant", 10, 3600)
 #: Operator console unlock: a wrong authenticator code is a guess.
 OPS_UNLOCK = Rule("ops:unlock", 5, 900)
 OPS_UNLOCK_IP = Rule("ops:unlock:ip", 10, 900)
@@ -120,7 +125,7 @@ class Limiter:
 
 _RULES = (SIGNUP_IP, SIGNUP_ADDRESS, VERIFY_IP, SIGNIN_IP, SIGNIN_ADDRESS,
           TEST_IP, TEST_TENANT, SQL_RECON_TENANT, IMPORT_TENANT, SAMPLE_IP,
-          UNSUBSCRIBE_IP)
+          UNSUBSCRIBE_IP, BILLING_TENANT)
 
 limiter = Limiter()
 

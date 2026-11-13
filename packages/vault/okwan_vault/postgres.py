@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import uuid
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -55,7 +56,15 @@ from .models import (
     add_months,
     new_unsubscribe_token,
 )
-from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
+from .usage import (
+    CHECKOUTS_LISTED,
+    DEFAULT_PLAN,
+    NOT_ROOT_PLAN,
+    PLANS,
+    UNPAID_CHECKOUT_KEPT,
+    PlanRefused,
+    hour_bucket,
+)
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 
@@ -109,6 +118,19 @@ def _tenant(row) -> Tenant:
     )
 
 
+#: How many times a start runs the schema before giving up on a race.
+MIGRATE_TRIES = 8
+
+
+def _raced(exc: asyncpg.PostgresError) -> bool:
+    """Whether a schema run was aborted by another one running beside it."""
+    if isinstance(exc, asyncpg.DeadlockDetectedError | asyncpg.DuplicateTableError | asyncpg.DuplicateObjectError
+                  | asyncpg.DuplicateFunctionError):
+        return True
+    said = str(exc)
+    return "tuple concurrently updated" in said or ("duplicate key value" in said and "pg_" in said)
+
+
 class PostgresStore:
     """Async store. Call `await connect()` before use."""
 
@@ -125,23 +147,26 @@ class PostgresStore:
         return self
 
     async def _migrate(self) -> None:
-        """Run schema.sql, retrying a deadlock.
+        """Run schema.sql, trying again when another start got in the way.
 
         Every step in it checks before it changes anything, so against a
         current database a start takes no exclusive table lock. The first
         start after a schema change does, and can meet autovacuum or an
-        instance still serving during a deploy; Postgres then aborts one
-        side, and here that side tries again.
+        instance still serving during a deploy; and two instances starting
+        at once run the same statements side by side. Postgres then aborts
+        one side (a deadlock, "tuple concurrently updated" for a function
+        both replace, a duplicate for a table both create), and here that
+        side tries again: every step is safe to run twice.
         """
-        for attempt in range(1, 4):
+        for attempt in range(1, MIGRATE_TRIES + 1):
             try:
                 async with self.pool.acquire() as con:
                     await con.execute(SCHEMA)
                 return
-            except asyncpg.DeadlockDetectedError:
-                if attempt == 3:
+            except asyncpg.PostgresError as exc:
+                if attempt == MIGRATE_TRIES or not _raced(exc):
                     raise
-                await asyncio.sleep(0.5 * attempt)
+                await asyncio.sleep(0.2 * attempt + random.random() * 0.3)
 
     async def _check_isolation(self) -> None:
         """Fail closed: never serve while the database could not keep
@@ -663,6 +688,69 @@ class PostgresStore:
             "SELECT tenant_id, customer_id, subscription_id, status, cancel_at_period_end, "
             "current_period_end, updated_at FROM billing WHERE tenant_id = $1", tenant_id)
         return dict(row) if row else None
+
+    async def open_checkout(self, tenant_id: str, session_id: str, *, policy_version: str,
+                            at: datetime, ip: str) -> None:
+        """One Stripe Checkout session Okwan opened, and what it showed:
+        the policy's version, when, and from which address. Written once;
+        a second write for the same session changes nothing. The account's
+        unpaid sessions older than `UNPAID_CHECKOUT_KEPT` go: Stripe ended
+        them long before, so none can still be paid."""
+        async with self.pool.acquire() as con, con.transaction():
+            await con.execute(
+                "DELETE FROM billing_checkouts WHERE tenant_id = $1 AND paid_at IS NULL AND opened_at < $2",
+                tenant_id, at - UNPAID_CHECKOUT_KEPT)
+            await con.execute(
+                "INSERT INTO billing_checkouts (session_id, tenant_id, policy_version, opened_at, ip) "
+                "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (session_id) DO NOTHING",
+                session_id, tenant_id, policy_version, at, ip)
+
+    async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
+                            terms_accepted_at: datetime | None) -> bool | None:
+        """Stripe reported this session paid. Marks the row Okwan wrote
+        when it opened that session for that account, the first time only:
+        a repeated event changes nothing. True when this marked it, False
+        when it was marked before, None when there is no such row."""
+        done = await self.pool.execute(
+            "UPDATE billing_checkouts SET paid_at = $3, subscription_id = $4, terms_accepted_at = $5 "
+            "WHERE session_id = $2 AND tenant_id = $1 AND paid_at IS NULL",
+            tenant_id, session_id, at, subscription_id, terms_accepted_at)
+        if done.endswith(" 1"):
+            return True
+        known = await self.pool.fetchval(
+            "SELECT 1 FROM billing_checkouts WHERE session_id = $2 AND tenant_id = $1", tenant_id, session_id)
+        return False if known else None
+
+    async def sweep_checkouts(self, now: datetime | None = None) -> int:
+        """Forget every account's unpaid checkout sessions more than a week
+        old: Stripe ended them long before, and what they hold (a time and
+        an address) is kept no longer than the privacy policy says. As the
+        login role, across accounts, like the other hourly sweeps."""
+        done = await self.pool.execute(
+            "DELETE FROM billing_checkouts WHERE paid_at IS NULL AND opened_at < $1",
+            (now or datetime.now(UTC)) - UNPAID_CHECKOUT_KEPT)
+        return int(done.rsplit(" ", 1)[1])
+
+    async def drop_checkout(self, tenant_id: str, session_id: str) -> None:
+        """Forget an unpaid session Stripe has ended: it can never take a
+        payment, so it is a record of nothing. A paid one is never dropped."""
+        await self.pool.execute(
+            "DELETE FROM billing_checkouts WHERE session_id = $2 AND tenant_id = $1 AND paid_at IS NULL",
+            tenant_id, session_id)
+
+    async def checkouts_for(self, tenant_id: str) -> list[dict]:
+        """The account's checkout sessions, newest first: the paid ones and
+        the newest unpaid ones, each up to CHECKOUTS_LISTED. Read apart, so
+        no number of unpaid sessions can push a paid one out of the list."""
+        cols = ("session_id, tenant_id, policy_version, opened_at, ip, paid_at, subscription_id, "
+                "terms_accepted_at")
+        rows = await self.pool.fetch(
+            f"(SELECT {cols} FROM billing_checkouts WHERE tenant_id = $1 AND paid_at IS NOT NULL "
+            "ORDER BY opened_at DESC, session_id LIMIT $2) UNION ALL "
+            f"(SELECT {cols} FROM billing_checkouts WHERE tenant_id = $1 AND paid_at IS NULL "
+            "ORDER BY opened_at DESC, session_id LIMIT $2) ORDER BY opened_at DESC, session_id",
+            tenant_id, CHECKOUTS_LISTED)
+        return [dict(r) for r in rows]
 
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return await self.pool.fetchval("SELECT tenant_id FROM billing WHERE customer_id = $1", customer_id)
