@@ -482,25 +482,25 @@ CREATE TABLE IF NOT EXISTS billing (
     updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
--- What the account was shown when it opened its checkout: the version of
--- the refund policy, when, and the address it came from; and when Stripe
--- reported the terms as agreed to, where a tick is required. Kept so a
--- disputed payment can be answered with what the customer saw (okwan_api
--- .policy). Checked first, like every step here, so a start takes no lock.
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = current_schema() AND table_name = 'billing'
-          AND column_name = 'policy_version'
-    ) THEN
-        ALTER TABLE billing
-            ADD COLUMN policy_version    text,
-            ADD COLUMN checkout_at       timestamptz,
-            ADD COLUMN checkout_ip       text,
-            ADD COLUMN terms_accepted_at timestamptz;
-    END IF;
-END $$;
+-- One row for each Stripe Checkout session Okwan opened: the version of the
+-- refund policy shown beside its pay button, when it was opened, and the
+-- address the request came from. When Stripe reports that session paid, its
+-- row is marked with when, the subscription it started, and when the terms
+-- were ticked, where a tick is required. A row is written once and marked
+-- paid once: no later checkout or billing event changes it, so a disputed
+-- payment is answered with what was shown for that payment (okwan_api.policy).
+-- An identity table, like billing.
+CREATE TABLE IF NOT EXISTS billing_checkouts (
+    session_id        text PRIMARY KEY,
+    tenant_id         text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    policy_version    text NOT NULL,
+    opened_at         timestamptz NOT NULL,
+    ip                text,
+    paid_at           timestamptz,
+    subscription_id   text,
+    terms_accepted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS billing_checkouts_tenant ON billing_checkouts (tenant_id, opened_at DESC);
 
 -- Every step checks before it acts. This runs on every start, and ALTER
 -- TABLE and GRANT take locks that a running instance's queries, or
@@ -535,7 +535,8 @@ BEGIN
     END LOOP;
     -- The identity tables: nothing for okwan_tenant, whatever was granted before.
     FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups',
-                             'operator_factors', 'operator_actions', 'billing'] LOOP
+                             'operator_factors', 'operator_actions', 'billing',
+                             'billing_checkouts'] LOOP
         IF has_table_privilege('okwan_tenant', t,
                                'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
             EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);

@@ -1,0 +1,125 @@
+{
+  "title": "Refunds and cancellation",
+  "version": "2026-11-13",
+  "updated": "November 13, 2026",
+  "summary": "What happens when you cancel Okwan Pro, when a payment is refunded and when it is not.",
+  "intro": "What happens when you cancel Okwan Pro, when a payment is refunded and when it is not. This is part of our [Terms of Service](/terms#plans); where an agreement you have signed with us says something different, the agreement applies.",
+  "parts": [
+    {
+      "id": "what-you-pay-for",
+      "title": "What you pay for",
+      "blocks": [
+        {
+          "kind": "p",
+          "lines": [
+            "Pro is 99 US dollars a month, billed monthly in advance by card through Stripe. Each payment covers one month of Pro, starting the day it is taken, and it renews each month until you cancel."
+          ]
+        },
+        {
+          "kind": "p",
+          "lines": [
+            "The free plan costs nothing and needs no card."
+          ]
+        },
+        {
+          "kind": "p",
+          "lines": [
+            "Before you pay, the plan page in the dashboard and the payment page at Stripe both show the price, that it renews, how to cancel, and a link to this page."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cancelling",
+      "title": "Cancelling",
+      "blocks": [
+        {
+          "kind": "p",
+          "lines": [
+            "You can cancel at any time from Manage billing in the dashboard, under Settings, Plan & usage."
+          ]
+        },
+        {
+          "kind": "p",
+          "lines": [
+            "Cancelling takes effect at the end of the month you have paid for: Pro stays on until then, no further payment is taken, and the account then returns to the free plan. Nothing in your account is deleted when it does."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "refunds",
+      "title": "Refunds",
+      "blocks": [
+        {
+          "kind": "p",
+          "lines": [
+            "A payment for Pro is not refunded, in whole or in part, once its month has started. Cancelling stops the next payment; it does not return the last one."
+          ]
+        },
+        {
+          "kind": "ul",
+          "lines": [
+            "If we took a payment by mistake, such as charging you twice for the same month or charging you after a cancellation had taken effect, tell us and we refund that payment in full.",
+            "Where the law that applies to you gives you a right to a refund, you have it.",
+            "A plan larger than Pro is refunded as its order form or agreement says."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "how-to-ask",
+      "title": "How to ask",
+      "blocks": [
+        {
+          "kind": "p",
+          "lines": [
+            "Email [info@globaltechstartup.com](mailto:info@globaltechstartup.com) from your sign-in address, with the date and amount of the payment."
+          ]
+        },
+        {
+          "kind": "p",
+          "lines": [
+            "A refund goes back through Stripe to the card that paid; how soon it shows is up to your bank."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "if-a-payment-looks-wrong",
+      "title": "If a payment looks wrong",
+      "blocks": [
+        {
+          "kind": "p",
+          "lines": [
+            "Please write to us before asking your bank to reverse a payment. We can see what happened and put a mistake right directly, and a dispute through a bank can take weeks or months to decide."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "changes",
+      "title": "Changes",
+      "blocks": [
+        {
+          "kind": "p",
+          "lines": [
+            "If this policy changes, the new version is posted here with its date. A payment is covered by the version that was shown when it was made."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "contact",
+      "title": "Contact",
+      "blocks": [
+        {
+          "kind": "p",
+          "lines": [
+            "Global Tech Startup LLC, Wyoming, United States. Email [info@globaltechstartup.com](mailto:info@globaltechstartup.com)."
+          ]
+        }
+      ]
+    }
+  ]
+}

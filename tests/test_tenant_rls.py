@@ -29,7 +29,7 @@ needs_db = pytest.mark.skipif(not DSN, reason="no vault database configured")
 #: a key hash, a session hash, an address or a Stripe customer to a tenant,
 #: which has to work before any tenant is known. The login role reads them;
 #: okwan_tenant cannot.
-IDENTITY_TABLES = {"api_keys", "sessions", "accounts", "billing"}
+IDENTITY_TABLES = {"api_keys", "sessions", "accounts", "billing", "billing_checkouts"}
 NO_TENANT_COLUMN = {"tenants", "signups", "operator_factors", "operator_actions"}
 
 #: Store methods that read tenant data across every tenant, on purpose, as
@@ -307,7 +307,8 @@ def _insert(table: str, tenant_id: str) -> tuple:
 
 @needs_db
 @pytest.mark.parametrize("table", ["tenants", "api_keys", "sessions", "accounts", "signups",
-                                   "operator_factors", "operator_actions", "billing"])
+                                   "operator_factors", "operator_actions", "billing",
+                                   "billing_checkouts"])
 async def test_the_role_cannot_read_the_identity_tables(store, table):
     async with store.pool.acquire() as con:
         with pytest.raises(Exception, match="permission denied"):

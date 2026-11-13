@@ -18,13 +18,17 @@ untouched.
 * **The policy is shown before the card is charged.** Checkout carries the
   price, that it renews, how to cancel and that a month is not refunded,
   with links to the refund policy and the Terms (`policy.at_checkout`),
-  beside the pay button. What was shown is recorded on the account: the
-  policy's version, when, and from which address. A cardholder who
-  disputes a payment is answered with it. With OKWAN_BILLING_REQUIRE_TERMS
-  on, Checkout also makes the customer tick a box agreeing to both, and
-  the record keeps when Stripe reported it ticked; Stripe refuses such a
-  session until the Terms' address is set in the Stripe account's public
-  details, which is why it is a switch and not the default.
+  beside the pay button. What each Checkout session showed is recorded
+  under that session's own id: the policy's version, when, and from which
+  address. When Stripe reports a session paid, that session's record, and
+  no other, is marked with when and with the subscription it started; it
+  is written once and never changed by a later checkout. A cardholder who
+  disputes a payment is answered with the record of the session that took
+  it. With OKWAN_BILLING_REQUIRE_TERMS on, Checkout also makes the
+  customer tick a box agreeing to both, and the record keeps when Stripe
+  reported it ticked; Stripe refuses such a session until the Terms'
+  address is set in the Stripe account's public details, which is why it
+  is a switch and not the default.
 
 Off until OKWAN_BILLING_STRIPE_SECRET_KEY, OKWAN_BILLING_STRIPE_WEBHOOK_SECRET
 and OKWAN_BILLING_PRO_PRICE_ID are set; the dashboard then offers a call
@@ -38,24 +42,28 @@ import json
 import logging
 import os
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from okwan_vault import accounts
 
-from . import policy
-from .auth import admin_actor, get_store, quota_for
+from . import access, policy
+from .auth import get_store, quota_for
 from .ratelimit import client_ip
 
 logger = logging.getLogger("okwan.billing")
 
 STRIPE_API = "https://api.stripe.com/v1"
 PRO = "pro"
-PRO_PRICE_USD = 99
+#: One number, said by the plan page, Checkout and the refund policy.
+PRO_PRICE_USD = policy.PRO_PRICE_USD
 #: How old a webhook's signature may be: Stripe's own default tolerance.
 SIGNATURE_TOLERANCE = 300
+#: The most unpaid Checkout sessions one account may have opened in a day.
+#: Each is a request to Stripe and a row here, and a person needs one.
+MAX_OPEN_CHECKOUTS = 20
 #: Subscription states that keep Pro. past_due is Stripe retrying a failed
 #: payment; the plan holds while it does, and ends if Stripe gives up.
 PAID = frozenset({"active", "trialing", "past_due"})
@@ -120,16 +128,22 @@ def verify_signature(payload: bytes, header: str, secret: str, now: float | None
     return any(hmac.compare_digest(expected, sig) for sig in parts.get("v1", []))
 
 
-async def _session_token(authorization: str = Header(default="")) -> str:
-    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
-    if not token.startswith(f"{accounts.SESSION_PREFIX}_"):
-        raise HTTPException(403, "billing is managed from the dashboard")
-    return token
-
-
-async def session_owner(_: str = Depends(_session_token), tenant=Depends(admin_actor)) -> Any:
+async def session_owner(request: Request, authorization: str = Header(default=""),
+                        x_okwan_key: str = Header(default="")) -> Any:
     """Billing is a person's decision: a dashboard session on the paying
-    account, never an API key, and never a merchant under it."""
+    account, never an API key, and never a merchant under it.
+
+    The account is the one the session itself belongs to. A request that
+    carries an API key is refused whatever else it carries: the key would
+    otherwise be the identity, with a session-shaped header beside it as
+    decoration."""
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    if x_okwan_key.strip() or not token.startswith(f"{accounts.SESSION_PREFIX}_"):
+        raise HTTPException(403, "billing is managed from the dashboard")
+    tenant = await get_store().tenant_for_session(accounts.hash_token(token))
+    if tenant is None:
+        raise HTTPException(401, "session expired — sign in again")
+    access.remember_request(request, token)
     if tenant.parent_id is not None:
         raise HTTPException(403, "billing belongs to the account, not a merchant")
     return tenant
@@ -151,9 +165,14 @@ async def apply_subscription(tenant_id: str, sub: dict[str, Any]) -> str:
 
 async def _tenant_for(obj: dict[str, Any]) -> str | None:
     """Whose subscription this is: our own tenant id, put in the metadata at
-    Checkout, else the customer we already linked. Only a root account."""
+    Checkout, else the customer we already linked. Only a root account.
+
+    Never `client_reference_id`: on a Stripe payment link or pricing table
+    that is a value the buyer writes into the address, so it would let a
+    buyer name the account their payment is for. Metadata is set only with
+    Okwan's Stripe key."""
     store = get_store()
-    tenant_id = (obj.get("metadata") or {}).get("tenant_id") or obj.get("client_reference_id")
+    tenant_id = (obj.get("metadata") or {}).get("tenant_id")
     if not tenant_id and obj.get("customer"):
         tenant_id = await store.tenant_for_billing_customer(str(obj["customer"]))
     if not tenant_id:
@@ -172,8 +191,7 @@ def build_router() -> APIRouter:
         record = await get_store().billing_for(tenant.id)
         return {
             "enabled": enabled(), "plan": q.plan, "pro_price_usd": PRO_PRICE_USD,
-            # A record with no subscription is a checkout that was opened and not paid.
-            "subscription": None if record is None or not record["subscription_id"] else {
+            "subscription": None if record is None else {
                 "status": record["status"], "cancel_at_period_end": record["cancel_at_period_end"],
                 "current_period_end": record["current_period_end"].isoformat() if record["current_period_end"] else None,
             },
@@ -187,6 +205,11 @@ def build_router() -> APIRouter:
         store = get_store()
         if (await quota_for(tenant)).plan != "free":
             raise HTTPException(409, "this account is already on a paid plan")
+        now = datetime.now(UTC)
+        opened = [c for c in await store.checkouts_for(tenant.id)
+                  if c["paid_at"] is None and c["opened_at"] > now - timedelta(days=1)]
+        if len(opened) >= MAX_OPEN_CHECKOUTS:
+            raise HTTPException(429, "too many checkouts opened today; finish one already open, or try tomorrow")
         record = await store.billing_for(tenant.id)
         app = dashboard_url()
         form = {
@@ -215,8 +238,10 @@ def build_router() -> APIRouter:
             if email:
                 form["customer_email"] = email
         session = await _stripe("/checkout/sessions", form)
-        await store.note_checkout(tenant.id, policy_version=policy.VERSION, at=datetime.now(UTC),
-                                  ip=client_ip(request))
+        # What this session shows, filed under the session's own id: the
+        # webhook marks this row, and only this one, when it is paid.
+        await store.open_checkout(tenant.id, str(session["id"]), policy_version=form["metadata[refund_policy]"],
+                                  at=now, ip=client_ip(request))
         return {"url": session["url"]}
 
     @router.post("/portal")
@@ -252,10 +277,15 @@ def build_router() -> APIRouter:
                     tenant_id, customer_id=str(obj.get("customer") or ""),
                     subscription_id=str(obj["subscription"]), status="active",
                     cancel_at_period_end=False, current_period_end=None)
-                if (obj.get("consent") or {}).get("terms_of_service") == "accepted":
-                    stamp = event.get("created")
-                    await store.note_terms_accepted(
-                        tenant_id, datetime.fromtimestamp(int(stamp), UTC) if stamp else datetime.now(UTC))
+                stamp = event.get("created")
+                when = datetime.fromtimestamp(int(stamp), UTC) if stamp else datetime.now(UTC)
+                ticked = (obj.get("consent") or {}).get("terms_of_service") == "accepted"
+                if not await store.checkout_paid(
+                        tenant_id, str(obj.get("id") or ""), at=when, subscription_id=str(obj["subscription"]),
+                        terms_accepted_at=when if ticked else None):
+                    # Paid, and Pro follows; but not through a session this
+                    # service opened, so there is no record of what it showed.
+                    logger.warning("billing: paid checkout for %s has no record of what it showed", tenant_id)
                 await store.set_plan(tenant_id, PRO)
                 return {"received": True, "plan": PRO}
         if kind in ("customer.subscription.created", "customer.subscription.updated",

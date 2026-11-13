@@ -80,6 +80,12 @@ jobs:
         run: npm run typecheck
       - run: npm run build
 
+      # The refund page as it will be served says the policy, whole, and
+      # nothing else: every word between <main> and </main> against the file
+      # okwan_api/policy.py writes. Part of the required `web (web)` check.
+      - if: matrix.app == 'web'
+        run: node scripts/check-refunds.mjs
+
       # The layout check (docs/ops/RUNBOOK.md, "Layout check"): the built
       # dashboard against the API with a seeded, in-memory workspace, every
       # page at four widths. Nothing may overlap, scroll sideways, or cover

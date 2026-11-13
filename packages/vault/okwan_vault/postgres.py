@@ -55,7 +55,15 @@ from .models import (
     add_months,
     new_unsubscribe_token,
 )
-from .usage import DEFAULT_PLAN, NOT_ROOT_PLAN, PLANS, PlanRefused, hour_bucket
+from .usage import (
+    CHECKOUTS_LISTED,
+    DEFAULT_PLAN,
+    NOT_ROOT_PLAN,
+    PLANS,
+    UNPAID_CHECKOUT_KEPT,
+    PlanRefused,
+    hour_bucket,
+)
 
 SCHEMA = (Path(__file__).parent / "schema.sql").read_text()
 
@@ -661,24 +669,44 @@ class PostgresStore:
     async def billing_for(self, tenant_id: str) -> dict | None:
         row = await self.pool.fetchrow(
             "SELECT tenant_id, customer_id, subscription_id, status, cancel_at_period_end, "
-            "current_period_end, updated_at, policy_version, checkout_at, checkout_ip, terms_accepted_at "
-            "FROM billing WHERE tenant_id = $1", tenant_id)
+            "current_period_end, updated_at FROM billing WHERE tenant_id = $1", tenant_id)
         return dict(row) if row else None
 
-    async def note_checkout(self, tenant_id: str, *, policy_version: str, at: datetime, ip: str) -> None:
-        """What the account was shown as it went to pay: the policy's
-        version, when, and from which address. The latest checkout wins."""
-        await self.pool.execute(
-            "INSERT INTO billing (tenant_id, status, policy_version, checkout_at, checkout_ip) "
-            "VALUES ($1, 'none', $2, $3, $4) ON CONFLICT (tenant_id) DO UPDATE SET "
-            "policy_version = EXCLUDED.policy_version, checkout_at = EXCLUDED.checkout_at, "
-            "checkout_ip = EXCLUDED.checkout_ip",
-            tenant_id, policy_version, at, ip)
+    async def open_checkout(self, tenant_id: str, session_id: str, *, policy_version: str,
+                            at: datetime, ip: str) -> None:
+        """One Stripe Checkout session Okwan opened, and what it showed:
+        the policy's version, when, and from which address. Written once;
+        a second write for the same session changes nothing. The account's
+        unpaid sessions older than `UNPAID_CHECKOUT_KEPT` go: Stripe ended
+        them long before, so none can still be paid."""
+        async with self.pool.acquire() as con, con.transaction():
+            await con.execute(
+                "DELETE FROM billing_checkouts WHERE tenant_id = $1 AND paid_at IS NULL AND opened_at < $2",
+                tenant_id, at - UNPAID_CHECKOUT_KEPT)
+            await con.execute(
+                "INSERT INTO billing_checkouts (session_id, tenant_id, policy_version, opened_at, ip) "
+                "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (session_id) DO NOTHING",
+                session_id, tenant_id, policy_version, at, ip)
 
-    async def note_terms_accepted(self, tenant_id: str, at: datetime) -> None:
-        """Stripe reported the terms as agreed to at checkout."""
+    async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
+                            terms_accepted_at: datetime | None) -> bool:
+        """Stripe reported this session paid. Marks the row Okwan wrote
+        when it opened that session for that account, the first time only:
+        a repeated event changes nothing. False when there is no such row."""
         await self.pool.execute(
-            "UPDATE billing SET terms_accepted_at = $2 WHERE tenant_id = $1", tenant_id, at)
+            "UPDATE billing_checkouts SET paid_at = $3, subscription_id = $4, terms_accepted_at = $5 "
+            "WHERE session_id = $2 AND tenant_id = $1 AND paid_at IS NULL",
+            tenant_id, session_id, at, subscription_id, terms_accepted_at)
+        return bool(await self.pool.fetchval(
+            "SELECT 1 FROM billing_checkouts WHERE session_id = $2 AND tenant_id = $1", tenant_id, session_id))
+
+    async def checkouts_for(self, tenant_id: str) -> list[dict]:
+        """The account's checkout sessions, newest first."""
+        rows = await self.pool.fetch(
+            "SELECT session_id, tenant_id, policy_version, opened_at, ip, paid_at, subscription_id, "
+            "terms_accepted_at FROM billing_checkouts WHERE tenant_id = $1 "
+            "ORDER BY opened_at DESC, session_id LIMIT $2", tenant_id, CHECKOUTS_LISTED)
+        return [dict(r) for r in rows]
 
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return await self.pool.fetchval("SELECT tenant_id FROM billing WHERE customer_id = $1", customer_id)
