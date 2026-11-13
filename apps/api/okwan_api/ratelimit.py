@@ -161,12 +161,15 @@ def address_from(headers: Mapping[str, str], peer: str | None) -> str:
     hops = int(os.environ.get("OKWAN_TRUSTED_PROXY_HOPS", "1"))
     chain = [p.strip() for p in headers.get("x-forwarded-for", "").split(",")
              if p.strip()]
-    if matched and forwarded:
-        return forwarded
+    # Whichever header it comes from, what is recorded as the caller's
+    # address has to read as one: it is kept in the access log and can be
+    # sent to a bank as evidence.
+    if matched and _address(forwarded):
+        return _address(forwarded)
     if cloudflare:
         return cloudflare
-    if hops and len(chain) >= hops:
-        return chain[-hops]
+    if hops and len(chain) >= hops and _address(chain[-hops]):
+        return _address(chain[-hops])
     return peer or "unknown"
 
 

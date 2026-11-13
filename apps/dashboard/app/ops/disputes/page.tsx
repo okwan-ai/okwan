@@ -21,12 +21,13 @@ async function Disputes() {
   return (
     <section aria-labelledby="disputes-title" className="space-y-5">
       <div className="rounded-xl border border-line bg-surface p-5">
-        <h2 id="disputes-title" className="text-base font-semibold">Okwan&apos;s own payments, last {act.days} days</h2>
-        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+        <h2 id="disputes-title" className="text-base font-semibold">Okwan&apos;s payments, last {act.days} days</h2>
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-5">
           {[
             ["Payments", act.payments.toLocaleString("en-US")],
             ["Disputed", act.disputes.toLocaleString("en-US")],
-            ["Flagged by a bank", act.warnings.toLocaleString("en-US")],
+            ["Inquiries", act.inquiries.toLocaleString("en-US")],
+            ["Flagged for fraud", act.warnings.toLocaleString("en-US")],
             ["Disputed, of payments", act.rate ?? "no payments"],
           ].map(([label, value]) => (
             <div key={label}>
@@ -51,7 +52,7 @@ async function Disputes() {
                     <span className="font-medium tabular-nums">{d.amount}</span>
                     <DisputeState d={d} />
                   </span>
-                  <span className="mt-2 block text-sm">{d.account?.name ?? "Account not matched"}</span>
+                  <span className="mt-2 block text-sm">{d.account?.name ?? (d.matched ? "Account deleted" : "Not an Okwan payment on record")}</span>
                   <span className="block text-xs text-ink-soft">
                     {d.reason?.replaceAll("_", " ") ?? "no reason given"} · opened {day(d.opened_at)}
                     {d.due_by && <> · due {day(d.due_by)}</>}
@@ -83,7 +84,7 @@ async function Disputes() {
                       {d.account ? (
                         <Link href={`/ops/accounts/${d.account.id}`} className="hover:underline">{d.account.name}</Link>
                       ) : (
-                        <span className="text-ink-soft">not matched</span>
+                        <span className="text-ink-soft">{d.matched ? "account deleted" : "not an Okwan payment on record"}</span>
                       )}
                     </Td>
                     <Td className="text-ink-soft">{d.reason?.replaceAll("_", " ") ?? "none given"}</Td>

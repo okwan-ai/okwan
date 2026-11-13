@@ -502,39 +502,51 @@ CREATE TABLE IF NOT EXISTS billing_checkouts (
 );
 CREATE INDEX IF NOT EXISTS billing_checkouts_tenant ON billing_checkouts (tenant_id, opened_at DESC);
 
--- Okwan's own payments, as Stripe reports each one succeeding: which
--- customer paid, how much and when. What dispute activity is measured
--- against, and how a disputed charge finds its account. Amounts are minor
--- units, as Stripe sends them. Never card details.
+-- Payments for Pro, as Stripe reports each one succeeding: which customer
+-- paid, how much and when. How a disputed charge finds its account, and
+-- what Okwan's dispute rate is measured against. The Stripe account takes
+-- payments for other products as well, and Stripe sends this endpoint all
+-- of them: one whose customer no Okwan account is linked to is kept
+-- unmatched for a week, in case its account is linked a moment later, and
+-- then forgotten. `okwan` stays true once matched, also after the account
+-- is deleted. Amounts are minor units, as Stripe sends them. Never card details.
 CREATE TABLE IF NOT EXISTS billing_payments (
     charge_id    text PRIMARY KEY,
     tenant_id    text REFERENCES tenants(id) ON DELETE SET NULL,
     customer_id  text,
+    okwan        boolean NOT NULL DEFAULT false,
     amount_minor bigint NOT NULL,
     currency     text NOT NULL,
     paid_at      timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS billing_payments_paid ON billing_payments (paid_at);
+CREATE INDEX IF NOT EXISTS billing_payments_customer ON billing_payments (customer_id);
 
--- A payment a cardholder's bank has questioned: a dispute, or the bank's
--- early warning that one may follow. Kept from Stripe's signed events, the
--- newest applied last, so the operator knows the day it arrives and the
--- date evidence is due. The account's row going leaves the dispute: it
--- still has to be answered.
+-- A payment a cardholder's bank has questioned: a dispute (or the inquiry
+-- that comes before one), or the bank's early warning of fraud. Kept from
+-- Stripe's signed events, the newest applied last. `okwan`: its charge is
+-- a payment for Pro; one that is not may be another product's on the same
+-- Stripe account. `submitted`: an answer has been sent, which is not the
+-- same as evidence saved in Stripe (`has_evidence`). `told`: what the
+-- operator was last mailed about it, "open" or "ended". The account's row
+-- going leaves the dispute: it still has to be answered.
 CREATE TABLE IF NOT EXISTS billing_disputes (
     dispute_id   text PRIMARY KEY,
     kind         text NOT NULL,
     charge_id    text NOT NULL,
     tenant_id    text REFERENCES tenants(id) ON DELETE SET NULL,
+    okwan        boolean NOT NULL DEFAULT false,
     amount_minor bigint,
     currency     text,
     reason       text,
     status       text NOT NULL,
     due_by       timestamptz,
     has_evidence boolean NOT NULL DEFAULT false,
+    submitted    boolean NOT NULL DEFAULT false,
     opened_at    timestamptz NOT NULL,
     closed_at    timestamptz,
     event_at     timestamptz NOT NULL,
+    told         text,
     reminded_at  timestamptz
 );
 CREATE INDEX IF NOT EXISTS billing_disputes_opened ON billing_disputes (opened_at DESC);

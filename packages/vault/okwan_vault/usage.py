@@ -104,3 +104,12 @@ async def quota(store, tenant_id: str, now: datetime | None = None) -> Quota:
 UNPAID_CHECKOUT_KEPT = timedelta(days=7)
 #: The most checkout rows read for one account, paid and unpaid each.
 CHECKOUTS_LISTED = 500
+
+#: A dispute's states at Stripe in which the bank is waiting for the seller,
+#: and those in which it is over.
+DISPUTE_NEEDS = frozenset({"needs_response", "warning_needs_response"})
+DISPUTE_ENDED = frozenset({"won", "lost", "warning_closed", "prevented"})
+#: How long a payment is kept while no Okwan account is known for it. The
+#: Stripe account takes payments for other products too; theirs are heard
+#: of and, never matched, forgotten after this.
+UNMATCHED_PAYMENT_KEPT = timedelta(days=7)

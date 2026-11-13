@@ -61,7 +61,7 @@ function Dispute({ d }: { d: DisputeDetail }) {
             {d.account ? (
               <Link href={`/ops/accounts/${d.account.id}`} className="hover:underline">{d.account.name}</Link>
             ) : (
-              <span>account not matched</span>
+              <span>{d.matched ? "account deleted" : "not an Okwan payment on record"}</span>
             )}
             <span aria-hidden>·</span>
             <span>opened {day(d.opened_at)}</span>
@@ -73,10 +73,17 @@ function Dispute({ d }: { d: DisputeDetail }) {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
         <section aria-labelledby="evidence-title" className="min-w-0 space-y-3">
           <h2 id="evidence-title" className="text-base font-semibold">What Okwan holds, in the fields of Stripe&apos;s form</h2>
-          <p className="text-sm text-ink-soft">
-            Read each one, add what only you know, and enter it on the payment&apos;s page in Stripe. An answer is sent
-            once and cannot be changed. {e.characters.toLocaleString("en-US")} characters in all; Stripe takes 150,000.
-          </p>
+          {e.matched ? (
+            <p className="text-sm text-ink-soft">
+              Read each one, add what only you know, and enter it on the payment&apos;s page in Stripe. An answer is sent
+              once and cannot be changed. {e.characters.toLocaleString("en-US")} characters in all; Stripe takes 150,000.
+            </p>
+          ) : (
+            <p className="rounded-lg border border-line bg-canvas p-3 text-sm">
+              This charge is not a payment Okwan has on record, so there is nothing here to send. The Stripe account
+              takes payments for other products too: it may be one of theirs. Look the payment up in Stripe.
+            </p>
+          )}
           <ul className="space-y-3">
             {ordered.map((name) => (
               <Field key={name} name={name} field={e.fields[name]} wanted={wanted.has(name)} />
@@ -95,11 +102,13 @@ function Dispute({ d }: { d: DisputeDetail }) {
               <>
                 <p className="mt-1 text-2xl font-semibold tabular-nums">{day(d.due_by)}</p>
                 <p className="mt-1 text-sm text-ink-soft">
-                  {d.has_evidence
+                  {d.submitted
                     ? "An answer has been sent. The bank decides."
-                    : d.ended
+                    : d.stage === "ended"
                       ? "The bank has decided."
-                      : "After this date the dispute is lost."}
+                      : d.saved
+                        ? "Evidence is saved in Stripe but has not been sent. After this date the dispute is lost."
+                        : "After this date the dispute is lost."}
                 </p>
               </>
             )}
@@ -129,7 +138,11 @@ function Dispute({ d }: { d: DisputeDetail }) {
                 </li>
               ))}
             </ul>
-            <p className="mt-3 text-xs text-ink-soft">The policy on record for this payment is version {e.policy_version}.</p>
+            <p className="mt-3 text-xs text-ink-soft">
+              {e.policy_version
+                ? `The policy on record for this payment is version ${e.policy_version}.`
+                : "No policy version is on record for this payment."}
+            </p>
           </section>
         </aside>
       </div>

@@ -643,16 +643,17 @@ it is cancelled at period end, unpaid or expired.
   way: a customer who is not answered asks their bank instead.
 - **A payment is disputed.** A cardholder has asked their bank to take a
   payment back. You are mailed at `OKWAN_SUPPORT_ESCALATION_TO` when it
-  arrives (`[Dispute] $99.00 disputed, answer due …`), again inside three
-  days of the date if nothing has been sent, and when the bank decides.
-  The date is the bank's: after it the dispute is lost, and an answer can
-  be sent **once**. Every dispute counts against the account, won or
-  lost, so the first question is whether to answer at all:
+  arrives (`[Dispute] $99.00 disputed, answer due …`), once a day inside
+  three days of the date while no answer has been sent, and when the bank
+  decides. The date is the bank's: after it the dispute is lost, and an
+  answer can be sent **once**. Every dispute counts against the account,
+  won or lost, so the first question is whether to answer at all:
   1. Open it in the console, **Disputes**. The page shows the days left,
      the bank's reason in plain words, and what Okwan holds, already in
      the fields of Stripe's form: who the customer is, the address they
      paid from, the refund policy in the version they were shown and when,
-     and their own requests to Okwan after the payment.
+     and their own requests to Okwan after the payment. Each field also
+     says what only you can add, and what it could not find.
   2. If the customer is right (charged twice, charged after a cancellation
      took effect), accept the dispute in Stripe and write to them. Stripe's
      own advice is to accept rather than refund: the disputed amount has
@@ -667,21 +668,40 @@ it is cancelled at period end, unpaid or expired.
      each field from the console page, add what it marks *To add by
      hand*, and attach the files it lists (print the console page to a
      PDF for the policy as shown; the receipt is on the payment's page).
-     Read it through, then submit. Okwan never submits for you and its
-     Stripe key cannot.
+     Read it through, then **submit**. Saving the form in Stripe is not
+     sending it: the console keeps saying *Answer due* and the reminders
+     keep coming until Stripe reports the answer submitted. Okwan never
+     submits for you and its Stripe key cannot.
   5. The console's Disputes page then shows *Answered, with the bank*. The
      bank usually takes 60 to 75 days; you are mailed when it decides.
+- **A bank asks about a payment** (`[Inquiry] …`): the step some card
+  networks take before a dispute. Answer it the same way, or refund the
+  payment in full: Stripe says either can settle it with no dispute and no
+  fee, and that leaving it unanswered can turn it into a dispute that is
+  unlikely to be won. It is not counted in the rate unless it becomes one;
+  you are mailed again if it does.
 - **A bank flags a payment** (`[Payment flagged] …`): an early fraud
   warning. No money has moved and nothing has to be answered. Stripe's
   documentation says about four in ten become a dispute if the payment is
   not refunded. Look at the account: if it does not look like the owner's
   own payment, refund it in Stripe and cancel the subscription.
-- **The dispute rate.** The console's Disputes page shows disputes in the
-  last 30 days against payments in them, beside 0.5% (Visa's monitoring
-  line) and 0.75% (the level Stripe's documentation calls excessive).
-  With few payments one dispute crosses both; what a card network acts on
-  is a month's count as well as its rate. A second dispute in a month is
-  the moment to stop and find the cause before taking more payments.
+- **A dispute that is "not matched to an Okwan payment".** The Stripe
+  account takes payments for other products, and Stripe sends Okwan every
+  dispute on the account. One whose charge is not a payment Okwan has on
+  record is still mailed and listed, so nothing on the account is missed,
+  but Okwan holds no evidence for it and it is not in Okwan's rate. It is
+  another product's, or an Okwan payment from before this record began
+  (the day the webhook's `charge.succeeded` event was switched on): open
+  the payment in Stripe to see which.
+- **The dispute rate.** The console's Disputes page shows Okwan's disputes
+  in the last 30 days against Okwan's payments in them, beside 0.75% (the
+  level Stripe's documentation calls excessive) and, with fraud warnings
+  added, 0.5% (Visa's monitoring line). With few payments one dispute
+  crosses both; what a card network acts on is a month's count as well as
+  its rate. The card networks measure the whole Stripe account, the other
+  products included: Stripe's own dashboard has that figure, and it is
+  the one that decides whether the account is restricted. A second
+  dispute in a month is the moment to stop and find the cause.
 - **Larger plans** (Team, Enterprise) stay agreed in writing and set with
   `plan set`; they do not go through Checkout.
 
@@ -826,7 +846,9 @@ Open, and not this runbook's to make:
 
 ### Switching on card payments (once)
 
-In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
+In the company's Stripe account (Global Tech Startup LLC), live mode. Other
+products take payments through the same account: nothing below may change a
+setting that belongs to the whole account.
 
 1. **Product:** Product catalogue → Add product "Okwan Pro", recurring,
    $99.00 USD monthly. Copy its **price id** (`price_...`).
@@ -853,19 +875,16 @@ In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
    `OKWAN_BILLING_STRIPE_WEBHOOK_SECRET` and
    `OKWAN_BILLING_STRIPE_SECRET_KEY` to those three values, and redeploy.
    Health then shows *Card payments (Stripe): on*.
-6. **Policies on Stripe's own pages** (so the bank sees them where the
-   customer paid). Settings → Business → Public details: the Terms of
-   service address `https://okwan.ai/terms`, the Privacy policy
-   `https://okwan.ai/privacy`, and a support email. Then in Checkout
-   settings, enable *Contact information*, *Legal policies*, and *Return
-   and Refund policies* with the link to the full policy,
-   `https://okwan.ai/refunds`. Okwan's own text beside the pay button
-   needs none of this; it is there from the first checkout.
-7. **A box to tick** (optional, after step 6). Set
-   `OKWAN_BILLING_REQUIRE_TERMS=on` on the `okwan` service: Checkout then
-   makes the customer tick agreement to the Terms and the refund policy,
-   and that checkout's record keeps when Stripe reported it ticked. Do one
-   test checkout after switching it on: Stripe refuses every checkout
-   with this set if the Terms' address in step 6 is missing.
+6. **Leave the account's own policy settings alone.** *Public details*
+   (the Terms and Privacy addresses, the support email) and the Checkout
+   settings *Legal policies* and *Return and Refund policies* belong to the
+   whole Stripe account, and so would show on the other products' payment
+   pages too. Okwan does not need them: its own text beside the pay button
+   carries the policy and its links, per checkout, from the first one.
+7. **The box to tick stays off.** `OKWAN_BILLING_REQUIRE_TERMS=on` makes
+   Checkout ask the customer to tick agreement, but Stripe refuses every
+   checkout with it unless the account's Terms address in *Public details*
+   is set, which step 6 says not to set for Okwan alone. Keep it `off`
+   unless the company gives the whole account one Terms page.
 
 Keys go only into Render, never into chat, code or a screenshot.

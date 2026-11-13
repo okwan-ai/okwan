@@ -423,24 +423,24 @@ def build_router() -> APIRouter:
         tenant = await get_store().get_tenant(d["tenant_id"]) if d["tenant_id"] else None
         return {
             "id": d["dispute_id"], "kind": d["kind"], "status": d["status"], "reason": d["reason"],
-            "amount": disputes.amount(d), "amount_minor": d["amount_minor"], "currency": d["currency"],
-            "charge_id": d["charge_id"], "opened_at": d["opened_at"].isoformat(),
-            "due_by": d["due_by"].isoformat() if d["due_by"] else None,
-            "days_left": disputes.days_left(d["due_by"], now), "has_evidence": d["has_evidence"],
-            "needs_answer": d["status"] in disputes.NEEDS_ANSWER and not d["has_evidence"],
-            "ended": d["status"] in disputes.ENDED,
+            "stage": disputes.stage(d), "amount": disputes.amount(d), "charge_id": d["charge_id"],
+            "opened_at": d["opened_at"].isoformat(), "due_by": d["due_by"].isoformat() if d["due_by"] else None,
+            "days_left": disputes.days_left(d["due_by"], now),
+            # Waiting for an answer: none has been sent. Evidence saved in
+            # Stripe and not submitted is `saved`, and still waiting.
+            "needs_answer": disputes.waits(d), "submitted": d["submitted"],
+            "saved": d["has_evidence"] and not d["submitted"],
+            # False: its charge is not a payment Okwan has on record.
+            "matched": d["okwan"],
             "account": {"id": tenant.id, "name": tenant.name} if tenant else None,
         }
 
     @router.get("/disputes")
     async def disputes_list(op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
-        """Okwan's own disputed payments with the rate: what is waiting for
-        an answer first, the nearest date at the top, then the rest newest first."""
+        """Disputed payments with Okwan's rate: what is waiting for an
+        answer first, the nearest date at the top, then the rest newest first."""
         now = datetime.now(UTC)
         rows = [await _dispute_row(d, now) for d in await get_store().disputes(200)]
-        far = 10**6
-        rows.sort(key=lambda r: (not r["needs_answer"], r["days_left"] if r["days_left"] is not None else far)
-                  if r["needs_answer"] else (True, 0))
         await _log(op, "list_disputes", count=len(rows))
         act = await disputes.activity(now)
         return {"activity": {**act, "said": disputes.activity_line(act)}, "data": rows}

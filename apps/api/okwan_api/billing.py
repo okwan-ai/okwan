@@ -285,7 +285,8 @@ async def _tenant_for(obj: dict[str, Any]) -> str | None:
     buyer name the account their payment is for. Metadata is set only with
     Okwan's Stripe key."""
     store = get_store()
-    tenant_id = (obj.get("metadata") or {}).get("tenant_id")
+    meta = obj.get("metadata")
+    tenant_id = meta.get("tenant_id") if isinstance(meta, dict) else None
     if not tenant_id and obj.get("customer"):
         tenant_id = await store.tenant_for_billing_customer(str(obj["customer"]))
     if not tenant_id:
@@ -396,8 +397,12 @@ def build_router() -> APIRouter:
         if not secret or not verify_signature(payload, stripe_signature, secret):
             raise HTTPException(400, "signature check failed")
         event = json.loads(payload)
-        kind = event.get("type", "")
-        obj = (event.get("data") or {}).get("object") or {}
+        data = event.get("data") if isinstance(event, dict) else None
+        obj = data.get("object") if isinstance(data, dict) else None
+        if not isinstance(event, dict) or not isinstance(obj, dict):
+            # Signed, and not an event this can read: acknowledged, never an error.
+            return {"received": True}
+        kind = event.get("type") if isinstance(event.get("type"), str) else ""
         if (kind in PAID_SESSION and obj.get("mode") == "subscription"
                 and obj.get("payment_status") in ("paid", "no_payment_required")):
             tenant_id = await _tenant_for(obj)
