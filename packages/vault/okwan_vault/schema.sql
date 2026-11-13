@@ -482,6 +482,24 @@ CREATE TABLE IF NOT EXISTS billing (
     updated_at           timestamptz NOT NULL DEFAULT now()
 );
 
+-- Every Stripe customer that has paid for Pro, or begun to, for an Okwan
+-- account: how a payment is known to be Okwan's on a Stripe account that
+-- takes other products' payments too. Written when Stripe's signed event
+-- names the account through the metadata Okwan put on its own checkout.
+-- An account can have more than one (two pay pages opened before either
+-- was paid are two customers at Stripe, and `billing` keeps only the
+-- first), and the row outlives the account: Stripe may charge that
+-- customer again, and that payment is still Okwan's to answer for.
+CREATE TABLE IF NOT EXISTS billing_customers (
+    customer_id text PRIMARY KEY,
+    tenant_id   text REFERENCES tenants(id) ON DELETE SET NULL,
+    linked_at   timestamptz NOT NULL DEFAULT now()
+);
+-- The customers linked before this table was kept.
+INSERT INTO billing_customers (customer_id, tenant_id)
+    SELECT customer_id, tenant_id FROM billing WHERE customer_id IS NOT NULL
+    ON CONFLICT (customer_id) DO NOTHING;
+
 -- One row for each Stripe Checkout session Okwan opened: the version of the
 -- refund policy shown beside its pay button, when it was opened, and the
 -- address the request came from. When Stripe reports that session paid, its
@@ -506,10 +524,11 @@ CREATE INDEX IF NOT EXISTS billing_checkouts_tenant ON billing_checkouts (tenant
 -- paid, how much and when. How a disputed charge finds its account, and
 -- what Okwan's dispute rate is measured against. The Stripe account takes
 -- payments for other products as well, and Stripe sends this endpoint all
--- of them: one whose customer no Okwan account is linked to is kept
+-- of them: one whose customer is not in `billing_customers` is kept
 -- unmatched for a week, in case its account is linked a moment later, and
 -- then forgotten. `okwan` stays true once matched, also after the account
--- is deleted. Amounts are minor units, as Stripe sends them. Never card details.
+-- is deleted, and a deleted account's customer still makes a payment
+-- Okwan's. Amounts are minor units, as Stripe sends them. Never card details.
 CREATE TABLE IF NOT EXISTS billing_payments (
     charge_id    text PRIMARY KEY,
     tenant_id    text REFERENCES tenants(id) ON DELETE SET NULL,
@@ -526,10 +545,16 @@ CREATE INDEX IF NOT EXISTS billing_payments_customer ON billing_payments (custom
 -- that comes before one), or the bank's early warning of fraud. Kept from
 -- Stripe's signed events, the newest applied last. `okwan`: its charge is
 -- a payment for Pro; one that is not may be another product's on the same
--- Stripe account. `submitted`: an answer has been sent, which is not the
--- same as evidence saved in Stripe (`has_evidence`). `told`: what the
--- operator was last mailed about it, "open" or "ended". The account's row
--- going leaves the dispute: it still has to be answered.
+-- Stripe account. `status` is Stripe's, and alone says whether the bank is
+-- waiting for an answer. `submitted`: Stripe counts an answer as sent, at
+-- this stage or an earlier one, which is not the same as evidence saved in
+-- Stripe (`has_evidence`). `disputed_at`: when it became a dispute, which
+-- for an inquiry the bank escalated is later than `opened_at`; the rate
+-- counts from it. `told`: what the operator was last mailed about it, the
+-- stage it was at or how it ended (`usage.dispute_heard`). `claimed_at`:
+-- a mail about it is being sent since then; cleared when the send reports
+-- back, and taken over by the next round if it never does. The account's
+-- row going leaves the dispute: it still has to be answered.
 CREATE TABLE IF NOT EXISTS billing_disputes (
     dispute_id   text PRIMARY KEY,
     kind         text NOT NULL,
@@ -544,10 +569,12 @@ CREATE TABLE IF NOT EXISTS billing_disputes (
     has_evidence boolean NOT NULL DEFAULT false,
     submitted    boolean NOT NULL DEFAULT false,
     opened_at    timestamptz NOT NULL,
+    disputed_at  timestamptz,
     closed_at    timestamptz,
     event_at     timestamptz NOT NULL,
     told         text,
-    reminded_at  timestamptz
+    reminded_at  timestamptz,
+    claimed_at   timestamptz
 );
 CREATE INDEX IF NOT EXISTS billing_disputes_opened ON billing_disputes (opened_at DESC);
 
@@ -585,7 +612,8 @@ BEGIN
     -- The identity tables: nothing for okwan_tenant, whatever was granted before.
     FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups',
                              'operator_factors', 'operator_actions', 'billing',
-                             'billing_checkouts', 'billing_payments', 'billing_disputes'] LOOP
+                             'billing_checkouts', 'billing_customers', 'billing_payments',
+                             'billing_disputes'] LOOP
         IF has_table_privilege('okwan_tenant', t,
                                'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
             EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);

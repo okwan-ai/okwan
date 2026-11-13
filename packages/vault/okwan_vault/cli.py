@@ -94,6 +94,11 @@ async def tenant_delete(tenant_id: str) -> None:
         print(f"tenant    {tenant.id}  {tenant.name}")
         print(f"login     {email or 'none'}")
         print(f"merchants {len(merchants)}")
+        bill = await store.billing_for(tenant_id) if tenant.parent_id is None else None
+        if bill and bill["subscription_id"] and bill["status"] not in ("canceled", "incomplete_expired"):
+            # Deleting the account does not reach Stripe: the card would go on being charged.
+            print(f"billing   subscription {bill['subscription_id']} is \"{bill['status']}\" at Stripe, as last reported.")
+            print("          CANCEL IT IN STRIPE FIRST: deleting the account does not stop Stripe charging the card.")
         print("This deletes the tenant, its merchants, the login, and every saved credential,")
         print("API key, check result, usage count, support conversation and ticket they hold.")
         print("It cannot be undone. Database backups age out on Neon's own schedule.")

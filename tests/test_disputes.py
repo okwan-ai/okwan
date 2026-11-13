@@ -42,6 +42,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -51,8 +52,9 @@ from okwan_api import disputes, policy
 from okwan_api.main import app
 from okwan_api.ratelimit import address_from
 from okwan_vault import EnvMasterKey, MemoryStore, PostgresStore, accounts, new_key
+from okwan_vault import access as rules
 from okwan_vault.accounts import SESSION_PREFIX, new_token
-from okwan_vault.usage import UNMATCHED_PAYMENT_KEPT
+from okwan_vault.usage import DISPUTE_NOTICE_HELD, UNMATCHED_PAYMENT_KEPT, dispute_heard
 
 DSN = os.environ.get("OKWAN_VAULT_DATABASE_URL", "")
 SECRET = "whsec_test_billing_secret"
@@ -77,6 +79,7 @@ async def store(request):
     s = await PostgresStore(DSN, EnvMasterKey(new_key())).connect()
     s.tag = tag
     created: list[str] = []
+    s.made = created
     create = s.create_tenant
 
     async def tracked(name, parent_id=None):
@@ -100,11 +103,12 @@ async def store(request):
         row = await s.pool.fetchrow(
             "SELECT (SELECT count(*) FROM billing_payments WHERE okwan AND charge_id LIKE $3 AND paid_at >= $1 "
             "AND paid_at < $2) AS payments, "
-            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND NOT starts_with(status, 'warning_')) AS disputes, "
-            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND starts_with(status, 'warning_')) AS inquiries, "
-            "count(*) FILTER (WHERE okwan AND kind = 'warning') AS warnings, "
-            "count(*) FILTER (WHERE NOT okwan) AS unmatched "
-            "FROM billing_disputes WHERE dispute_id LIKE $3 AND opened_at >= $1 AND opened_at < $2", since, until, like)
+            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND disputed_at >= $1 AND disputed_at < $2) AS disputes, "
+            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND disputed_at IS NULL AND opened_at >= $1) AS inquiries, "
+            "count(*) FILTER (WHERE okwan AND kind = 'warning' AND opened_at >= $1) AS warnings, "
+            "count(*) FILTER (WHERE NOT okwan AND COALESCE(disputed_at, opened_at) >= $1 "
+            "AND COALESCE(disputed_at, opened_at) < $2) AS unmatched "
+            "FROM billing_disputes WHERE dispute_id LIKE $3 AND opened_at < $2", since, until, like)
         return {k: int(v) for k, v in dict(row).items()}
 
     s.disputes, s.disputes_to_settle, s.dispute_counts = mine, mine_due, my_counts
@@ -113,6 +117,7 @@ async def store(request):
     finally:
         await s.pool.execute("DELETE FROM billing_disputes WHERE dispute_id LIKE $1", f"%{tag}%")
         await s.pool.execute("DELETE FROM billing_payments WHERE charge_id LIKE $1", f"%{tag}%")
+        await s.pool.execute("DELETE FROM billing_customers WHERE customer_id LIKE $1", f"%{tag}%")
         for tenant_id in reversed(created):
             await s.pool.execute("DELETE FROM tenants WHERE id = $1", tenant_id)
         await s.pool.execute("DELETE FROM operator_factors WHERE email LIKE $1", f"ops-{tag}%")
@@ -125,9 +130,11 @@ def test_the_narrowed_counts_are_the_stores_own_query():
     import inspect
 
     shipped = " ".join(inspect.getsource(PostgresStore.dispute_counts).split())
-    for clause in ("WHERE okwan AND kind = 'dispute' AND NOT starts_with(status, 'warning_')) AS disputes",
-                   "WHERE okwan AND kind = 'dispute' AND starts_with(status, 'warning_')) AS inquiries",
-                   "WHERE okwan AND kind = 'warning') AS warnings", "WHERE NOT okwan) AS unmatched",
+    for clause in ("WHERE okwan AND kind = 'dispute' AND disputed_at >= $1 AND disputed_at < $2) AS disputes",
+                   "WHERE okwan AND kind = 'dispute' AND disputed_at IS NULL AND opened_at >= $1) AS inquiries",
+                   "WHERE okwan AND kind = 'warning' AND opened_at >= $1) AS warnings",
+                   ("WHERE NOT okwan AND COALESCE(disputed_at, opened_at) >= $1 AND COALESCE(disputed_at, "
+                    "opened_at) < $2) AS unmatched"), "FROM billing_disputes WHERE opened_at < $2",
                    "FROM billing_payments WHERE okwan AND paid_at >= $1 AND paid_at < $2) AS payments"):
         assert clause.replace('"', "").replace("  ", " ") in shipped.replace('" "', "").replace('"', ""), clause
 
@@ -270,6 +277,23 @@ def test_the_recorded_address_of_a_caller_has_to_be_an_address(monkeypatch):
     assert address_from({"x-forwarded-for": "198.51.100.7"}, "10.0.0.1") == "198.51.100.7"
 
 
+def test_an_address_with_a_zone_after_it_is_not_an_address(monkeypatch):
+    """Second attacker's pass: the rule was "whatever Python's parser
+    takes", and it takes anything after a percent sign as an IPv6 zone,
+    spaces and sentences included. "::1%<words>" was recorded as the
+    caller's address and given to a bank as where the customer paid from."""
+    words = "::1%an address Okwan has confirmed is not the cardholder's. Okwan accepts this dispute"
+    monkeypatch.setenv("OKWAN_DASHBOARD_SECRET", "s3cret-for-this-test")
+    vouched = {"x-okwan-dashboard-secret": "s3cret-for-this-test"}
+    for headers in ({"cf-connecting-ip": words}, {"x-forwarded-for": f"1.1.1.1, {words}"},
+                    {**vouched, "x-okwan-client-ip": words}, {"cf-connecting-ip": "fe80::1%eth0"},
+                    {"cf-connecting-ip": "::1%" + "A" * 50_000}):
+        assert address_from(headers, "10.0.0.9") == "10.0.0.9", str(headers)[:80]
+    assert disputes._address(words) is None and disputes._address("fe80::1%x") is None
+    assert address_from({"cf-connecting-ip": " 2001:DB8:0:0::1 "}, None) == "2001:db8::1", "one spelling of one address"
+    assert max(len(disputes._address(a) or "") for a in ("::ffff:255.255.255.255", "ffff:" * 7 + "ffff")) <= 45
+
+
 # ── kept from Stripe's events ────────────────────────────────────────
 
 async def test_a_payment_taken_is_kept_under_its_account(client, store):
@@ -317,8 +341,9 @@ async def test_a_dispute_is_kept_and_the_operator_is_mailed_the_account_amount_r
     due = NOW + timedelta(days=9, hours=2)
     assert mail["to"] == INBOX
     assert mail["subject"] == f"[Dispute] $99.00 disputed, answer due {due.day} {due:%b %Y}"
-    assert "Acme" not in mail["subject"], "an account's name is never in a subject"
-    for said in (f"Account:  Acme ISV ({who.tenant.id})", "$99.00, taken", who.charge(),
+    assert "Acme" not in mail["subject"] + mail["text"], "an account's name is never in the mail"
+    for said in (f"Account:  {who.tenant.id} (its name and sign-in address are on the page below)", "$99.00, taken",
+                 who.charge(),
                  "subscription_canceled. The cardholder says they were charged after cancelling.",
                  "After that date it is lost, and an answer can be sent once.",
                  f"https://app.okwan.test/ops/disputes/{who.dp()}",
@@ -336,7 +361,7 @@ async def test_a_dispute_on_a_charge_that_is_not_an_okwan_payment_is_kept_apart(
     ours = await disputed(client, store)
     await send(client, "charge.dispute.created", dispute(other))
     row = await store.dispute(other.dp())
-    assert (row["okwan"], row["tenant_id"], row["told"]) == (False, None, "open")
+    assert (row["okwan"], row["tenant_id"], row["told"]) == (False, None, "open:unmatched")
     mail = outbox.sent[-1]
     assert "Account:  not matched to an Okwan payment (it may be another product's on this Stripe account)" in mail["text"]
     assert "Okwan holds no evidence for a payment it cannot match:" in mail["text"]
@@ -415,17 +440,49 @@ async def test_an_unsigned_event_keeps_nothing(client, store, outbox):
     assert await store.disputes() == [] and await store.payment(who.charge()) is None and outbox.sent == []
 
 
-async def test_an_accounts_name_and_address_cannot_write_the_operators_mail(client, store, outbox):
-    """The name is cleaned as in the daily mail. Attacker's pass: the
-    sign-in address was printed raw beside it, and one can be shaped to
-    read as a web address. It is not in the mail at all."""
-    who = await paying(store, "Acme\nBcc: thief@evil.test\nhttps://evil.test/pay now")
+async def signed_up(store, email: str | None = None) -> Paying:
+    """An account made the way sign-up makes one: the verification link's
+    `complete_signup` names it, by its sign-in address."""
+    tag = f"{store.tag}{os.urandom(2).hex()}"
+    email = email.format(tag=tag) if email else f"jane-{tag}@acme.test"
+    _, token_hash = new_token("vt")
+    await store.add_signup(email, accounts.hash_password("correct horse battery"), token_hash,
+                           datetime.now(UTC) + timedelta(hours=1))
+    tenant = await store.complete_signup(token_hash)
+    if hasattr(store, "pool"):
+        store.made.append(tenant.id)
+    await store.save_billing(tenant.id, customer_id=f"cus_{tag}", subscription_id=f"sub_{tag}", status="active",
+                             cancel_at_period_end=False, current_period_end=NOW + timedelta(days=20))
+    return Paying(tenant, email, tag)
+
+
+@pytest.mark.parametrize("email", [None, "pay.example.com/r-{tag}@evil.test"])
+async def test_the_operators_mail_names_an_account_by_its_id_and_nothing_a_customer_wrote(client, store, outbox, email):
+    """Two attacker's passes. First: the sign-in address was printed raw,
+    and one can be shaped to read as a web address. Second: the address
+    was taken out and the account's name left in, cleaned as its own, but
+    an account made by signing up is named by its sign-in address, so the
+    mail still printed it, dots and all. Neither is in the mail now."""
+    who = await signed_up(store, email)
+    assert who.tenant.name == who.email, "sign-up names the account by its address"
+    assert re.fullmatch(accounts.EMAIL_PATTERN, who.email), "an address the sign-up form takes"
     await send(client, "charge.succeeded", charge(who))
     await send(client, "charge.dispute.created", dispute(who))
     [mail] = outbox.sent
     line = next(text for text in mail["text"].split("\n") if text.startswith("Account:"))
-    assert who.tenant.id in line and "https://" not in line and "\nBcc:" not in mail["text"]
-    assert who.email not in mail["text"] and "founder-" not in mail["text"], "the sign-in address is not in the mail"
+    assert line == f"Account:  {who.tenant.id} (its name and sign-in address are on the page below)"
+    every = mail["subject"] + mail["text"]
+    assert who.email not in every and who.email.split("@")[0] not in every and "example.com" not in every
+
+
+async def test_a_name_an_operator_gave_an_account_is_not_in_the_mail_either(client, store, outbox):
+    who = await paying(store, "Acme\nBcc: thief@evil.test\nhttps://evil.test/pay now")
+    await send(client, "charge.succeeded", charge(who))
+    await send(client, "charge.dispute.created", dispute(who))
+    [mail] = outbox.sent
+    every = mail["subject"] + mail["text"]
+    assert "Acme" not in every and "evil.test" not in every and "Bcc" not in every
+    assert who.email not in every and "founder-" not in every, "the sign-in address is not in the mail"
 
 
 # ── attacker's pass: the order of events, and two at once ────────────
@@ -576,10 +633,15 @@ async def test_evidence_saved_in_stripe_and_not_sent_is_still_unanswered(client,
     [listed] = (await client.get("/v1/ops/disputes", headers=ops)).json()["data"]
     assert (listed["needs_answer"], listed["saved"], listed["submitted"]) == (True, True, False)
 
-    # Sent: Stripe counts a submission. The reminders stop.
-    await send(client, "charge.dispute.updated", dispute(who, due=due, saved=True, sent=1), NOW + timedelta(days=8, hours=6))
-    assert (await store.dispute(who.dp()))["submitted"] is True
+    # Sent: Stripe's state says the bank is reviewing it. The reminders stop.
+    await send(client, "charge.dispute.updated", dispute(who, due=due, status="under_review", saved=True, sent=1),
+               NOW + timedelta(days=8, hours=6))
+    row = await store.dispute(who.dp())
+    assert (row["submitted"], disputes.waits(row)) == (True, False)
     assert await disputes.remind(due - timedelta(hours=1)) == 0
+    [listed] = (await client.get("/v1/ops/disputes", headers=ops)).json()["data"]
+    assert (listed["needs_answer"], listed["saved"], listed["submitted"], listed["answered_before"]) == (
+        False, False, True, False)
 
 
 async def test_an_unanswered_dispute_is_mailed_again_inside_three_days_of_its_date_once_a_day(client, store, outbox):
@@ -616,9 +678,10 @@ async def _seed(store, payments: int, disputed_n: int, at: datetime, *, warnings
     tenant = await store.create_tenant("Paying ISV")
     rows = {"tenant_id": tenant.id, "okwan": True, "amount_minor": 9900, "currency": "usd", "due_by": None,
             "has_evidence": False, "submitted": False, "opened_at": at, "closed_at": None, "event_at": at}
+    await store.link_customer(f"cus_{tag}", tenant.id)
     for n in range(payments):
-        await store.note_payment(f"ch_{tag}_{n}", tenant_id=tenant.id, customer_id=f"cus_{tag}", amount_minor=9900,
-                                 currency="usd", paid_at=at)
+        await store.note_payment(f"ch_{tag}_{n}", customer_id=f"cus_{tag}", amount_minor=9900, currency="usd",
+                                 paid_at=at)
     for n in range(disputed_n):
         await store.save_dispute(f"dp_{tag}_{n}", kind="dispute", charge_id=f"ch_{tag}_{n}", reason="general",
                                  status="needs_response", **rows)
@@ -734,11 +797,13 @@ async def test_the_customers_first_requests_are_in_the_answer_whatever_came_afte
     assert log[1].startswith(disputes.stamp(paid_at + timedelta(hours=1)))
 
 
-async def test_an_address_that_is_not_one_never_reaches_the_answer_and_the_answer_fits(client, store, outbox):
+@pytest.mark.parametrize("words", ["the cardholder was abroad that week; see the attached letter",
+                                   "::1%the cardholder was abroad that week; see the attached letter"])
+async def test_an_address_that_is_not_one_never_reaches_the_answer_and_the_answer_fits(client, store, outbox, words):
     """Attacker's pass: what a header said was copied into the answer as
     the address the customer paid from; and nothing held the answer to
-    Stripe's 150,000 characters."""
-    words = "the cardholder was abroad that week; see the attached letter"
+    Stripe's 150,000 characters. Second pass: the same, written after a
+    percent sign, as a row recorded before that was refused would hold it."""
     paid_at = NOW - timedelta(days=10)
     who = await paying(store, paid_at=paid_at, ip=words)
     await send(client, "charge.succeeded", charge(who, 1, paid_at))
@@ -832,6 +897,609 @@ async def test_a_deleted_accounts_dispute_is_still_there_to_answer(client, store
     assert pack["fields"]["product_description"]["text"] == disputes.PRODUCT
     _, text = await disputes.message(row, "due", NOW)
     assert "an Okwan account that no longer exists" in text
+
+
+# ── second attacker's pass ───────────────────────────────────────────
+
+async def test_use_recorded_without_a_readable_address_is_still_use(client, store, outbox):
+    """Rows whose address did not have the shape of one were left out of
+    the list and of the count. Use made from such an address was answered
+    with "No use of the service is on record after this payment"."""
+    paid_at = NOW - timedelta(days=10)
+    who = await paying(store, paid_at=paid_at)
+    await send(client, "charge.succeeded", charge(who, 1, paid_at))
+    seen = {"credential": "okw_abcd1234", "network": "unknown", "surface": "rest:/v1/files/bank_deposits/list"}
+    for n in range(5):
+        await store.record_access(who.tenant.id, ip="fe80::1%x", at=paid_at + timedelta(hours=1, minutes=n), **seen)
+    await store.record_access(who.tenant.id, ip="198.51.100.9", at=paid_at + timedelta(hours=2), **seen)
+    await send(client, "charge.dispute.created", dispute(who, reason="product_not_received"))
+    log = (await disputes.evidence(await store.dispute(who.dp()), NOW))["fields"]["access_activity_log"]
+    head, *lines = log["text"].split("\n")
+    assert "6 on record, the first 6 here" in head
+    assert all(line.endswith(f"  {disputes.NO_ADDRESS}  rest:/v1/files/bank_deposits/list") for line in lines[:5])
+    assert lines[5].endswith("  198.51.100.9  rest:/v1/files/bank_deposits/list")
+    assert "fe80" not in log["text"], "what was recorded as the address is not given as one"
+    assert await store.customer_access(who.tenant.id, paid_at, 2) == (6, [
+        {"at": paid_at + timedelta(hours=1, minutes=n), "ip": "fe80::1%x", "surface": seen["surface"]} for n in (0, 1)])
+
+
+async def test_the_answer_fits_stripes_limit_whatever_the_record_holds(client, store, outbox, monkeypatch):
+    """The trimming knew two fields that could grow, the log and the
+    policy's text. An address 50,000 characters long, in the answer three
+    times, went past Stripe's limit. That value is refused now; and the
+    limit holds for a record nobody foresaw: the longest field goes."""
+    who = await disputed(client, store)
+    monkeypatch.setattr(disputes, "PRODUCT", "x" * 200_000)
+    pack = await disputes.evidence(await store.dispute(who.dp()), NOW)
+    assert pack["characters"] <= disputes.EVIDENCE_CHARACTERS
+    assert pack["fields"]["product_description"] == {
+        "text": None, "add": "Left out to fit Stripe's limit on an answer's length: say it in your own words."}
+    assert pack["fields"]["customer_name"]["text"] == "Acme ISV", "and nothing else was lost for it"
+
+
+@pytest.mark.parametrize("count_after", [0, 1])
+async def test_an_answered_inquiry_that_becomes_a_dispute_is_waiting_again(client, store, outbox, monkeypatch,
+                                                                            count_after):
+    """An answer once sent was remembered for ever: `submitted` only went
+    up, and a dispute counted as waiting only without it. An inquiry that
+    was answered and became a dispute all the same was mailed once and
+    never reminded, and the console listed it as needing nothing, while
+    Stripe's documentation says it has to be answered again. Stripe's
+    state decides now, whatever its count of answers says."""
+    who = await paying(store)
+    due, t = NOW + timedelta(days=2), NOW - timedelta(hours=3)
+    await send(client, "charge.succeeded", charge(who, 1))
+    await send(client, "charge.dispute.created", dispute(who, 1, status="warning_needs_response", due=due), t)
+    await send(client, "charge.dispute.updated",
+               dispute(who, 1, status="warning_under_review", due=due, saved=True, sent=1), t + timedelta(hours=1))
+    assert not disputes.waits(await store.dispute(who.dp(1))), "answered: with the bank"
+    await send(client, "charge.dispute.funds_withdrawn",
+               dispute(who, 1, status="needs_response", due=due, saved=True, sent=count_after), t + timedelta(hours=2))
+    assert [m["subject"].split("]")[0] for m in outbox.sent] == ["[Inquiry", "[Dispute"]
+    assert "The bank's inquiry has become a dispute." in outbox.sent[-1]["text"]
+    row = await store.dispute(who.dp(1))
+    assert row["status"] == "needs_response" and disputes.waits(row)
+    assert await disputes.remind(NOW + timedelta(hours=25)) == 1
+    assert outbox.sent[-1]["subject"].startswith("[Dispute due]") and who.dp(1) in outbox.sent[-1]["text"]
+    [listed] = (await client.get("/v1/ops/disputes", headers=await _operator(store, monkeypatch))).json()["data"]
+    assert (listed["needs_answer"], listed["submitted"], listed["answered_before"]) == (True, False, count_after == 1)
+
+
+async def test_a_decided_dispute_opened_again_is_reminded_like_any_other(client, store, outbox):
+    who = await paying(store)
+    await send(client, "charge.succeeded", charge(who, 1))
+    t, due = NOW - timedelta(days=20), NOW + timedelta(days=2, hours=12)
+    await send(client, "charge.dispute.created", dispute(who, 1, opened=t), t)
+    await send(client, "charge.dispute.updated", dispute(who, 1, status="under_review", opened=t, sent=1),
+               t + timedelta(days=1))
+    await send(client, "charge.dispute.closed", dispute(who, 1, status="won", opened=t, sent=1), t + timedelta(days=10))
+    await send(client, "charge.dispute.updated", dispute(who, 1, status="needs_response", opened=t, due=due, sent=1),
+               NOW - timedelta(hours=1))
+    assert "A dispute that was decided has been opened again." in outbox.sent[-1]["text"]
+    assert disputes.waits(await store.dispute(who.dp(1)))
+    assert await disputes.remind(NOW + timedelta(hours=25)) == 1, "a day after the mail that said it was opened again"
+    assert await disputes.remind(NOW + timedelta(hours=30)) == 0, "once a day"
+    assert await disputes.remind(NOW + timedelta(hours=50)) == 1
+
+
+def _paid_session(who: Paying, n: int, customer: str) -> dict:
+    return {"id": f"cs_{who.tag}_{n}", "mode": "subscription", "payment_status": "paid", "customer": customer,
+            "subscription": f"sub_{who.tag}_{n}",
+            "metadata": {"tenant_id": who.tenant.id, "refund_policy": policy.VERSION}}
+
+
+async def test_a_payment_by_an_accounts_second_stripe_customer_is_okwans_and_the_accounts(client, store, outbox,
+                                                                                         monkeypatch):
+    """A payment was Okwan's only through the one customer on the
+    account's billing record. Two pay pages opened before either was paid
+    are two customers at Stripe; billing keeps the first, and the second
+    one's payment, the one most likely to be disputed, was "another
+    product's": no account, no evidence, outside Okwan's rate, forgotten
+    in a week. Every customer that pays for an account is remembered."""
+    from okwan_api import billing
+
+    async def refuse(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"type": "invalid_request_error"}})
+
+    monkeypatch.setattr(billing, "_told_twice", set())
+    billing.set_transport(httpx.MockTransport(refuse))
+    try:
+        who = await paying(store, linked=False, checkout=False)
+        first, second = f"cus_{who.tag}_a", f"cus_{who.tag}_b"
+        paid = NOW - timedelta(minutes=5)
+        again = paid + timedelta(seconds=40)
+        assert (await send(client, "checkout.session.completed", _paid_session(who, 1, first), paid)).json()["plan"] == "pro"
+        await send(client, "charge.succeeded", {**charge(who, 1, paid), "customer": first}, paid)
+        r = await send(client, "checkout.session.completed", _paid_session(who, 2, second), again)
+        assert r.json() == {"received": True, "plan": "pro", "second_subscription": True}
+        await send(client, "charge.succeeded", {**charge(who, 2, again), "customer": second}, again)
+    finally:
+        billing.set_transport(None)
+    assert (await store.billing_for(who.tenant.id))["customer_id"] == first, "billing keeps the first"
+    for n in (1, 2):
+        kept = await store.payment(who.charge(n))
+        assert (kept["okwan"], kept["tenant_id"]) == (True, who.tenant.id), n
+
+    outbox.sent.clear()
+    await send(client, "charge.dispute.created", dispute(who, 2, reason="duplicate"))
+    [mail] = outbox.sent
+    assert f"Account:  {who.tenant.id} " in mail["text"] and "not matched" not in mail["text"]
+    row = await store.dispute(who.dp(2))
+    assert (row["okwan"], row["tenant_id"]) == (True, who.tenant.id)
+    fields = (await disputes.evidence(row, datetime.now(UTC)))["fields"]
+    assert fields["duplicate_charge_id"]["text"] == who.charge(1), "the account's first payment is put beside it"
+    assert fields["duplicate_charge_explanation"]["text"].startswith("Two payments by this account 0 days apart:")
+    assert "the cardholder is right: accept the dispute" in fields["duplicate_charge_explanation"]["add"]
+    act = await disputes.activity(datetime.now(UTC))
+    assert (act["payments"], act["disputes"], act["unmatched"]) == (2, 1, 0), "and it is in Okwan's rate"
+    # A week on it is still on record: it was never another product's.
+    await disputes.remind(NOW + UNMATCHED_PAYMENT_KEPT + timedelta(hours=1))
+    assert (await store.payment(who.charge(2)))["okwan"] is True
+
+
+async def test_a_second_customer_heard_of_after_its_payment_is_matched_on_the_next_round(client, store, outbox):
+    """Stripe does not order its events: the charge can be reported before
+    the session that says whose it is."""
+    who = await paying(store)
+    second = f"cus_{who.tag}_b"
+    await send(client, "charge.succeeded", {**charge(who, 2), "customer": second})
+    assert (await store.payment(who.charge(2)))["okwan"] is False
+    await send(client, "customer.subscription.created", {
+        "id": f"sub_{who.tag}_2", "customer": second, "status": "active", "metadata": {"tenant_id": who.tenant.id}})
+    await disputes.remind(NOW)
+    kept = await store.payment(who.charge(2))
+    assert (kept["okwan"], kept["tenant_id"]) == (True, who.tenant.id)
+    assert await store.okwan_customer(second) == (True, who.tenant.id)
+    assert await store.okwan_customer(f"cus_{who.tag}_nobody") == (False, None)
+
+
+async def test_a_month_charged_after_its_account_was_deleted_is_still_okwans(client, store, outbox):
+    """Deleting an account took its billing record with it, and with that
+    the only link from its Stripe customer to Okwan. If the subscription
+    was left running, the next month's payment, the one a customer who
+    deleted their account will dispute, was "another product's"."""
+    who = await paying(store)
+    await send(client, "charge.succeeded", charge(who, 1, NOW - timedelta(days=31)))
+    if hasattr(store, "pool"):
+        await store.pool.execute("DELETE FROM tenants WHERE id = $1", who.tenant.id)
+    else:
+        await store.delete_tenant(who.tenant.id)
+    assert await store.tenant_for_billing_customer(who.customer) is None
+    assert await store.okwan_customer(who.customer) == (True, None), "the customer is still one of Okwan's"
+    await send(client, "charge.succeeded", charge(who, 2, NOW - timedelta(hours=2)))
+    later = await store.payment(who.charge(2))
+    assert (later["okwan"], later["tenant_id"]) == (True, None)
+    await send(client, "charge.dispute.created", dispute(who, 2))
+    [mail] = outbox.sent
+    assert "Account:  an Okwan account that no longer exists" in mail["text"] and "not matched" not in mail["text"]
+    row = await store.dispute(who.dp(2))
+    assert (row["okwan"], row["tenant_id"]) == (True, None)
+    pack = await disputes.evidence(row, datetime.now(UTC))
+    assert pack["matched"] is True and pack["fields"]["customer_name"]["add"].startswith("The account has been deleted")
+    assert (await disputes.activity(datetime.now(UTC)))["unmatched"] == 0
+
+
+async def _use(store, who: Paying, at: datetime, n: int = 1) -> None:
+    for i in range(n):
+        await store.record_access(who.tenant.id, credential="session", ip="203.0.113.24", network="203.0.113.0/24",
+                                  surface="rest:/v1/stripe/charges/list", at=at + timedelta(minutes=i))
+
+
+async def _sweep_the_log(store, who: Paying, now: datetime) -> None:
+    """The hourly sweep's own condition, on this account's rows only: the database is shared."""
+    if hasattr(store, "pool"):
+        await store.pool.execute("DELETE FROM access_log WHERE tenant_id = $1 AND at < $2", who.tenant.id,
+                                 now - rules.RETENTION)
+    else:
+        await store.sweep_access(now)
+
+
+async def test_a_payment_older_than_the_log_is_not_said_to_have_gone_unused(client, store, outbox):
+    """The log of requests is kept 90 days and a cardholder has longer
+    than that to dispute. For an older payment the answer said "No use of
+    the service is on record after this payment", of a month the customer
+    had used; the customer chooses when to dispute."""
+    paid = NOW - timedelta(days=100)
+    who = await paying(store, paid_at=paid)
+    await send(client, "charge.succeeded", charge(who, 1, paid), paid)
+    await _use(store, who, paid + timedelta(hours=1), n=30)
+    await _sweep_the_log(store, who, NOW)
+    await send(client, "charge.dispute.created", dispute(who, reason="product_not_received"))
+    log = (await disputes.evidence(await store.dispute(who.dp()), NOW))["fields"]["access_activity_log"]
+    kept_from = disputes.day(NOW - rules.RETENTION)
+    assert log["text"] is None
+    assert log["add"] == (
+        f"Okwan keeps its record of requests for 90 days and this payment was taken {disputes.day(paid)}, longer ago "
+        f"than that: nothing is on record since {kept_from}, and whether the service was used before that can no "
+        "longer be shown from here. Do not tell the bank there was no use.")
+
+
+async def test_use_still_on_record_for_an_older_payment_is_said_to_start_where_the_log_does(client, store, outbox):
+    """With later use still on record the heading read "after the payment:
+    2 on record, the first 2 here" over lines that began forty days after
+    it: not the count since the payment, and not the first."""
+    paid = NOW - timedelta(days=100)
+    who = await paying(store, paid_at=paid)
+    await send(client, "charge.succeeded", charge(who, 1, paid), paid)
+    await _use(store, who, paid + timedelta(hours=1), n=30)
+    await _use(store, who, NOW - timedelta(days=60), n=2)
+    await _sweep_the_log(store, who, NOW)
+    await send(client, "charge.dispute.created", dispute(who, reason="fraudulent"))
+    log = (await disputes.evidence(await store.dispute(who.dp()), NOW))["fields"]["access_activity_log"]
+    head, *lines = log["text"].split("\n")
+    assert head == (
+        "Okwan keeps its record of requests for 90 days. Requests made with this account's own sign-in and keys "
+        f"since {disputes.stamp(NOW - rules.RETENTION)}, as far back as that record now reaches: 2 on record, the "
+        "first 2 here. Each line: time, the caller's address, and what was read.")
+    assert "after the payment" not in log["text"] and len(lines) == 2
+    assert lines[0].startswith(f"{NOW - timedelta(days=60):%Y-%m-%d}")
+    assert f"requests from before {disputes.day(NOW - rules.RETENTION)} are no longer on record" in log["add"]
+    # A payment inside the 90 days is told as before: from the payment on.
+    recent = await paying(store, paid_at=NOW - timedelta(days=10))
+    await send(client, "charge.succeeded", charge(recent, 1, NOW - timedelta(days=10)))
+    await _use(store, recent, NOW - timedelta(days=9), n=1)
+    await send(client, "charge.dispute.created", dispute(recent, reason="fraudulent"))
+    said = (await disputes.evidence(await store.dispute(recent.dp()), NOW))["fields"]["access_activity_log"]
+    assert said["text"].startswith("Requests to Okwan made with this account's own sign-in and keys after the payment: 1")
+    assert "90 days" not in said["text"] + said["add"]
+
+
+async def _stopped_inside_a_send(outbox, now: datetime) -> None:
+    """A round that is cancelled while the provider is answering: what
+    happens to the hourly round when the process is told to stop."""
+    outbox.delay = 5.0
+    round_ = asyncio.create_task(disputes.remind(now))
+    await asyncio.sleep(0.3)
+    round_.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await round_
+    outbox.delay = 0.0
+
+
+async def test_a_mail_whose_send_never_reported_back_is_sent_by_a_later_round(client, store, outbox):
+    """The right to mail was taken by writing down that the operator had
+    been told, and taken back only when the provider refused. A round
+    stopped inside the send (a deploy), or a database that went away
+    before the refusal could be written, left the record saying "told"
+    with no mail sent, for good. The right is now a time that runs out."""
+    who = await paying(store)
+    await send(client, "charge.succeeded", charge(who))
+    outbox.refuse = True
+    await send(client, "charge.dispute.created", dispute(who))
+    outbox.refuse = False
+    assert outbox.sent == [] and (await store.dispute(who.dp()))["told"] is None
+    now = datetime.now(UTC)
+    await _stopped_inside_a_send(outbox, now)
+    row = await store.dispute(who.dp())
+    assert outbox.sent == [] and row["told"] is None and row["claimed_at"] == now, "not told, and not said to be"
+    assert await disputes.remind(now + timedelta(minutes=1)) == 0, "the send may still be going: nobody mails twice"
+    assert await disputes.remind(now + DISPUTE_NOTICE_HELD + timedelta(minutes=1)) == 1
+    assert outbox.sent[0]["subject"].startswith("[Dispute] $99.00 disputed")
+    row = await store.dispute(who.dp())
+    assert (row["told"], row["claimed_at"]) == ("open", None)
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+async def test_a_decision_whose_outcome_could_not_be_recorded_is_still_mailed(client, store, outbox, monkeypatch,
+                                                                              accepted):
+    """The database goes away between the send and writing down how it
+    went. Stripe's event is still acknowledged (it was applied), and the
+    next round mails: once more than needed if the provider had accepted
+    the first, which is the side to err on."""
+    who = await disputed(client, store)
+    assert len(outbox.sent) == 1
+    outbox.refuse = not accepted
+    end = store.end_dispute_notice
+
+    async def gone(*a, **k):
+        raise ConnectionError("connection was closed in the middle of operation")
+
+    monkeypatch.setattr(store, "end_dispute_notice", gone)
+    r = await send(client, "charge.dispute.closed", dispute(who, status="lost"), NOW + timedelta(seconds=30))
+    assert r.status_code == 200 and r.json()["applied"] is True
+    monkeypatch.setattr(store, "end_dispute_notice", end)
+    outbox.refuse = False
+    assert (await store.dispute(who.dp()))["told"] == "open", "the record does not say the decision was told"
+    assert await disputes.remind(datetime.now(UTC) + DISPUTE_NOTICE_HELD + timedelta(minutes=1)) == 1
+    assert outbox.sent[-1]["subject"] == "[Dispute lost] The $99.00 dispute is closed"
+    assert [m["subject"].split("]")[0] for m in outbox.sent].count("[Dispute lost") == (2 if accepted else 1)
+    assert await disputes.remind(datetime.now(UTC) + timedelta(hours=2)) == 0
+
+
+async def test_an_event_that_lands_while_a_mail_is_going_out_is_told_straight_after_it(client, store, outbox):
+    who = await paying(store)
+    await send(client, "charge.succeeded", charge(who))
+    outbox.delay = 0.3
+    opened = asyncio.create_task(send(client, "charge.dispute.created", dispute(who)))
+    await asyncio.sleep(0.1)                                 # the first mail is with the provider
+    decided = await send(client, "charge.dispute.closed", dispute(who, status="won"), NOW + timedelta(minutes=5))
+    assert decided.json()["applied"] is True
+    await opened
+    assert [m["subject"].split("]")[0] for m in outbox.sent] == ["[Dispute", "[Dispute won"]
+    assert (await store.dispute(who.dp()))["told"] == "won"
+
+
+async def test_an_inquiry_that_becomes_a_dispute_is_counted_from_the_day_it_became_one(client, store, outbox):
+    """The rate counted a dispute by the day its object was opened, which
+    for an inquiry the bank escalated is the day of the inquiry: escalated
+    after 30 days it was in no window at all, and the mail that announced
+    it carried a rate with no dispute in it."""
+    who = await paying(store)
+    asked = NOW - timedelta(days=33)
+    for n in range(1, 4):
+        await send(client, "charge.succeeded", charge(who, n, NOW - timedelta(days=n)))
+    await send(client, "charge.dispute.created",
+               dispute(who, 1, status="warning_needs_response", opened=asked, due=asked + timedelta(days=20)), asked)
+    act = await disputes.activity(NOW)
+    assert (act["disputes"], act["inquiries"]) == (0, 0), "an inquiry is not a dispute, and this one is 33 days old"
+    await send(client, "charge.dispute.funds_withdrawn",
+               dispute(who, 1, status="needs_response", opened=asked, due=NOW + timedelta(days=9)), NOW)
+    row = await store.dispute(who.dp(1))
+    assert (row["opened_at"], row["disputed_at"]) == (asked, NOW)
+    assert "against 3 payments: 33.33% disputed" in outbox.sent[-1]["text"], "the mail that says so carries the rate"
+    for days in (0, 15, 29):
+        act = await disputes.activity(NOW + timedelta(days=days, minutes=1))
+        assert (act["disputes"], act["inquiries"]) == (1, 0), days
+    assert (await disputes.activity(NOW + timedelta(days=31)))["disputes"] == 0
+    # One opened as a dispute is counted from the day it was opened, whenever Okwan heard of it.
+    await send(client, "charge.dispute.closed", dispute(who, 2, status="lost", opened=NOW - timedelta(days=40)), NOW)
+    assert (await store.dispute(who.dp(2)))["disputed_at"] == NOW - timedelta(days=40)
+    assert (await disputes.activity(NOW + timedelta(minutes=1)))["disputes"] == 1
+
+
+async def test_a_decision_that_changes_is_mailed(client, store, outbox):
+    """What the operator had been told was "ended", not how. A dispute
+    mailed as won that Stripe later reported lost was mailed to nobody."""
+    who = await paying(store)
+    await send(client, "charge.succeeded", charge(who))
+    await send(client, "charge.dispute.closed", dispute(who, status="won"), NOW - timedelta(days=3))
+    await send(client, "charge.dispute.closed", dispute(who, status="lost"), NOW - timedelta(days=1))
+    assert [m["subject"] for m in outbox.sent] == ["[Dispute won] The $99.00 dispute is closed",
+                                                   "[Dispute lost] The $99.00 dispute is closed"]
+    assert ("The decision on this dispute has changed. Okwan mailed it as won; Stripe now reports it lost."
+            in outbox.sent[1]["text"])
+    await send(client, "charge.dispute.closed", dispute(who, status="lost"), NOW)
+    assert len(outbox.sent) == 2 and await disputes.remind(NOW + timedelta(hours=1)) == 0, "the same decision, once"
+
+
+async def test_a_dispute_matched_after_its_first_mail_is_mailed_again(client, store, outbox):
+    """Heard of before its payment, a dispute was mailed "not matched: it
+    may be another product's" and, once matched, said nothing more until
+    three days before its date."""
+    who = await paying(store)
+    await send(client, "charge.dispute.created", dispute(who))
+    assert "not matched to an Okwan payment" in outbox.sent[0]["text"]
+    assert (await store.dispute(who.dp()))["told"] == "open:unmatched"
+    await send(client, "charge.succeeded", charge(who))
+    assert await disputes.remind(NOW + timedelta(hours=1)) == 1
+    text = outbox.sent[1]["text"]
+    assert text.startswith("Okwan mailed about this before as not matched to an Okwan payment. The payment's record "
+                           "has since arrived: it is a payment for Okwan Pro.")
+    assert f"Account:  {who.tenant.id} " in text and "What Okwan holds is already put into Stripe's fields" in text
+    assert (await store.dispute(who.dp()))["told"] == "open"
+    assert await disputes.remind(NOW + timedelta(hours=2)) == 0
+
+
+async def test_an_appeal_is_told_and_one_that_needs_an_answer_is_reminded(client, store, outbox, monkeypatch):
+    """Stripe's states include an appeal that needs a response. Read from
+    its documentation while answering the second pass; neither pass
+    raised it. It was "open", so nothing new to tell, and not among the
+    states that wait, so never reminded."""
+    who = await disputed(client, store)
+    due = NOW + timedelta(days=2, hours=12)
+    await send(client, "charge.dispute.updated", dispute(who, status="under_review", sent=1), NOW + timedelta(hours=1))
+    await send(client, "charge.dispute.updated", dispute(who, status="appeal_needs_response", due=due, sent=1),
+               NOW + timedelta(hours=2))
+    row = await store.dispute(who.dp())
+    assert (disputes.stage(row), disputes.waits(row), row["told"]) == ("appeal", True, "appeal")
+    assert "A dispute has gone to appeal: Stripe reports it as needing an answer to the appeal." in outbox.sent[-1]["text"]
+    assert await disputes.remind(NOW + timedelta(hours=27)) == 1
+    assert outbox.sent[-1]["subject"].startswith("[Dispute due]")
+    [listed] = (await client.get("/v1/ops/disputes", headers=await _operator(store, monkeypatch))).json()["data"]
+    assert (listed["stage"], listed["needs_answer"], listed["answered_before"]) == ("appeal", True, True)
+    await send(client, "charge.dispute.updated", dispute(who, status="appeal_under_review", due=due, sent=2),
+               NOW + timedelta(hours=28))
+    assert not disputes.waits(await store.dispute(who.dp()))
+    assert await disputes.remind(NOW + timedelta(hours=52)) == 0
+
+
+def test_the_two_stores_say_what_was_heard_in_the_same_words():
+    """What the operator has heard is said once in Python (`dispute_heard`,
+    which the in-memory store and the mails use) and once in SQL (the
+    Postgres round). Every state Stripe documents, matched and not."""
+    from okwan_vault import postgres
+
+    states = ["warning_needs_response", "warning_under_review", "warning_closed", "needs_response", "under_review",
+              "appeal_needs_response", "appeal_under_review", "won", "lost", "prevented", "flagged", "something_new"]
+    said = {(s, ok): dispute_heard(s, ok) for s in states for ok in (True, False)}
+    assert said[("won", False)] == "won" and said[("needs_response", False)] == "open:unmatched"
+    assert said[("appeal_needs_response", True)] == "appeal" and said[("warning_under_review", True)] == "inquiry"
+    assert said[("something_new", True)] == "open", "a state Stripe adds later is an open dispute, not a crash"
+    for word in ("'inquiry'", "'appeal'", "'open'", "':unmatched'", "starts_with(status, 'warning_')",
+                 "starts_with(status, 'appeal_')", "status = ANY($1::text[]) THEN status"):
+        assert word in postgres._HEARD, word
+
+
+async def test_the_round_reads_what_is_owed_the_same_from_both_stores(client, store, outbox):
+    """And by behaviour: one dispute in each state, matched and not, with
+    nothing told yet. The round finds all of them, tells each, and then
+    finds none."""
+    who = await paying(store)
+    states = ["warning_needs_response", "warning_under_review", "warning_closed", "needs_response", "under_review",
+              "appeal_needs_response", "appeal_under_review", "won", "lost", "prevented"]
+    rows = {"tenant_id": who.tenant.id, "amount_minor": 9900, "currency": "usd", "reason": "general", "due_by": None,
+            "has_evidence": False, "submitted": False, "opened_at": NOW, "closed_at": None, "event_at": NOW}
+    for n, status in enumerate(states):
+        for ok in (True, False):
+            await store.save_dispute(f"dp_{who.tag}_{n}_{int(ok)}", kind="dispute", charge_id=who.charge(n),
+                                     status=status, okwan=ok, **rows)
+    owed = await store.disputes_to_settle(NOW, disputes.REMIND_WITHIN, disputes.REMIND_EVERY)
+    assert len(owed) == 2 * len(states)
+    assert await disputes.remind(NOW) == 2 * len(states)
+    told = {(d["status"], d["okwan"]): d["told"] for d in await store.disputes()}
+    assert told == {(s, ok): dispute_heard(s, ok) for s in states for ok in (True, False)}
+    assert await store.disputes_to_settle(NOW, disputes.REMIND_WITHIN, disputes.REMIND_EVERY) == []
+
+
+async def test_a_dispute_first_heard_of_when_already_answered_is_not_mailed_as_one_to_answer(client, store, outbox):
+    """Seen by the second pass and not run: first heard of with an answer
+    already with the bank, a dispute was mailed "answer due"."""
+    who = await paying(store)
+    await send(client, "charge.succeeded", charge(who))
+    await send(client, "charge.dispute.updated", dispute(who, status="under_review", saved=True, sent=1))
+    [mail] = outbox.sent
+    assert mail["subject"] == "[Dispute] $99.00 disputed, answered and with the bank"
+    assert "Answered: Stripe reports that an answer has been sent and the bank is reviewing it." in mail["text"]
+    assert "Answer by" not in mail["text"] and await disputes.remind(NOW + timedelta(days=8)) == 0
+
+
+async def test_a_reminder_is_not_sent_for_a_dispute_answered_since_the_round_read_it(client, store, outbox):
+    """Seen by the second pass and not run: a round that read a dispute
+    just before Stripe reported it answered still mailed "unanswered".
+    The mail is written from the dispute as it stands once the right to
+    send is held."""
+    due = NOW + timedelta(days=2)
+    who = await disputed(client, store, due=due)
+    stale = await store.dispute(who.dp())                    # what the round read
+    await send(client, "charge.dispute.updated", dispute(who, status="under_review", due=due, saved=True, sent=1),
+               NOW + timedelta(hours=1))
+    before = len(outbox.sent)
+    assert await disputes.settle(stale, NOW + timedelta(hours=25)) == 0
+    assert len(outbox.sent) == before and (await store.dispute(who.dp()))["claimed_at"] is None
+
+
+async def test_the_two_stores_agree_on_random_events_claims_rounds_and_the_shipped_counts():
+    """From the second pass's own checks, kept: several hundred random
+    events with ties in the second, and claims between them, some never
+    given back. The same `applied`, the same rows, the same round, the
+    same listing order, and the same counts from the Postgres query as
+    shipped, which the fixture above narrows by tag everywhere else. The
+    clock is decades back, so the counts are this test's own on a shared
+    database."""
+    if not DSN:
+        pytest.skip("no vault database configured")
+    import random
+
+    tag = os.urandom(4).hex()
+    statuses = ["needs_response", "under_review", "won", "lost", "warning_needs_response", "warning_under_review",
+                "warning_closed", "prevented", "appeal_needs_response", "appeal_under_review", "flagged", "new_state"]
+    base = datetime(1975 + os.urandom(1)[0] % 20, 3, 1, tzinfo=UTC)
+    rnd = random.Random(8)
+    mem = MemoryStore(EnvMasterKey(new_key()))
+    pg = await PostgresStore(DSN, EnvMasterKey(new_key())).connect()
+    ta, tb = await mem.create_tenant("A"), await pg.create_tenant("A")
+    try:
+        for st, tenant in ((mem, ta), (pg, tb)):
+            await st.link_customer(f"cus_{tag}", tenant.id)
+            for n in range(30):
+                await st.note_payment(f"ch_{tag}_{n:03d}", customer_id=f"cus_{tag}" if n % 3 else f"cus_{tag}_other",
+                                      amount_minor=9900, currency="usd", paid_at=base + timedelta(days=n))
+        for n in range(120):
+            did = f"dp_{tag}_{n:03d}"
+            for step in range(rnd.randint(1, 7)):
+                ev = base + timedelta(days=n % 40, seconds=rnd.randint(0, 2))
+                kw = {"kind": rnd.choice(["dispute", "warning"]), "charge_id": f"ch_{tag}_{n:03d}",
+                      "okwan": rnd.random() < .6, "amount_minor": rnd.choice([None, 9900, 0]),
+                      "currency": rnd.choice([None, "usd"]), "reason": rnd.choice([None, "fraudulent", "duplicate"]),
+                      "status": rnd.choice(statuses),
+                      "due_by": rnd.choice([None, base + timedelta(days=n % 40, hours=rnd.randint(-5, 80))]),
+                      "has_evidence": rnd.random() < .3, "submitted": rnd.random() < .3,
+                      "opened_at": base + timedelta(days=n % 40, seconds=step), "closed_at": None, "event_at": ev}
+                assert (await mem.save_dispute(did, tenant_id=ta.id if kw["okwan"] else None, **kw)
+                        == await pg.save_dispute(did, tenant_id=tb.id if kw["okwan"] else None, **kw))
+                if rnd.random() < .4:
+                    ra, rb = await mem.dispute(did), await pg.dispute(did)
+                    at = ev + timedelta(minutes=rnd.choice([0, 1, 20]))
+                    took = await mem.claim_dispute_notice(did, told_was=ra["told"], reminded_was=ra["reminded_at"], at=at)
+                    assert took == await pg.claim_dispute_notice(did, told_was=rb["told"],
+                                                                 reminded_was=rb["reminded_at"], at=at)
+                    if took and rnd.random() < .8:          # the rest are sends that never report back
+                        how = {"sent": rnd.random() < .7, "reminded_at": rnd.choice([None, ev]),
+                               "told": rnd.choice([None, "open", "inquiry", "appeal", "won", "open:unmatched"])}
+                        for st in (mem, pg):
+                            await st.end_dispute_notice(did, claimed_at=at, **how)
+            ra, rb = await mem.dispute(did), await pg.dispute(did)
+            assert {**ra, "tenant_id": bool(ra["tenant_id"])} == {**rb, "tenant_id": bool(rb["tenant_id"])}
+        assert ([d["dispute_id"] for d in await mem.disputes(10_000)]
+                == [d["dispute_id"] for d in await pg.disputes(10_000_000) if tag in d["dispute_id"]])
+        for hours in (0, 30, 24 * 20 + 3, 24 * 39):
+            now = base + timedelta(hours=hours)
+            args = (now, timedelta(days=3), timedelta(hours=24), 10_000_000)
+            assert ([d["dispute_id"] for d in await mem.disputes_to_settle(*args)]
+                    == [d["dispute_id"] for d in await pg.disputes_to_settle(*args) if tag in d["dispute_id"]])
+            window = (now - timedelta(days=30), now + timedelta(seconds=1))
+            counted = await pg.dispute_counts(*window)
+            assert await mem.dispute_counts(*window) == counted
+        assert counted["payments"] > 0 and counted["disputes"] + counted["unmatched"] > 0, "and there was something to count"
+    finally:
+        await pg.pool.execute("DELETE FROM billing_disputes WHERE dispute_id LIKE $1", f"%{tag}%")
+        await pg.pool.execute("DELETE FROM billing_payments WHERE charge_id LIKE $1", f"%{tag}%")
+        await pg.pool.execute("DELETE FROM billing_customers WHERE customer_id LIKE $1", f"%{tag}%")
+        await pg.pool.execute("DELETE FROM tenants WHERE id = $1", tb.id)
+        await pg.close()
+
+
+@pytest.mark.parametrize("body", [
+    b"this is not json", b"", b"\xff\xfe{}", b"[" * 100_000 + b"]" * 100_000,
+    b'{"type":"charge.dispute.created","created":' + b"9" * 5000 + b',"data":{"object":{}}}', b'"a string"',
+], ids=["not-json", "empty", "not-utf8", "nested-100000-deep", "integer-of-5000-digits", "a-string"])
+async def test_a_signed_body_that_cannot_be_read_is_acknowledged(client, store, outbox, body):
+    """A signed JSON object of the wrong shape was acknowledged; a signed
+    body that is not JSON at all was an error, which Stripe sends again
+    for three days. Only Stripe can sign one, so nobody could arrange it."""
+    stamp = int(time.time())
+    sig = hmac.new(SECRET.encode(), f"{stamp}.".encode() + body, hashlib.sha256).hexdigest()
+    r = await client.post("/v1/billing/webhook", content=body, headers={"Stripe-Signature": f"t={stamp},v1={sig}"})
+    assert (r.status_code, r.json()) == (200, {"received": True})
+    assert await store.disputes() == [] and outbox.sent == []
+
+
+async def test_a_charge_that_is_not_the_price_of_pro_is_said_to_be_one_to_check(client, store, outbox):
+    """A payment is Okwan's by its Stripe customer: nothing Stripe sends
+    with a charge says which product it was for. If another product on the
+    same Stripe account charges a customer Okwan knows, that charge was
+    answered for as Okwan Pro without a word, and made the Okwan payment
+    beside it look charged twice. Okwan cannot tell them apart for
+    certain; it says when a charge is not what Pro costs, and it no longer
+    calls two charges of different amounts the same thing charged twice."""
+    paid = NOW - timedelta(days=10)
+    who = await paying(store, paid_at=paid)
+    await send(client, "charge.succeeded", charge(who, 1, paid), paid)
+    await send(client, "charge.succeeded", charge(who, 2, paid + timedelta(days=1), amount=1500, currency="eur"))
+    await send(client, "charge.dispute.created", {**dispute(who, 2, reason="product_not_received"), "amount": 1500,
+                                                  "currency": "eur"})
+    note = ("15.00 EUR is not the price of Pro. This Stripe customer has paid for Okwan Pro, and the Stripe account "
+            "takes other products' payments too: check in Stripe that this charge is for Okwan Pro before answering "
+            "for it as one.")
+    assert f"Note:     {note}" in outbox.sent[-1]["text"]
+    pack = await disputes.evidence(await store.dispute(who.dp(2)), NOW)
+    assert pack["fields"]["product_description"]["add"] == note
+    # The Okwan payment a day later is not answered as a duplicate of it.
+    await send(client, "charge.succeeded", charge(who, 3, paid + timedelta(days=2)))
+    await send(client, "charge.dispute.created", dispute(who, 3, reason="duplicate"))
+    assert "Note:" not in outbox.sent[-1]["text"], "a payment of Pro's price carries no note"
+    fields = (await disputes.evidence(await store.dispute(who.dp(3)), NOW))["fields"]
+    assert fields["product_description"]["add"] is None
+    assert fields["duplicate_charge_id"]["text"] == who.charge(1), "the payment of the same amount before it"
+    assert "accept the dispute" in fields["duplicate_charge_explanation"]["add"], "two days apart: that one is real"
+    # With no earlier payment of that amount, there is nothing to call a duplicate.
+    alone = await paying(store, paid_at=paid)
+    await send(client, "charge.succeeded", charge(alone, 1, paid, amount=1500, currency="eur"))
+    await send(client, "charge.succeeded", charge(alone, 2, paid + timedelta(days=1)))
+    await send(client, "charge.dispute.created", dispute(alone, 2, reason="duplicate"))
+    fields = (await disputes.evidence(await store.dispute(alone.dp(2)), NOW))["fields"]
+    assert fields["duplicate_charge_id"] == {
+        "text": None, "add": "No earlier payment of this amount by this account is on record."}
+
+
+def test_a_currency_counted_in_thousandths_is_read_in_thousandths():
+    """Stripe sends Kuwaiti, Bahraini, Jordanian and Tunisian dinars and
+    Omani rials in thousandths. They were read as hundredths, so another
+    product's 9.900 KWD dispute was mailed as 99.00 KWD."""
+    for currency in ("kwd", "bhd", "jod", "omr", "tnd"):
+        assert disputes.amount({"amount_minor": 9900, "currency": currency}) == f"9.900 {currency.upper()}"
+    assert disputes.amount({"amount_minor": 9900, "currency": "usd"}) == "$99.00"
+    assert disputes.amount({"amount_minor": 9900, "currency": "jpy"}) == "9,900 JPY"
 
 
 # ── only the operator ────────────────────────────────────────────────

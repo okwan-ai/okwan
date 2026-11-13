@@ -130,7 +130,7 @@ export type DisputeRow = {
   id: string;
   kind: "dispute" | "warning";
   status: string;
-  stage: "inquiry" | "open" | "ended";
+  stage: "inquiry" | "open" | "appeal" | "ended";
   reason: string | null;
   amount: string;
   charge_id: string;
@@ -138,7 +138,10 @@ export type DisputeRow = {
   due_by: string | null;
   days_left: number | null;
   needs_answer: boolean;
+  /** An answer is with the bank. */
   submitted: boolean;
+  /** One was sent at an earlier stage, and the bank is waiting again. */
+  answered_before: boolean;
   /** Evidence saved in Stripe and not sent: still waiting for an answer. */
   saved: boolean;
   matched: boolean;

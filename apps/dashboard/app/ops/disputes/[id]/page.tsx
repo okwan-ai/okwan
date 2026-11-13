@@ -105,13 +105,15 @@ function Dispute({ d }: { d: DisputeDetail }) {
               <>
                 <p className="mt-1 text-2xl font-semibold tabular-nums">{day(d.due_by)}</p>
                 <p className="mt-1 text-sm text-ink-soft">
-                  {d.submitted
-                    ? "An answer has been sent. The bank decides."
-                    : d.stage === "ended"
-                      ? "The bank has decided."
-                      : d.saved
-                        ? "Evidence is saved in Stripe but has not been sent. After this date the dispute is lost."
-                        : "After this date the dispute is lost."}
+                  {d.stage === "ended"
+                    ? "The bank has decided."
+                    : d.submitted
+                      ? "An answer has been sent. The bank decides."
+                      : d.answered_before
+                        ? "An answer was sent at an earlier stage and the bank is waiting for another: an inquiry that has become a dispute, or a dispute opened again, has to be answered again. After this date it is lost."
+                        : d.saved
+                          ? "Evidence is saved in Stripe but has not been sent. After this date the dispute is lost."
+                          : "After this date the dispute is lost."}
                 </p>
               </>
             )}

@@ -426,10 +426,13 @@ def build_router() -> APIRouter:
             "stage": disputes.stage(d), "amount": disputes.amount(d), "charge_id": d["charge_id"],
             "opened_at": d["opened_at"].isoformat(), "due_by": d["due_by"].isoformat() if d["due_by"] else None,
             "days_left": disputes.days_left(d["due_by"], now),
-            # Waiting for an answer: none has been sent. Evidence saved in
-            # Stripe and not submitted is `saved`, and still waiting.
-            "needs_answer": disputes.waits(d), "submitted": d["submitted"],
-            "saved": d["has_evidence"] and not d["submitted"],
+            # Waiting for an answer is Stripe's state. `submitted`: an
+            # answer is with the bank. `answered_before`: one was sent at
+            # an earlier stage and the bank is waiting again. `saved`:
+            # evidence is in Stripe, not sent, and the bank still waits.
+            "needs_answer": disputes.waits(d), "submitted": d["submitted"] and not disputes.waits(d),
+            "answered_before": d["submitted"] and disputes.waits(d),
+            "saved": d["has_evidence"] and disputes.waits(d),
             # False: its charge is not a payment Okwan has on record.
             "matched": d["okwan"],
             "account": {"id": tenant.id, "name": tenant.name} if tenant else None,

@@ -644,10 +644,12 @@ it is cancelled at period end, unpaid or expired.
 - **A payment is disputed.** A cardholder has asked their bank to take a
   payment back. You are mailed at `OKWAN_SUPPORT_ESCALATION_TO` when it
   arrives (`[Dispute] $99.00 disputed, answer due …`), once a day inside
-  three days of the date while no answer has been sent, and when the bank
-  decides. The date is the bank's: after it the dispute is lost, and an
-  answer can be sent **once**. Every dispute counts against the account,
-  won or lost, so the first question is whether to answer at all:
+  three days of the date while the bank is waiting, and when the bank
+  decides. The mail names the account by its Okwan id only: its name and
+  sign-in address are on the console page, behind your sign-in. The date
+  is the bank's: after it the dispute is lost, and an answer can be sent
+  **once** at each stage. Every dispute counts against the account, won or
+  lost, so the first question is whether to answer at all:
   1. Open it in the console, **Disputes**. The page shows the days left,
      the bank's reason in plain words, and what Okwan holds, already in
      the fields of Stripe's form: who the customer is, the address they
@@ -673,7 +675,32 @@ it is cancelled at period end, unpaid or expired.
      keep coming until Stripe reports the answer submitted. Okwan never
      submits for you and its Stripe key cannot.
   5. The console's Disputes page then shows *Answered, with the bank*. The
-     bank usually takes 60 to 75 days; you are mailed when it decides.
+     bank usually takes 60 to 75 days; you are mailed when it decides, and
+     again if the decision later changes.
+  Whether the bank is waiting is Stripe's own state for the dispute, and
+  nothing Okwan remembers overrides it. So you are mailed, and reminded,
+  again when a dispute you have answered needs another answer: an inquiry
+  you answered that the bank made a dispute all the same (Stripe: "you
+  must submit another response"), a decided dispute opened again, and a
+  dispute that goes to appeal. The page then says an earlier answer was
+  sent and the bank is waiting for another.
+  Three things the page tells you rather than guesses:
+  - *The log of use starts where the record does.* Okwan keeps its record
+    of requests for 90 days, and a cardholder has about 120 to dispute.
+    For a payment older than 90 days the page says from which day the
+    record speaks and that earlier use can no longer be shown. It never
+    says there was no use. Do not tell the bank there was none.
+  - *A payment that is not the price of Pro.* A payment is Okwan's when
+    its Stripe customer has paid for Pro. Stripe says nothing with a
+    charge about which product it was for, so if another product on the
+    Stripe account ever charges the same Stripe customer, that charge
+    would be listed as Okwan's. The mail and the page carry a note when a
+    payment is not what Pro costs: check it in Stripe before answering
+    for it as Okwan's.
+  - *A mail may come twice.* A mail whose sending never reported back (a
+    deploy landed inside it, the database went away) is sent again within
+    the hour once fifteen minutes have passed. Twice is the side to err
+    on.
 - **A bank asks about a payment** (`[Inquiry] …`): the step some card
   networks take before a dispute. Answer it the same way, or refund the
   payment in full: Stripe says either can settle it with no dispute and no
@@ -692,9 +719,16 @@ it is cancelled at period end, unpaid or expired.
   but Okwan holds no evidence for it and it is not in Okwan's rate. It is
   another product's, or an Okwan payment from before this record began
   (the day the webhook's `charge.succeeded` event was switched on): open
-  the payment in Stripe to see which.
-- **The dispute rate.** The console's Disputes page shows Okwan's disputes
-  in the last 30 days against Okwan's payments in them, beside 0.75% (the
+  the payment in Stripe to see which. If the payment's record arrives
+  afterwards and it is Okwan's, you are mailed again within the hour, this
+  time with the account and the evidence. A payment is Okwan's when its
+  Stripe customer has paid for Pro for an Okwan account, whichever of the
+  account's customers that is (an account that opened two pay pages has
+  two) and whether or not the account still exists.
+- **The dispute rate.** The console's Disputes page shows what became a
+  dispute on Okwan's payments in the last 30 days (an inquiry the bank
+  escalated counts from the day it became one) against Okwan's payments
+  in them, beside 0.75% (the
   level Stripe's documentation calls excessive) and, with fraud warnings
   added, 0.5% (Visa's monitoring line). With few payments one dispute
   crosses both; what a card network acts on is a month's count as well as
@@ -714,7 +748,14 @@ assistant.
 
 1. Confirm the request came from the account's sign-in address: the
    console's account page shows it.
-2. In the Codespace:
+2. If the account pays for Pro, **cancel its subscription in Stripe
+   first** (the customer's page in Stripe → the subscription → *Cancel
+   subscription*, immediately). Deleting the account does not reach
+   Stripe: left running, the subscription charges the card again next
+   month for an account that no longer exists, and that payment is the
+   one the customer disputes. The command below says so when it finds a
+   subscription that is not cancelled.
+3. In the Codespace:
 
    ```bash
    python -m okwan_vault tenant delete <tenant_id>
@@ -724,8 +765,12 @@ assistant.
    id again. Everything in the account goes in one transaction: merchants,
    login, sessions, saved credentials, keys, check results, usage, support
    conversations, tickets and replies, and any unfinished signup for that
-   address. The console's log records that the deletion happened.
-3. Reply to the customer that it is done, and resolve the ticket.
+   address. The console's log records that the deletion happened. What
+   stays, without the account's id, is the record of its payments for
+   Pro, its Stripe customer id and any dispute: a dispute still has to be
+   answered, and a payment Stripe takes afterwards has to be recognised
+   as Okwan's.
+4. Reply to the customer that it is done, and resolve the ticket.
 
 Database backups keep deleted rows until they age out on Neon's
 schedule; the policy says so.

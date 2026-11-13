@@ -61,6 +61,7 @@ from .usage import (
     DEFAULT_PLAN,
     DISPUTE_ENDED,
     DISPUTE_NEEDS,
+    DISPUTE_NOTICE_HELD,
     NOT_ROOT_PLAN,
     PLANS,
     UNMATCHED_PAYMENT_KEPT,
@@ -132,6 +133,18 @@ def _raced(exc: asyncpg.PostgresError) -> bool:
         return True
     said = str(exc)
     return "tuple concurrently updated" in said or ("duplicate key value" in said and "pg_" in said)
+
+
+#: A dispute's row, as every reader gets it.
+_DISPUTE = ("dispute_id, kind, charge_id, tenant_id, okwan, amount_minor, currency, reason, status, due_by, "
+            "has_evidence, submitted, opened_at, disputed_at, closed_at, event_at, told, reminded_at, claimed_at")
+#: `usage.dispute_heard` in SQL, with the ended states as $1.
+_HEARD = ("(CASE WHEN status = ANY($1::text[]) THEN status ELSE "
+          "(CASE WHEN starts_with(status, 'warning_') THEN 'inquiry' WHEN starts_with(status, 'appeal_') THEN 'appeal' "
+          "ELSE 'open' END) || (CASE WHEN okwan THEN '' ELSE ':unmatched' END) END)")
+#: Remember a Stripe customer as an account's. The first link is kept.
+_LINK_CUSTOMER = ("INSERT INTO billing_customers (customer_id, tenant_id) VALUES ($1, $2) "
+                  "ON CONFLICT (customer_id) DO NOTHING")
 
 
 class PostgresStore:
@@ -673,18 +686,36 @@ class PostgresStore:
     ) -> None:
         """Record or update a paying account's Stripe link, as the login
         role (billing is an identity table). An empty id keeps the one
-        already known."""
-        await self.pool.execute(
-            "INSERT INTO billing (tenant_id, customer_id, subscription_id, status, "
-            "cancel_at_period_end, current_period_end) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6) "
-            "ON CONFLICT (tenant_id) DO UPDATE SET "
-            "customer_id = COALESCE(EXCLUDED.customer_id, billing.customer_id), "
-            "subscription_id = COALESCE(EXCLUDED.subscription_id, billing.subscription_id), "
-            "status = EXCLUDED.status, cancel_at_period_end = EXCLUDED.cancel_at_period_end, "
-            "current_period_end = COALESCE(EXCLUDED.current_period_end, billing.current_period_end), "
-            "updated_at = now()",
-            tenant_id, customer_id, subscription_id, status, cancel_at_period_end, current_period_end,
-        )
+        already known. The customer is remembered as the account's
+        (`link_customer`) in the same step."""
+        async with self.pool.acquire() as con, con.transaction():
+            await con.execute(
+                "INSERT INTO billing (tenant_id, customer_id, subscription_id, status, "
+                "cancel_at_period_end, current_period_end) VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, $5, $6) "
+                "ON CONFLICT (tenant_id) DO UPDATE SET "
+                "customer_id = COALESCE(EXCLUDED.customer_id, billing.customer_id), "
+                "subscription_id = COALESCE(EXCLUDED.subscription_id, billing.subscription_id), "
+                "status = EXCLUDED.status, cancel_at_period_end = EXCLUDED.cancel_at_period_end, "
+                "current_period_end = COALESCE(EXCLUDED.current_period_end, billing.current_period_end), "
+                "updated_at = now()",
+                tenant_id, customer_id, subscription_id, status, cancel_at_period_end, current_period_end,
+            )
+            if customer_id:
+                await con.execute(_LINK_CUSTOMER, customer_id, tenant_id)
+
+    async def link_customer(self, customer_id: str, tenant_id: str) -> None:
+        """Remember a Stripe customer as an account's: every one that pays
+        for Pro for it, not only the one `billing` keeps. The first account
+        a customer is linked to keeps it, and the link outlives the
+        account. No account, no link."""
+        if customer_id:
+            await self.pool.execute(_LINK_CUSTOMER, customer_id, tenant_id)
+
+    async def okwan_customer(self, customer_id: str) -> tuple[bool, str | None]:
+        """Whether a Stripe customer is one of Okwan's, and its account if
+        the account still exists."""
+        row = await self.pool.fetchrow("SELECT tenant_id FROM billing_customers WHERE customer_id = $1", customer_id)
+        return (True, row["tenant_id"]) if row else (False, None)
 
     async def billing_for(self, tenant_id: str) -> dict | None:
         row = await self.pool.fetchrow(
@@ -755,15 +786,18 @@ class PostgresStore:
             tenant_id, CHECKOUTS_LISTED)
         return [dict(r) for r in rows]
 
-    async def note_payment(self, charge_id: str, *, tenant_id: str | None, customer_id: str, amount_minor: int,
-                           currency: str, paid_at: datetime) -> None:
+    async def note_payment(self, charge_id: str, *, customer_id: str, amount_minor: int, currency: str,
+                           paid_at: datetime) -> None:
         """A payment Stripe reported succeeding. Written once. It is one of
-        Okwan's when an account is known for its customer; otherwise it
-        waits unmatched (`settle_payments`)."""
+        Okwan's when its customer is one of Okwan's (`billing_customers`),
+        whether or not that account still exists; otherwise it waits
+        unmatched (`settle_payments`)."""
         await self.pool.execute(
             "INSERT INTO billing_payments (charge_id, tenant_id, customer_id, okwan, amount_minor, currency, paid_at) "
-            "VALUES ($1, $2, NULLIF($3, ''), $2::text IS NOT NULL, $4, $5, $6) ON CONFLICT (charge_id) DO NOTHING",
-            charge_id, tenant_id, customer_id, amount_minor, currency, paid_at)
+            "SELECT $1, c.tenant_id, NULLIF($2, ''), c.customer_id IS NOT NULL, $3, $4, $5 "
+            "FROM (SELECT 1) one LEFT JOIN billing_customers c ON c.customer_id = $2 "
+            "ON CONFLICT (charge_id) DO NOTHING",
+            charge_id, customer_id, amount_minor, currency, paid_at)
 
     async def payment(self, charge_id: str) -> dict | None:
         row = await self.pool.fetchrow("SELECT charge_id, tenant_id, customer_id, okwan, amount_minor, currency, paid_at FROM billing_payments WHERE charge_id = $1", charge_id)
@@ -771,14 +805,14 @@ class PostgresStore:
 
     async def settle_payments(self, now: datetime | None = None) -> int:
         """Match what can now be matched and forget what never was: an
-        unmatched payment whose customer an account has since been linked
-        to becomes that account's, with any dispute on it; one still
+        unmatched payment whose customer has since been linked to an
+        account becomes that account's, with any dispute on it; one still
         unmatched after a week is another product's, and goes. As the login
         role, across accounts, like the other sweeps."""
         async with self.pool.acquire() as con, con.transaction():
             done = await con.execute(
-                "UPDATE billing_payments p SET tenant_id = b.tenant_id, okwan = true FROM billing b "
-                "WHERE NOT p.okwan AND p.customer_id IS NOT NULL AND b.customer_id = p.customer_id")
+                "UPDATE billing_payments p SET tenant_id = c.tenant_id, okwan = true FROM billing_customers c "
+                "WHERE NOT p.okwan AND p.customer_id IS NOT NULL AND c.customer_id = p.customer_id")
             await con.execute(
                 "UPDATE billing_disputes d SET tenant_id = COALESCE(d.tenant_id, p.tenant_id), okwan = true "
                 "FROM billing_payments p WHERE p.charge_id = d.charge_id AND p.okwan AND NOT d.okwan")
@@ -800,12 +834,15 @@ class PostgresStore:
         """Apply one Stripe event about a dispute, in one statement: the
         first heard of, or a newer one. An older one changes nothing
         (Stripe does not promise order), and of two made in the same
-        second an ended state is never replaced by an open one. Whether
-        it was applied."""
+        second an ended state is never replaced by an open one. When it
+        became a dispute is kept the first time its state says it is one:
+        the day it was opened, or, for an inquiry the bank escalated, the
+        time of the event that said so. Whether it was applied."""
         row = await self.pool.fetchrow(
             "INSERT INTO billing_disputes (dispute_id, kind, charge_id, tenant_id, okwan, amount_minor, currency, "
-            "reason, status, due_by, has_evidence, submitted, opened_at, closed_at, event_at) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) "
+            "reason, status, due_by, has_evidence, submitted, opened_at, closed_at, event_at, disputed_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, "
+            "CASE WHEN $2 = 'dispute' AND NOT starts_with($9, 'warning_') THEN $13::timestamptz END) "
             "ON CONFLICT (dispute_id) DO UPDATE SET "
             "tenant_id = COALESCE(billing_disputes.tenant_id, EXCLUDED.tenant_id), "
             "okwan = billing_disputes.okwan OR EXCLUDED.okwan, "
@@ -813,7 +850,9 @@ class PostgresStore:
             "currency = COALESCE(EXCLUDED.currency, billing_disputes.currency), "
             "reason = COALESCE(EXCLUDED.reason, billing_disputes.reason), status = EXCLUDED.status, "
             "due_by = EXCLUDED.due_by, has_evidence = EXCLUDED.has_evidence, "
-            "submitted = billing_disputes.submitted OR EXCLUDED.submitted, "
+            "submitted = EXCLUDED.submitted, "
+            "disputed_at = COALESCE(billing_disputes.disputed_at, CASE WHEN billing_disputes.kind = 'dispute' "
+            "AND NOT starts_with(EXCLUDED.status, 'warning_') THEN EXCLUDED.event_at END), "
             "closed_at = EXCLUDED.closed_at, event_at = EXCLUDED.event_at "
             "WHERE EXCLUDED.event_at > billing_disputes.event_at OR (EXCLUDED.event_at = billing_disputes.event_at "
             "AND NOT (billing_disputes.status = ANY($16::text[]) AND NOT EXCLUDED.status = ANY($16::text[]))) "
@@ -823,7 +862,7 @@ class PostgresStore:
         return row is not None
 
     async def dispute(self, dispute_id: str) -> dict | None:
-        row = await self.pool.fetchrow("SELECT dispute_id, kind, charge_id, tenant_id, okwan, amount_minor, currency, reason, status, due_by, has_evidence, submitted, opened_at, closed_at, event_at, told, reminded_at FROM billing_disputes WHERE dispute_id = $1", dispute_id)
+        row = await self.pool.fetchrow(f"SELECT {_DISPUTE} FROM billing_disputes WHERE dispute_id = $1", dispute_id)
         return dict(row) if row else None
 
     async def disputes(self, limit: int = 200) -> list[dict]:
@@ -831,61 +870,82 @@ class PostgresStore:
         then the rest, newest first. An old open dispute is never cut off
         by newer closed ones."""
         rows = await self.pool.fetch(
-            "SELECT dispute_id, kind, charge_id, tenant_id, okwan, amount_minor, currency, reason, status, due_by, has_evidence, submitted, opened_at, closed_at, event_at, told, reminded_at FROM billing_disputes ORDER BY "
-            "(status = ANY($2::text[]) AND NOT submitted) DESC, "
-            "CASE WHEN status = ANY($2::text[]) AND NOT submitted THEN due_by END ASC NULLS LAST, "
+            f"SELECT {_DISPUTE} FROM billing_disputes ORDER BY "
+            "(status = ANY($2::text[])) DESC, "
+            "CASE WHEN status = ANY($2::text[]) THEN due_by END ASC NULLS LAST, "
             "opened_at DESC, dispute_id LIMIT $1", limit, sorted(DISPUTE_NEEDS))
         return [dict(r) for r in rows]
 
     async def disputes_to_settle(self, now: datetime, within: timedelta, every: timedelta,
                                  limit: int = 500) -> list[dict]:
-        """Disputes the operator has something to hear about: one whose
-        state (an inquiry, a dispute, decided) is not the one they were
-        last told of, and an unanswered one whose date is near and was not
-        mailed about in the last day."""
+        """Disputes the operator has something to hear about: one that is
+        not as they were last told (its stage, how it ended, whether it is
+        matched to an Okwan payment), and one the bank is waiting on whose
+        date is near and was not mailed about in the last day. Waiting is
+        Stripe's state and nothing else: an answer sent at an earlier
+        stage does not end it."""
         rows = await self.pool.fetch(
-            "SELECT dispute_id, kind, charge_id, tenant_id, okwan, amount_minor, currency, reason, status, due_by, has_evidence, submitted, opened_at, closed_at, event_at, told, reminded_at FROM billing_disputes WHERE "
-            "(status = ANY($1::text[]) AND told IS DISTINCT FROM 'ended') "
-            "OR (NOT status = ANY($1::text[]) AND told IS DISTINCT FROM "
-            "    (CASE WHEN starts_with(status, 'warning_') THEN 'inquiry' ELSE 'open' END)) "
-            "OR (status = ANY($2::text[]) AND NOT submitted AND due_by >= $3 AND due_by <= $3 + $4::interval "
+            f"SELECT {_DISPUTE} FROM billing_disputes WHERE told IS DISTINCT FROM {_HEARD} "
+            "OR (status = ANY($2::text[]) AND due_by >= $3 AND due_by <= $3 + $4::interval "
             "    AND (reminded_at IS NULL OR reminded_at <= $3 - $5::interval)) "
             "ORDER BY due_by ASC NULLS LAST, dispute_id LIMIT $6",
             sorted(DISPUTE_ENDED), sorted(DISPUTE_NEEDS), now, within, every, limit)
         return [dict(r) for r in rows]
 
-    async def claim_dispute_notice(self, dispute_id: str, *, told_was: str | None, told: str | None,
-                                   reminded_was: datetime | None, reminded_at: datetime | None) -> bool:
-        """Take the right to mail about a dispute, before mailing: the
-        markers move only if they are still what the caller read, so of two
-        rounds at once one mails. Called again, the other way round, when
-        the mail was not accepted."""
+    async def claim_dispute_notice(self, dispute_id: str, *, told_was: str | None, reminded_was: datetime | None,
+                                   at: datetime) -> bool:
+        """Take the right to mail about a dispute, before mailing, if the
+        row is still as the caller read it and nobody holds the right: of
+        two rounds or two events at once, one mails. The right is a time,
+        not a result: it is cleared when the send reports back
+        (`end_dispute_notice`), and one never cleared, because the process
+        stopped inside the send or the database went away, is free again
+        after DISPUTE_NOTICE_HELD. The operator is told twice sooner than
+        not at all."""
         row = await self.pool.fetchrow(
-            "UPDATE billing_disputes SET told = $3, reminded_at = $5 WHERE dispute_id = $1 "
-            "AND told IS NOT DISTINCT FROM $2 AND reminded_at IS NOT DISTINCT FROM $4 RETURNING 1",
-            dispute_id, told_was, told, reminded_was, reminded_at)
+            "UPDATE billing_disputes SET claimed_at = $4::timestamptz WHERE dispute_id = $1 "
+            "AND told IS NOT DISTINCT FROM $2 AND reminded_at IS NOT DISTINCT FROM $3 "
+            "AND (claimed_at IS NULL OR claimed_at <= $4::timestamptz - $5::interval) RETURNING 1",
+            dispute_id, told_was, reminded_was, at, DISPUTE_NOTICE_HELD)
         return row is not None
+
+    async def end_dispute_notice(self, dispute_id: str, *, claimed_at: datetime, sent: bool, told: str | None,
+                                 reminded_at: datetime | None) -> None:
+        """Give the right back. A mail that was accepted is recorded with
+        it: what the operator has now heard, and when. One that was not
+        leaves the row as it was, for the next round."""
+        if sent:
+            await self.pool.execute(
+                "UPDATE billing_disputes SET told = $3, reminded_at = $4, claimed_at = NULL "
+                "WHERE dispute_id = $1 AND claimed_at = $2", dispute_id, claimed_at, told, reminded_at)
+        else:
+            await self.pool.execute(
+                "UPDATE billing_disputes SET claimed_at = NULL WHERE dispute_id = $1 AND claimed_at = $2",
+                dispute_id, claimed_at)
 
     async def dispute_counts(self, since: datetime, until: datetime) -> dict:
         """What the rate is made of, counted and not listed: Okwan's
-        payments in a window, and what was opened in it."""
+        payments in a window, what became a dispute in it, and the
+        inquiries and fraud warnings opened in it."""
         row = await self.pool.fetchrow(
             "SELECT (SELECT count(*) FROM billing_payments WHERE okwan AND paid_at >= $1 AND paid_at < $2) AS payments, "
-            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND NOT starts_with(status, 'warning_')) AS disputes, "
-            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND starts_with(status, 'warning_')) AS inquiries, "
-            "count(*) FILTER (WHERE okwan AND kind = 'warning') AS warnings, "
-            "count(*) FILTER (WHERE NOT okwan) AS unmatched "
-            "FROM billing_disputes WHERE opened_at >= $1 AND opened_at < $2", since, until)
+            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND disputed_at >= $1 AND disputed_at < $2) AS disputes, "
+            "count(*) FILTER (WHERE okwan AND kind = 'dispute' AND disputed_at IS NULL AND opened_at >= $1) AS inquiries, "
+            "count(*) FILTER (WHERE okwan AND kind = 'warning' AND opened_at >= $1) AS warnings, "
+            "count(*) FILTER (WHERE NOT okwan AND COALESCE(disputed_at, opened_at) >= $1 "
+            "AND COALESCE(disputed_at, opened_at) < $2) AS unmatched "
+            "FROM billing_disputes WHERE opened_at < $2", since, until)
         return {k: int(v) for k, v in dict(row).items()}
 
     async def customer_access(self, root_id: str, since: datetime, limit: int) -> tuple[int, list[dict]]:
         """An account's own requests since a time, oldest first, and how
         many there are in all: its subtree's access rows without Okwan's
-        scheduled reads, and only those whose address has the shape of
-        one. Filtered and counted in the query, so no number of later,
-        scheduled or malformed rows can push the first ones out."""
-        own = ("tenant_id = ANY($1::text[]) AND at >= $2 AND surface NOT LIKE 'schedule:%' "
-               "AND ip ~ '^[0-9A-Fa-f:.]{2,45}$'")
+        scheduled reads. Every one of them, whatever was recorded as its
+        address: a request is use of the service with or without one, and
+        leaving rows out would let the record say there was less use than
+        there was. Filtered and counted in the query, so no number of
+        later or scheduled rows can push the first ones out."""
+        own = "tenant_id = ANY($1::text[]) AND at >= $2 AND surface NOT LIKE 'schedule:%'"
         async with self.pool.acquire() as con, con.transaction():
             ids = await _subtree(con, root_id)
             await _enter_scope(con, ids)

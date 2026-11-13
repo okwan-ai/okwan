@@ -10,13 +10,15 @@ Stripe's signed events on the billing webhook:
 
 * **Known when it arrives.** A dispute, the inquiry that can come before
   one, and a bank's early warning of fraud are kept, and the operator is
-  mailed the account, the amount, the bank's reason and the date an
-  answer is due; again when an inquiry becomes a dispute, when a decided
-  one is reopened, as an unanswered one's date nears, and when the bank
-  decides. Each payment Stripe reports is kept too: it is how a disputed
+  mailed the account's id, the amount, the bank's reason and the date an
+  answer is due; again when an inquiry becomes a dispute, when it goes to
+  appeal, when a decided one is reopened or decided differently, when one
+  first mailed as unmatched turns out to be Okwan's, as an unanswered
+  one's date nears, and when the bank decides. Whether the bank is waiting
+  is Stripe's state for the dispute and nothing Okwan remembers. Each payment Stripe reports is kept too: it is how a disputed
   charge finds its account, and what the rate is measured against.
-* **The rate.** Disputes in the last 30 days against payments in the same
-  30 days, beside the lines Stripe's documentation gives: 0.75%, the
+* **The rate.** What became a dispute in the last 30 days against payments
+  in the same 30 days, beside the lines Stripe's documentation gives: 0.75%, the
   level it calls excessive, and 0.5%, Visa's monitoring line, which counts
   fraud warnings with disputes. An inquiry that has not become a dispute
   is not counted, as Stripe says the card networks do not count it.
@@ -28,9 +30,11 @@ Stripe's signed events on the billing webhook:
 **One Stripe account, more than one product.** The company's Stripe
 account takes payments for other products as well, and Stripe sends every
 destination all of the account's events. A payment is Okwan's when its
-Stripe customer is linked to an Okwan account; one that is not is kept
-unmatched for a week (its account may be linked a moment later) and then
-forgotten. A dispute on a charge that is not a known Okwan payment is
+Stripe customer is one that has paid for Pro for an Okwan account: every
+such customer is remembered, a second one the account came to have and
+one whose account has since been deleted included, because Stripe can
+still charge them. A payment by any other customer is kept unmatched for
+a week (its account may be linked a moment later) and then forgotten. A dispute on a charge that is not a known Okwan payment is
 kept and mailed, said plainly to be unmatched, counted apart, and given
 no evidence: Okwan has none for it. The rate is Okwan's own; the card
 networks measure the whole account, which Stripe's dashboard shows.
@@ -41,7 +45,6 @@ rails. Amounts are minor units, as Stripe sends them.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import os
 import re
@@ -49,13 +52,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from okwan_core.currency import format_minor
+from okwan_vault.access import RETENTION as LOG_KEPT
 from okwan_vault.usage import DISPUTE_ENDED as ENDED
 from okwan_vault.usage import DISPUTE_NEEDS as NEEDS_ANSWER
+from okwan_vault.usage import dispute_heard, dispute_stage
 
 from . import policy
 from .auth import get_store
 from .mail import get_mailer
-from .schedule import shown
+from .ratelimit import as_address
 
 logger = logging.getLogger("okwan.disputes")
 
@@ -74,6 +79,14 @@ LOG_LINES = 60
 EVIDENCE_CHARACTERS = 150_000
 #: Two payments closer than this are not two months of a monthly plan.
 A_MONTH_APART = timedelta(days=20)
+#: In the log of use, where a request's recorded address does not read as one.
+NO_ADDRESS = "(no address on record)"
+#: A payment is Okwan's by its Stripe customer. Nothing Stripe sends with a
+#: charge says which product it was for, so one that is not the price of
+#: Pro is said to be so, for a person to check.
+NOT_PRO = ("{paid} is not the price of Pro. This Stripe customer has paid for Okwan Pro, and the Stripe account "
+           "takes other products' payments too: check in Stripe that this charge is for Okwan Pro before answering "
+           "for it as one.")
 
 DISPUTE, WARNING = "dispute", "warning"
 #: The state kept for a bank's early fraud warning, which has none of a dispute's.
@@ -185,11 +198,9 @@ def _word(value: Any) -> str | None:
 
 
 def _address(value: Any) -> str | None:
-    """An address only if it is one: what is recorded is what a header said."""
-    try:
-        return str(ipaddress.ip_address(str(value).strip()))
-    except ValueError:
-        return None
+    """An address only if it is one, by the rule that recorded it: what is
+    on record is what a header said."""
+    return as_address(value) or None
 
 
 def day(at: datetime | None) -> str:
@@ -217,16 +228,30 @@ def percent(hundredths: int) -> str:
 
 def stage(row: dict[str, Any]) -> str:
     """Where a dispute stands, as the operator is told of it: an inquiry,
-    a dispute (a fraud warning is told the same way), or decided."""
-    if row["status"] in ENDED:
-        return "ended"
-    return "inquiry" if row["status"].startswith("warning_") else "open"
+    a dispute (a fraud warning is told the same way), an appeal, or
+    decided."""
+    return dispute_stage(row["status"])
+
+
+def heard(row: dict[str, Any]) -> str:
+    """What the operator has heard once mailed about a dispute as it now
+    stands: its stage, or how it ended, and whether it is matched."""
+    return dispute_heard(row["status"], bool(row["okwan"]))
 
 
 def waits(row: dict[str, Any]) -> bool:
-    """The bank is waiting for an answer and none has been sent. Evidence
-    saved in Stripe and not submitted is not an answer."""
-    return row["status"] in NEEDS_ANSWER and not row["submitted"]
+    """The bank is waiting for an answer: Stripe's own state says so, and
+    nothing Okwan remembers overrides it. Evidence saved in Stripe and not
+    submitted leaves the state as it was, so it is not an answer; and an
+    answer sent to an inquiry is not an answer to the dispute it became,
+    nor one sent before a decided dispute was opened again (Stripe's
+    documentation: "you must submit another response")."""
+    return row["status"] in NEEDS_ANSWER
+
+
+def _is_pro(paid: dict[str, Any]) -> bool:
+    """The payment is what Pro costs, in the currency it is sold in."""
+    return (paid["amount_minor"], paid["currency"]) == (policy.PRO_PRICE_USD * 100, "usd")
 
 
 def console_link(dispute_id: str) -> str:
@@ -247,7 +272,7 @@ async def _match(charge_id: str) -> tuple[str | None, bool]:
     store = get_store()
     paid = await store.payment(charge_id)
     if (paid is not None and not paid["okwan"] and paid["customer_id"]
-            and await store.tenant_for_billing_customer(paid["customer_id"])):
+            and (await store.okwan_customer(paid["customer_id"]))[0]):
         await store.settle_payments()
         paid = await store.payment(charge_id)
     return (paid["tenant_id"], True) if paid is not None and paid["okwan"] else (None, False)
@@ -265,11 +290,9 @@ async def handle(kind: str, obj: Any, event: dict[str, Any]) -> dict[str, Any]:
         charge_id, paid_minor = _id(obj.get("id")), _minor(obj.get("amount"))
         if not charge_id or paid_minor is None or obj.get("paid") is False:
             return {"received": True}
-        customer = _id(obj.get("customer"))
         await store.note_payment(
-            charge_id, tenant_id=await store.tenant_for_billing_customer(customer) if customer else None,
-            customer_id=customer, amount_minor=paid_minor, currency=_word(obj.get("currency")) or "",
-            paid_at=_when(obj.get("created")) or event_at)
+            charge_id, customer_id=_id(obj.get("customer")), amount_minor=paid_minor,
+            currency=_word(obj.get("currency")) or "", paid_at=_when(obj.get("created")) or event_at)
         return {"received": True, "payment": charge_id}
 
     warning = kind.startswith("radar.early_fraud_warning.")
@@ -352,84 +375,127 @@ def activity_line(act: dict[str, Any]) -> str:
 # ── the operator's mail ──────────────────────────────────────────────
 
 async def _who(row: dict[str, Any]) -> str:
-    """The account, as a mail may name it: its cleaned name and its id.
-    The sign-in address is on the console page, not in the mail."""
+    """The account, as a mail may name it: by Okwan's own id for it and
+    nothing the customer wrote. An account made by signing up is named by
+    its sign-in address, so its name is the customer's words and their
+    address at once; both are on the console page, behind the operator's
+    sign-in, and neither is in the mail."""
     if not row["okwan"]:
         return "not matched to an Okwan payment (it may be another product's on this Stripe account)"
     tenant = await get_store().get_tenant(row["tenant_id"]) if row["tenant_id"] else None
     if tenant is None:
         return "an Okwan account that no longer exists"
-    return f"{shown(tenant.name, own=True)} ({tenant.id})"
+    return f"{tenant.id} (its name and sign-in address are on the page below)"
 
 
 async def message(row: dict[str, Any], why: str, now: datetime) -> tuple[str, str]:
-    """Subject and text for the operator. The subject is Okwan's words and
-    figures only: an account's name is never in it."""
+    """Subject and text for the operator: Okwan's words, Stripe's ids and
+    names for things, and figures. Nothing in either is text a customer
+    chose."""
     reason = REASONS.get(row["reason"] or "", OTHER_REASON)
     left = days_left(row["due_by"], now)
     paid = await get_store().payment(row["charge_id"])
     payment = amount(row) + (f", taken {day(paid['paid_at'])}" if paid else "") + f" ({row['charge_id']})"
     head = [f"Account:  {await _who(row)}", f"Payment:  {payment}"]
+    if row["okwan"] and paid and not _is_pro(paid):
+        head.append(f"Note:     {NOT_PRO.format(paid=amount(paid))}")
     foot = ["", console_link(row["dispute_id"]), "", activity_line(await activity(now))]
     due = "no date given by Stripe" if left is None else (
         f"{day(row['due_by'])} ({left} days)" if left >= 0 else f"{day(row['due_by'])}, which has passed")
     asked = [f"Reason:   {row['reason'] or 'none given'}. {reason['says']}", f"To show:  {reason['show']}",
              f"Answer by: {due}. After that date it is lost, and an answer can be sent once."]
+    # First heard of, or heard of again, when an answer is already with the bank.
+    with_bank = row["status"].endswith("under_review")
+    if with_bank:
+        asked[-1] = "Answered: Stripe reports that an answer has been sent and the bank is reviewing it."
     held = ["", "What Okwan holds is already put into Stripe's fields, to read, complete and submit in Stripe:"
             if row["okwan"] else "Okwan holds no evidence for a payment it cannot match:"]
+    told = row["told"] or ""
+    # First mailed as not matched, and since matched to an Okwan payment.
+    matched = ("Okwan mailed about this before as not matched to an Okwan payment. The payment's record has since "
+               "arrived: it is a payment for Okwan Pro.")
+    found = [matched, ""] if told.endswith(":unmatched") and row["okwan"] else []
+    at = stage(row)
     if row["kind"] == WARNING:
         subject = f"[Payment flagged] A bank has flagged a {amount(row)} payment as possible fraud"
-        body = ["A card issuer has reported a payment as possibly fraudulent (an early fraud warning).",
+        body = [*found, "A card issuer has reported a payment as possibly fraudulent (an early fraud warning).",
                 "No money has moved and nothing has to be answered.", "", *head,
                 f"Flagged:  {row['reason'] or 'no type given'}", "",
                 "Stripe's documentation says about four in ten of these become a dispute if the payment is not",
                 "refunded, and that refunding it first stops the cardholder opening one. Look at the account, and",
                 "decide: refund the payment in Stripe, or wait.", *foot]
-    elif why == "ended":
+    elif at == "ended":
         subject = f"[Dispute {row['status']}] The {amount(row)} dispute is closed"
-        first = [] if row["told"] else ["Okwan first heard of this dispute when it was already decided.", ""]
+        first = [] if told else ["Okwan first heard of this dispute when it was already decided.", ""]
+        if told in ENDED and told != row["status"]:
+            changed = (f"The decision on this dispute has changed. Okwan mailed it as {told}; Stripe now reports "
+                       f"it {row['status']}.")
+            first = [changed, ""]
         body = [*first, f"The bank has decided: {row['status']}.", "", *head, *foot]
-    elif why == "inquiry":
-        subject = f"[Inquiry] A bank is asking about a {amount(row)} payment, answer due {day(row['due_by'])}"
-        body = ["A cardholder's bank is asking about a payment before opening a dispute (an inquiry).",
+    elif at == "inquiry":
+        subject = (f"[Inquiry] A bank is asking about a {amount(row)} payment, answered and with the bank"
+                   if with_bank else
+                   f"[Inquiry] A bank is asking about a {amount(row)} payment, answer due {day(row['due_by'])}")
+        lead = (["An inquiry is still unanswered and its date is near."] if why == "due" else
+                ["A cardholder's bank is asking about a payment before opening a dispute (an inquiry)."])
+        body = [*found, *lead,
                 "Stripe's documentation says an answer, or a full refund, can settle it with no dispute and no fee,",
                 "and that leaving it unanswered can turn it into a dispute that is unlikely to be won.", "",
                 *head, *asked, *held, *foot]
     else:
         lead = {"open": "A cardholder's bank has opened a dispute on a payment.",
-                "escalated": "The bank's inquiry has become a dispute.",
+                "escalated": "The bank's inquiry has become a dispute. An answer sent to the inquiry does not answer "
+                             "the dispute: Stripe's documentation says another has to be sent.",
                 "reopened": "A dispute that was decided has been opened again.",
+                "appeal": "A dispute has gone to appeal: Stripe reports it as needing an answer to the appeal."
+                          if waits(row) else "A dispute has gone to appeal, and the appeal is with the bank.",
+                "matched": "A cardholder's bank has opened a dispute on a payment.",
                 "due": "A dispute is still unanswered and its date is near."}[why]
         subject = (f"[Dispute due] {amount(row)} dispute unanswered, due {day(row['due_by'])}" if why == "due"
+                   else f"[Dispute] {amount(row)} disputed, answered and with the bank" if with_bank
                    else f"[Dispute] {amount(row)} disputed, answer due {day(row['due_by'])}")
-        body = [lead, "", *head, *asked, *held, *foot]
+        body = [*found, lead, "", *head, *asked, *held, *foot]
     return subject, "\n".join(body) + "\n"
 
 
-async def settle(row: dict[str, Any], now: datetime) -> bool:
-    """Mail the operator what they have not yet heard about one dispute,
-    if anything: that it exists, that an inquiry became a dispute, that it
-    was decided or reopened, or that its date is near. Which mail follows
-    from the row's state and what was last told, never from which event
-    arrived; the right to send is claimed first, so of two events or two
-    rounds at once one mails; and a mail that is not accepted gives the
-    claim back, for the next round. True when a mail was accepted."""
-    store = get_store()
+def _why(row: dict[str, Any], now: datetime) -> str | None:
+    """Which mail one dispute is owed, if any. It follows from the row's
+    state and what was last told, never from which event arrived."""
     at, told = stage(row), row["told"]
-    if at != told:
-        why = {"ended": "ended", "inquiry": "inquiry"}.get(
-            at, "reopened" if told == "ended" else "escalated" if told == "inquiry" else "open")
-    elif (waits(row) and row["due_by"] is not None and timedelta(0) <= row["due_by"] - now <= REMIND_WITHIN
-          and (row["reminded_at"] is None or now - row["reminded_at"] >= REMIND_EVERY)):
-        why = "due"
-    else:
+    if heard(row) != told:
+        was = (told or "").removesuffix(":unmatched")
+        if at in ("ended", "inquiry", "appeal"):
+            return at
+        if was == at:
+            return "matched"            # the same stage; what changed is that its payment is now known
+        return "reopened" if was in ENDED or was == "appeal" else "escalated" if was == "inquiry" else "open"
+    if (waits(row) and row["due_by"] is not None and timedelta(0) <= row["due_by"] - now <= REMIND_WITHIN
+            and (row["reminded_at"] is None or now - row["reminded_at"] >= REMIND_EVERY)):
+        return "due"
+    return None
+
+
+async def _tell(row: dict[str, Any], now: datetime) -> bool:
+    """One mail about one dispute, if one is owed. The right to send is
+    taken first, so of two events or two rounds at once one mails; what
+    the operator has heard is recorded only when the mail was accepted;
+    and the right is a time that runs out. So a mail the provider refuses
+    is sent on the next round, and so is one whose send never reported
+    back at all: the process stopped inside it, or the database went away
+    before the outcome could be written. True when a mail was accepted."""
+    store = get_store()
+    if _why(row, now) is None or not await store.claim_dispute_notice(
+            row["dispute_id"], told_was=row["told"], reminded_was=row["reminded_at"], at=now):
         return False
-    if not await store.claim_dispute_notice(row["dispute_id"], told_was=told, told=at,
-                                            reminded_was=row["reminded_at"], reminded_at=now):
-        return False
+    # The dispute as it stands now that the right is held: an event may
+    # have landed since the caller read it, and the mail says what is so.
+    row = await store.dispute(row["dispute_id"]) or row
+    why = _why(row, now)
     to, mailer = os.environ.get("OKWAN_SUPPORT_ESCALATION_TO", "").strip(), get_mailer()
     sent = False
-    if not to or mailer is None:
+    if why is None:
+        pass                            # answered or decided in the meantime, and already told
+    elif not to or mailer is None:
         logger.error("disputes: a notice (%s) was not mailed: %s", why,
                      "OKWAN_SUPPORT_ESCALATION_TO is not set" if not to else "no mailer")
     else:
@@ -439,9 +505,28 @@ async def settle(row: dict[str, Any], now: datetime) -> bool:
             sent = True
         except Exception as exc:  # noqa: BLE001 — the event is kept either way; the next round mails it
             logger.error("disputes: a notice (%s) was not sent: %s", why, type(exc).__name__)
-    if not sent:
-        await store.claim_dispute_notice(row["dispute_id"], told_was=at, told=told, reminded_was=now,
-                                         reminded_at=row["reminded_at"])
+    try:
+        await store.end_dispute_notice(row["dispute_id"], claimed_at=now, sent=sent, told=heard(row), reminded_at=now)
+    except Exception as exc:  # noqa: BLE001 — the right runs out by itself, and the next round mails again
+        logger.error("disputes: the outcome of a notice (%s) was not recorded: %s", why, type(exc).__name__)
+    return sent
+
+
+async def settle(row: dict[str, Any], now: datetime) -> int:
+    """Mail the operator what they have not yet heard about one dispute:
+    that it exists, that an inquiry became a dispute, that it went to
+    appeal, was decided, decided differently or reopened, that it is
+    matched to an Okwan payment after all, or that its date is near. An
+    event that landed while a mail was going out is told straight after
+    it. How many mails were accepted."""
+    sent = 0
+    for _ in range(3):
+        if not await _tell(row, now):
+            break
+        sent += 1
+        row = await get_store().dispute(row["dispute_id"])
+        if row is None:
+            break
     return sent
 
 
@@ -507,7 +592,7 @@ async def evidence(row: dict[str, Any], now: datetime | None = None) -> dict[str
     gone = None if tenant else "The account has been deleted: its name, address and use are no longer on record."
     put("customer_name", tenant.name if tenant else None, gone)
     put("customer_email_address", await store.account_email(tenant.id) if tenant else None)
-    put("product_description", PRODUCT)
+    put("product_description", PRODUCT, NOT_PRO.format(paid=amount(paid)) if paid and not _is_pro(paid) else None)
     put("service_date", f"{day(paid['paid_at'])}: the day this payment was taken." if paid else None,
         "Pro is billed monthly in advance. Take the month this payment covers from its invoice in Stripe.")
 
@@ -570,15 +655,34 @@ async def evidence(row: dict[str, Any], now: datetime | None = None) -> dict[str
         "already paid for.")
 
     # The account's own requests after the payment, oldest first: counted
-    # and read in the database, without Okwan's scheduled reads.
-    total, rows = await store.customer_access(tenant.id, paid["paid_at"], LOG_LINES) if tenant and paid else (0, [])
-    lines = [f"{stamp(r['at'])}  {_address(r['ip'])}  {' '.join(str(r['surface']).split())[:80]}"
-             for r in rows if _address(r["ip"])]
-    head = (f"Requests to Okwan made with this account's own sign-in and keys after the payment: {total} on "
-            "record, the first {n} here. Each line: time, the caller's address, and what was read.")
+    # and read in the database, without Okwan's scheduled reads, and every
+    # one of them, with or without an address that reads as one. The log
+    # is kept 90 days and a cardholder has longer than that to dispute, so
+    # for an older payment it says from when it speaks, never "after the
+    # payment", and never that there was no use.
+    kept_from = now - LOG_KEPT
+    cut = bool(paid) and paid["paid_at"] < kept_from
+    since = max(paid["paid_at"], kept_from) if paid else kept_from
+    total, rows = await store.customer_access(tenant.id, since, LOG_LINES) if tenant and paid else (0, [])
+    lines = [f"{stamp(r['at'])}  {_address(r['ip']) or NO_ADDRESS}  {' '.join(str(r['surface']).split())[:80]}"
+             for r in rows]
+    lost = (f"Okwan keeps its record of requests for {LOG_KEPT.days} days and this payment was taken "
+            f"{day(paid['paid_at'])}, longer ago than that: " if cut else "")
+    head = ((f"Okwan keeps its record of requests for {LOG_KEPT.days} days. Requests made with this account's own "
+             f"sign-in and keys since {stamp(kept_from)}, as far back as that record now reaches: " if cut else
+             "Requests to Okwan made with this account's own sign-in and keys after the payment: ")
+            + f"{total} on record, the first {{n}} here. Each line: time, the caller's address, and what was "
+            "read.")
+    notes = ["The addresses are what the network in front of Okwan reported for each request."]
+    if cut:
+        notes.append(f"{lost}requests from before {day(kept_from)} are no longer on record, so the use made "
+                     "straight after paying cannot be shown from here.")
     if lines:
-        put("access_activity_log", head.format(n=len(lines)) + "\n" + "\n".join(lines),
-            "The addresses are what the network in front of Okwan reported for each request.")
+        put("access_activity_log", head.format(n=len(lines)) + "\n" + "\n".join(lines), " ".join(notes))
+    elif cut:
+        put("access_activity_log", None,
+            f"{lost}nothing is on record since {day(kept_from)}, and whether the service was used before that can "
+            "no longer be shown from here. Do not tell the bank there was no use.")
     else:
         put("access_activity_log", None,
             "No use of the service is on record after this payment." if tenant and paid else
@@ -586,8 +690,11 @@ async def evidence(row: dict[str, Any], now: datetime | None = None) -> dict[str
 
     earlier = None
     if tenant and paid:
+        # A charge of another amount is not the same thing charged twice,
+        # whatever it was for.
         earlier = next((p for p in await store.payments_for(tenant.id)
-                        if p["paid_at"] <= paid["paid_at"] and p["charge_id"] != paid["charge_id"]), None)
+                        if p["paid_at"] <= paid["paid_at"] and p["charge_id"] != paid["charge_id"]
+                        and (p["amount_minor"], p["currency"]) == (paid["amount_minor"], paid["currency"])), None)
     if earlier:
         apart = paid["paid_at"] - earlier["paid_at"]
         put("duplicate_charge_id", earlier["charge_id"])
@@ -604,14 +711,20 @@ async def evidence(row: dict[str, Any], now: datetime | None = None) -> dict[str
                 f"one, {paid['charge_id']}, was taken {day(paid['paid_at'])}, {apart.days} days later. Pro is "
                 "billed once a month.", "Confirm from the two invoices in Stripe that each is for its own month.")
     else:
-        put("duplicate_charge_id", None, "No earlier payment by this account is on record.")
+        put("duplicate_charge_id", None, "No earlier payment of this amount by this account is on record.")
         put("duplicate_charge_explanation", None)
 
-    # Stripe takes 150,000 characters across every field: the log gives way first.
+    # Stripe takes 150,000 characters across every field: the log gives way
+    # first, then the policy's text, which can go as a file. Whatever is
+    # still too long after that goes too, longest first: the limit holds
+    # for any record, not only for the ones foreseen.
     while size() > EVIDENCE_CHARACTERS and lines:
         lines.pop()
         put("access_activity_log", (head.format(n=len(lines)) + "\n" + "\n".join(lines)) if lines else None,
-            "Shortened to fit Stripe's limit on an answer's length.")
+            " ".join(["Shortened to fit Stripe's limit on an answer's length.", *notes[1:]]))
     if size() > EVIDENCE_CHARACTERS:
         put("uncategorized_text", None, "Left out to fit Stripe's limit: attach the policy as a file instead.")
+    while size() > EVIDENCE_CHARACTERS:
+        longest = max(fields, key=lambda name: len(fields[name]["text"] or ""))
+        put(longest, None, "Left out to fit Stripe's limit on an answer's length: say it in your own words.")
     return pack(version if disclosure else None)
