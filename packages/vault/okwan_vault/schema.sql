@@ -502,6 +502,43 @@ CREATE TABLE IF NOT EXISTS billing_checkouts (
 );
 CREATE INDEX IF NOT EXISTS billing_checkouts_tenant ON billing_checkouts (tenant_id, opened_at DESC);
 
+-- Okwan's own payments, as Stripe reports each one succeeding: which
+-- customer paid, how much and when. What dispute activity is measured
+-- against, and how a disputed charge finds its account. Amounts are minor
+-- units, as Stripe sends them. Never card details.
+CREATE TABLE IF NOT EXISTS billing_payments (
+    charge_id    text PRIMARY KEY,
+    tenant_id    text REFERENCES tenants(id) ON DELETE SET NULL,
+    customer_id  text,
+    amount_minor bigint NOT NULL,
+    currency     text NOT NULL,
+    paid_at      timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS billing_payments_paid ON billing_payments (paid_at);
+
+-- A payment a cardholder's bank has questioned: a dispute, or the bank's
+-- early warning that one may follow. Kept from Stripe's signed events, the
+-- newest applied last, so the operator knows the day it arrives and the
+-- date evidence is due. The account's row going leaves the dispute: it
+-- still has to be answered.
+CREATE TABLE IF NOT EXISTS billing_disputes (
+    dispute_id   text PRIMARY KEY,
+    kind         text NOT NULL,
+    charge_id    text NOT NULL,
+    tenant_id    text REFERENCES tenants(id) ON DELETE SET NULL,
+    amount_minor bigint,
+    currency     text,
+    reason       text,
+    status       text NOT NULL,
+    due_by       timestamptz,
+    has_evidence boolean NOT NULL DEFAULT false,
+    opened_at    timestamptz NOT NULL,
+    closed_at    timestamptz,
+    event_at     timestamptz NOT NULL,
+    reminded_at  timestamptz
+);
+CREATE INDEX IF NOT EXISTS billing_disputes_opened ON billing_disputes (opened_at DESC);
+
 -- Every step checks before it acts. This runs on every start, and ALTER
 -- TABLE and GRANT take locks that a running instance's queries, or
 -- autovacuum, would wait for or deadlock against; once the database is
@@ -536,7 +573,7 @@ BEGIN
     -- The identity tables: nothing for okwan_tenant, whatever was granted before.
     FOREACH t IN ARRAY ARRAY['tenants', 'api_keys', 'sessions', 'accounts', 'signups',
                              'operator_factors', 'operator_actions', 'billing',
-                             'billing_checkouts'] LOOP
+                             'billing_checkouts', 'billing_payments', 'billing_disputes'] LOOP
         IF has_table_privilege('okwan_tenant', t,
                                'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
             EXECUTE format('REVOKE ALL ON %I FROM okwan_tenant', t);

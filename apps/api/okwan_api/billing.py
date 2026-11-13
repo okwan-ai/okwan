@@ -15,6 +15,9 @@ untouched.
   changes nothing by itself.
 * **Manage billing.** Stripe's customer portal: change card, see invoices,
   cancel. Cancelling keeps Pro to the end of the paid month.
+* **Disputes.** The same signed webhook hears of each payment taken, each
+  payment a bank disputes and each early warning of one; `disputes.py`
+  keeps them, tells the operator and prepares the answer.
 * **The policy is shown before the card is charged.** Checkout carries the
   price, that it renews, how to cancel and that a month is not refunded,
   with links to the refund policy and the Terms (`policy.at_checkout`),
@@ -51,7 +54,7 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from okwan_vault import accounts
 
-from . import access, policy
+from . import access, disputes, policy
 from .auth import get_store, quota_for
 from .mail import get_mailer
 from .ratelimit import BILLING_TENANT, client_ip, enforce
@@ -457,6 +460,9 @@ def build_router() -> APIRouter:
                 if kind == "customer.subscription.deleted":
                     obj = {**obj, "status": "canceled"}
                 return {"received": True, "plan": await apply_subscription(tenant_id, obj)}
+        if disputes.handles(kind):
+            # A payment taken, a payment disputed, a bank's early warning.
+            return await disputes.handle(kind, obj, event)
         # Anything else, or an account we do not know: acknowledged, so
         # Stripe does not retry it forever.
         return {"received": True}

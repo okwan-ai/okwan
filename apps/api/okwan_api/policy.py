@@ -12,7 +12,8 @@ them can say different things:
   card is charged;
 * each Checkout session's record keeps `VERSION`, the policy it showed;
 * a disputed payment is answered with `text()`, the whole policy in the
-  version that payment was shown, and `disclosure()`, how it was shown.
+  version that payment was shown, and `disclosure()`, how it was shown
+  (docs/ops/RUNBOOK.md, "A payment is disputed").
 
 Changing the policy: change the words here, give it a new `VERSION` and
 `UPDATED`, move what `said()` returned before into `ARCHIVE` under the old

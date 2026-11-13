@@ -123,6 +123,53 @@ export async function account(id: string) {
   return api<AccountDetail>(`/v1/ops/accounts/${encodeURIComponent(id)}`, { session: await session() });
 }
 
+/** Okwan's own disputed payments: a dispute, or a bank's early warning of one. */
+export type DisputeRow = {
+  id: string;
+  kind: "dispute" | "warning";
+  status: string;
+  reason: string | null;
+  amount: string;
+  charge_id: string;
+  opened_at: string;
+  due_by: string | null;
+  days_left: number | null;
+  has_evidence: boolean;
+  needs_answer: boolean;
+  ended: boolean;
+  account: { id: string; name: string } | null;
+};
+export type DisputeActivity = {
+  days: number;
+  disputes: number;
+  warnings: number;
+  payments: number;
+  rate: string | null;
+  said: string;
+  lines: { at: string; whose: string; over: boolean }[];
+};
+export type EvidenceField = { text: string | null; add: string | null };
+export type DisputeDetail = DisputeRow & {
+  stripe_url: string;
+  evidence: {
+    reason: { code: string | null; says: string; show: string };
+    for_this_reason: string[];
+    fields: Record<string, EvidenceField>;
+    attach: { field: string; what: string }[];
+    characters: number;
+    policy_version: string;
+  };
+};
+export const DISPUTE_ID = /^[A-Za-z0-9_]{1,255}$/;
+
+export async function disputes() {
+  return api<{ activity: DisputeActivity; data: DisputeRow[] }>("/v1/ops/disputes", { session: await session() });
+}
+
+export async function dispute(id: string) {
+  return api<DisputeDetail>(`/v1/ops/disputes/${encodeURIComponent(id)}`, { session: await session() });
+}
+
 /**
  * A ticket's issue as a title. The assistant writes one sentence now, but
  * tickets from before briefs carry a paragraph: those are cut to their

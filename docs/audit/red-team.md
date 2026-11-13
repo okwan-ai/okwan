@@ -27,7 +27,7 @@ that matters comes from somewhere else. Three layers do that
 | Files customers upload | `apps/api/okwan_api/imports.py`, `packages/connectors/files/okwan_files/` |
 | The dashboard's session and its changes | `apps/dashboard/lib/api.ts`, `apps/dashboard/lib/respond.ts`, `apps/dashboard/app/**/route.ts` |
 | The operator console | `apps/api/okwan_api/ops.py` |
-| Okwan's own billing (who may pay or manage it, the signed webhook that sets the plan, the record of what a customer was shown) | `apps/api/okwan_api/billing.py`, `apps/api/okwan_api/policy.py` |
+| Okwan's own billing (who may pay or manage it, the signed webhook that sets the plan, the record of what a customer was shown, disputes and the evidence sent to a bank) | `apps/api/okwan_api/billing.py`, `apps/api/okwan_api/policy.py`, `apps/api/okwan_api/disputes.py` |
 | The daily check and its mail (Okwan reads rails and sends mail unasked) | `apps/api/okwan_api/schedule.py`, `apps/api/okwan_api/notify.py`, `apps/dashboard/app/unsubscribe/` |
 
 ## How to run it (owner, about ten minutes)

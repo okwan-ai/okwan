@@ -752,6 +752,72 @@ class PostgresStore:
             tenant_id, CHECKOUTS_LISTED)
         return [dict(r) for r in rows]
 
+    async def note_payment(self, charge_id: str, *, tenant_id: str | None, customer_id: str, amount_minor: int,
+                           currency: str, paid_at: datetime) -> None:
+        """One of Okwan's own payments, as Stripe reported it succeeding.
+        Written once; the account is filled in later if it was not yet known."""
+        await self.pool.execute(
+            "INSERT INTO billing_payments (charge_id, tenant_id, customer_id, amount_minor, currency, paid_at) "
+            "VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6) ON CONFLICT (charge_id) DO UPDATE SET "
+            "tenant_id = COALESCE(billing_payments.tenant_id, EXCLUDED.tenant_id)",
+            charge_id, tenant_id, customer_id, amount_minor, currency, paid_at)
+
+    async def payment(self, charge_id: str) -> dict | None:
+        row = await self.pool.fetchrow(
+            "SELECT charge_id, tenant_id, customer_id, amount_minor, currency, paid_at "
+            "FROM billing_payments WHERE charge_id = $1", charge_id)
+        return dict(row) if row else None
+
+    async def payments_between(self, since: datetime, until: datetime) -> int:
+        return int(await self.pool.fetchval(
+            "SELECT count(*) FROM billing_payments WHERE paid_at >= $1 AND paid_at < $2", since, until))
+
+    async def payments_for(self, tenant_id: str, limit: int = 24) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT charge_id, tenant_id, customer_id, amount_minor, currency, paid_at FROM billing_payments "
+            "WHERE tenant_id = $1 ORDER BY paid_at DESC, charge_id LIMIT $2", tenant_id, limit)
+        return [dict(r) for r in rows]
+
+    async def save_dispute(self, dispute_id: str, *, kind: str, charge_id: str, tenant_id: str | None,
+                           amount_minor: int | None, currency: str | None, reason: str | None, status: str,
+                           due_by: datetime | None, has_evidence: bool, opened_at: datetime,
+                           closed_at: datetime | None, event_at: datetime) -> str:
+        """Apply one Stripe event about a dispute. "new" the first time it
+        is heard of, "changed" for a newer event, "stale" for one older
+        than what is already applied (Stripe does not promise order)."""
+        async with self.pool.acquire() as con, con.transaction():
+            known = await con.fetchval(
+                "SELECT event_at FROM billing_disputes WHERE dispute_id = $1 FOR UPDATE", dispute_id)
+            if known is None:
+                done = await con.execute(
+                    "INSERT INTO billing_disputes (dispute_id, kind, charge_id, tenant_id, amount_minor, currency, "
+                    "reason, status, due_by, has_evidence, opened_at, closed_at, event_at) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT DO NOTHING",
+                    dispute_id, kind, charge_id, tenant_id, amount_minor, currency, reason, status, due_by,
+                    has_evidence, opened_at, closed_at, event_at)
+                return "new" if done.endswith(" 1") else "stale"
+            if event_at < known:
+                return "stale"
+            await con.execute(
+                "UPDATE billing_disputes SET tenant_id = COALESCE(tenant_id, $2), amount_minor = $3, currency = $4, "
+                "reason = $5, status = $6, due_by = $7, has_evidence = $8, closed_at = $9, event_at = $10 "
+                "WHERE dispute_id = $1",
+                dispute_id, tenant_id, amount_minor, currency, reason, status, due_by, has_evidence, closed_at,
+                event_at)
+            return "changed"
+
+    async def dispute(self, dispute_id: str) -> dict | None:
+        row = await self.pool.fetchrow("SELECT dispute_id, kind, charge_id, tenant_id, amount_minor, currency, reason, status, due_by, has_evidence, opened_at, closed_at, event_at, reminded_at FROM billing_disputes WHERE dispute_id = $1", dispute_id)
+        return dict(row) if row else None
+
+    async def disputes(self, limit: int = 200) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT dispute_id, kind, charge_id, tenant_id, amount_minor, currency, reason, status, due_by, has_evidence, opened_at, closed_at, event_at, reminded_at FROM billing_disputes ORDER BY opened_at DESC, dispute_id LIMIT $1", limit)
+        return [dict(r) for r in rows]
+
+    async def dispute_reminded(self, dispute_id: str, at: datetime) -> None:
+        await self.pool.execute("UPDATE billing_disputes SET reminded_at = $2 WHERE dispute_id = $1", dispute_id, at)
+
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return await self.pool.fetchval("SELECT tenant_id FROM billing WHERE customer_id = $1", customer_id)
 

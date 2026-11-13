@@ -103,6 +103,18 @@ class Store(Protocol):
     async def sweep_checkouts(self, now: datetime | None = None) -> int: ...
     async def checkouts_for(self, tenant_id: str) -> list[dict]: ...
     async def drop_checkout(self, tenant_id: str, session_id: str) -> None: ...
+    async def note_payment(self, charge_id: str, *, tenant_id: str | None, customer_id: str, amount_minor: int,
+                           currency: str, paid_at: datetime) -> None: ...
+    async def payment(self, charge_id: str) -> dict | None: ...
+    async def payments_between(self, since: datetime, until: datetime) -> int: ...
+    async def payments_for(self, tenant_id: str, limit: int = 24) -> list[dict]: ...
+    async def save_dispute(self, dispute_id: str, *, kind: str, charge_id: str, tenant_id: str | None,
+                           amount_minor: int | None, currency: str | None, reason: str | None, status: str,
+                           due_by: datetime | None, has_evidence: bool, opened_at: datetime,
+                           closed_at: datetime | None, event_at: datetime) -> str: ...
+    async def dispute(self, dispute_id: str) -> dict | None: ...
+    async def disputes(self, limit: int = 200) -> list[dict]: ...
+    async def dispute_reminded(self, dispute_id: str, at: datetime) -> None: ...
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
@@ -223,6 +235,8 @@ class MemoryStore:
         self._session_seen: dict[str, datetime] = {}
         self._billing: dict[str, dict] = {}
         self._checkouts: dict[str, dict] = {}
+        self._payments: dict[str, dict] = {}
+        self._disputes: dict[str, dict] = {}
         self._runs: dict[str, RunRecord] = {}
         self._conversations: dict[str, SupportConversation] = {}
         self._tickets: dict[str, SupportTicket] = {}
@@ -280,6 +294,9 @@ class MemoryStore:
         self._replies = [r for r in self._replies if r["tenant_id"] not in gone]
         self._billing = {k: v for k, v in self._billing.items() if k not in gone}
         self._checkouts = {k: v for k, v in self._checkouts.items() if v["tenant_id"] not in gone}
+        for kept in (*self._payments.values(), *self._disputes.values()):
+            if kept["tenant_id"] in gone:
+                kept["tenant_id"] = None
         for file_id in [k for k, v in self._imports.items() if v.tenant_id in gone]:
             del self._imports[file_id]
             self._import_rows.pop(file_id, None)
@@ -353,6 +370,56 @@ class MemoryStore:
         paid = [r for r in rows if r["paid_at"] is not None][:CHECKOUTS_LISTED]
         unpaid = [r for r in rows if r["paid_at"] is None][:CHECKOUTS_LISTED]
         return [r for r in rows if r in paid or r in unpaid]
+
+    async def note_payment(self, charge_id: str, *, tenant_id: str | None, customer_id: str, amount_minor: int,
+                           currency: str, paid_at: datetime) -> None:
+        old = self._payments.get(charge_id)
+        if old is not None:
+            old["tenant_id"] = old["tenant_id"] or tenant_id
+            return
+        self._payments[charge_id] = {
+            "charge_id": charge_id, "tenant_id": tenant_id, "customer_id": customer_id or None,
+            "amount_minor": amount_minor, "currency": currency, "paid_at": paid_at}
+
+    async def payment(self, charge_id: str) -> dict | None:
+        found = self._payments.get(charge_id)
+        return dict(found) if found else None
+
+    async def payments_between(self, since: datetime, until: datetime) -> int:
+        return sum(1 for p in self._payments.values() if since <= p["paid_at"] < until)
+
+    async def payments_for(self, tenant_id: str, limit: int = 24) -> list[dict]:
+        rows = sorted((dict(p) for p in self._payments.values() if p["tenant_id"] == tenant_id),
+                      key=lambda p: p["charge_id"])
+        return sorted(rows, key=lambda p: p["paid_at"], reverse=True)[:limit]
+
+    async def save_dispute(self, dispute_id: str, *, kind: str, charge_id: str, tenant_id: str | None,
+                           amount_minor: int | None, currency: str | None, reason: str | None, status: str,
+                           due_by: datetime | None, has_evidence: bool, opened_at: datetime,
+                           closed_at: datetime | None, event_at: datetime) -> str:
+        new = {"amount_minor": amount_minor, "currency": currency, "reason": reason, "status": status,
+               "due_by": due_by, "has_evidence": has_evidence, "closed_at": closed_at, "event_at": event_at}
+        old = self._disputes.get(dispute_id)
+        if old is None:
+            self._disputes[dispute_id] = {"dispute_id": dispute_id, "kind": kind, "charge_id": charge_id,
+                                          "tenant_id": tenant_id, "opened_at": opened_at, "reminded_at": None, **new}
+            return "new"
+        if event_at < old["event_at"]:
+            return "stale"
+        old.update(new, tenant_id=old["tenant_id"] or tenant_id)
+        return "changed"
+
+    async def dispute(self, dispute_id: str) -> dict | None:
+        found = self._disputes.get(dispute_id)
+        return dict(found) if found else None
+
+    async def disputes(self, limit: int = 200) -> list[dict]:
+        rows = sorted((dict(d) for d in self._disputes.values()), key=lambda d: d["dispute_id"])
+        return sorted(rows, key=lambda d: d["opened_at"], reverse=True)[:limit]
+
+    async def dispute_reminded(self, dispute_id: str, at: datetime) -> None:
+        if dispute_id in self._disputes:
+            self._disputes[dispute_id]["reminded_at"] = at
 
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return next((t for t, b in self._billing.items() if b["customer_id"] == customer_id), None)

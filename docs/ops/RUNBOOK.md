@@ -641,6 +641,47 @@ it is cancelled at period end, unpaid or expired.
   or after a cancellation took effect) is refunded in full. Refund it in
   Stripe (Payments → the payment → Refund). Answer the customer either
   way: a customer who is not answered asks their bank instead.
+- **A payment is disputed.** A cardholder has asked their bank to take a
+  payment back. You are mailed at `OKWAN_SUPPORT_ESCALATION_TO` when it
+  arrives (`[Dispute] $99.00 disputed, answer due …`), again inside three
+  days of the date if nothing has been sent, and when the bank decides.
+  The date is the bank's: after it the dispute is lost, and an answer can
+  be sent **once**. Every dispute counts against the account, won or
+  lost, so the first question is whether to answer at all:
+  1. Open it in the console, **Disputes**. The page shows the days left,
+     the bank's reason in plain words, and what Okwan holds, already in
+     the fields of Stripe's form: who the customer is, the address they
+     paid from, the refund policy in the version they were shown and when,
+     and their own requests to Okwan after the payment.
+  2. If the customer is right (charged twice, charged after a cancellation
+     took effect), accept the dispute in Stripe and write to them. Stripe's
+     own advice is to accept rather than refund: the disputed amount has
+     already left the account, and accepting ends it.
+  3. Otherwise write to the customer first. Many disputes are a charge not
+     recognised on a statement. If they say they will withdraw it with
+     their bank, **still answer**: Stripe says a dispute is only closed in
+     the seller's favour by a response, withdrawn or not. Attach their
+     email as `customer_communication`. Answering carries a fee of its
+     own on top of the fee for the dispute, returned if it is won.
+  4. To answer: *Open the payment in Stripe* → *Counter dispute*. Copy
+     each field from the console page, add what it marks *To add by
+     hand*, and attach the files it lists (print the console page to a
+     PDF for the policy as shown; the receipt is on the payment's page).
+     Read it through, then submit. Okwan never submits for you and its
+     Stripe key cannot.
+  5. The console's Disputes page then shows *Answered, with the bank*. The
+     bank usually takes 60 to 75 days; you are mailed when it decides.
+- **A bank flags a payment** (`[Payment flagged] …`): an early fraud
+  warning. No money has moved and nothing has to be answered. Stripe's
+  documentation says about four in ten become a dispute if the payment is
+  not refunded. Look at the account: if it does not look like the owner's
+  own payment, refund it in Stripe and cancel the subscription.
+- **The dispute rate.** The console's Disputes page shows disputes in the
+  last 30 days against payments in them, beside 0.5% (Visa's monitoring
+  line) and 0.75% (the level Stripe's documentation calls excessive).
+  With few payments one dispute crosses both; what a card network acts on
+  is a month's count as well as its rate. A second dispute in a month is
+  the moment to stop and find the cause before taking more payments.
 - **Larger plans** (Team, Enterprise) stay agreed in writing and set with
   `plan set`; they do not go through Checkout.
 
@@ -797,8 +838,14 @@ In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
    `checkout.session.completed`,
    `checkout.session.async_payment_succeeded`,
    `customer.subscription.created`, `customer.subscription.updated`,
-   `customer.subscription.deleted`.
-   Copy its **signing secret** (`whsec_...`).
+   `customer.subscription.deleted`;
+   and, so a disputed payment is known the hour it arrives,
+   `charge.succeeded`, `charge.dispute.created`,
+   `charge.dispute.updated`, `charge.dispute.closed`,
+   `charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated`
+   and `radar.early_fraud_warning.created`. Copy its **signing secret**
+   (`whsec_...`). The key in step 4 needs nothing more for these: Stripe
+   sends them, Okwan asks for nothing.
 4. **Key:** Developers → API keys → Create restricted key, with write on
    *Checkout Sessions* and *Customer portal*, nothing else. Copy it
    (`rk_live_...`). Shown once.
