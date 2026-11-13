@@ -44,6 +44,7 @@ import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -51,7 +52,8 @@ from okwan_vault import accounts
 
 from . import access, policy
 from .auth import get_store, quota_for
-from .ratelimit import client_ip
+from .mail import get_mailer
+from .ratelimit import BILLING_TENANT, client_ip, enforce
 
 logger = logging.getLogger("okwan.billing")
 
@@ -61,12 +63,22 @@ PRO = "pro"
 PRO_PRICE_USD = policy.PRO_PRICE_USD
 #: How old a webhook's signature may be: Stripe's own default tolerance.
 SIGNATURE_TOLERANCE = 300
-#: The most unpaid Checkout sessions one account may have opened in a day.
-#: Each is a request to Stripe and a row here, and a person needs one.
+#: The most unpaid Checkout sessions one account may have on record from
+#: the last day. The hourly limit on the route (ratelimit.BILLING_TENANT)
+#: is what stops a burst; this keeps the rows of many hours bounded.
 MAX_OPEN_CHECKOUTS = 20
 #: Subscription states that keep Pro. past_due is Stripe retrying a failed
 #: payment; the plan holds while it does, and ends if Stripe gives up.
 PAID = frozenset({"active", "trialing", "past_due"})
+#: How Stripe reports a new subscription until its first payment is confirmed.
+NOT_YET = "incomplete"
+#: How long an unpaid Checkout session can still take a payment: Stripe ends
+#: one a day after it opens.
+SESSION_LIFE = timedelta(hours=25)
+#: The most other sessions ended at Stripe for one request.
+END_AT_MOST = 10
+#: Second subscriptions the operator has been mailed about, by this process.
+_told_twice: set[tuple[str, str]] = set()
 
 _transport: httpx.AsyncBaseTransport | None = None
 
@@ -110,6 +122,76 @@ async def _stripe(path: str, form: dict[str, str]) -> dict[str, Any]:
     return r.json()
 
 
+async def _stripe_ends(session_id: str) -> bool:
+    """Ask Stripe to end an unpaid Checkout session. True when Stripe says
+    it is ended; False for anything else (it is already paid, already
+    ended, or Stripe did not answer). Never raises."""
+    try:
+        async with httpx.AsyncClient(transport=_transport, timeout=5) as client:
+            r = await client.post(f"{STRIPE_API}/checkout/sessions/{quote(session_id, safe='')}/expire",
+                                  headers={"Authorization": f"Bearer {_env('OKWAN_BILLING_STRIPE_SECRET_KEY')}"})
+    except httpx.HTTPError:
+        return False
+    return r.status_code < 300
+
+
+async def end_other_sessions(tenant_id: str, *, keep: str, before: datetime | None = None) -> int:
+    """One account, one payable checkout. Every other unpaid session the
+    account still has open is ended at Stripe, and one Stripe confirms
+    ended is dropped: it can never take a payment. Two tabs, or a second
+    click, cannot then become two subscriptions and a month charged twice.
+    `before`: only sessions opened earlier than this, so of several opened
+    at once the newest stands."""
+    store = get_store()
+    oldest = datetime.now(UTC) - SESSION_LIFE
+    ended = 0
+    for c in await store.checkouts_for(tenant_id):
+        if (c["paid_at"] is not None or c["session_id"] == keep or c["opened_at"] < oldest
+                or (before is not None and c["opened_at"] >= before)):
+            continue
+        if ended >= END_AT_MOST:
+            break
+        if await _stripe_ends(c["session_id"]):
+            await store.drop_checkout(tenant_id, c["session_id"])
+            ended += 1
+    return ended
+
+
+async def _paying_for_another(tenant_id: str, subscription_id: str) -> dict | None:
+    """The account's billing record, when it already names a different
+    subscription that is paying for Pro."""
+    row = await get_store().billing_for(tenant_id)
+    if (row and subscription_id and row["subscription_id"] and row["subscription_id"] != subscription_id
+            and row["status"] in PAID):
+        return row
+    return None
+
+
+async def _tell_paid_twice(tenant_id: str, kept: str, second: str, customer: str) -> None:
+    """An account has two paying subscriptions. The record keeps the first;
+    the operator is told once, to cancel and refund the second."""
+    logger.error("billing: %s is paying for a second subscription (%s) while %s is active", tenant_id, second, kept)
+    if (tenant_id, second) in _told_twice:
+        return
+    _told_twice.add((tenant_id, second))
+    to, mailer = os.environ.get("OKWAN_SUPPORT_ESCALATION_TO", "").strip(), get_mailer()
+    if not to or mailer is None:
+        return
+    email = await get_store().account_email(tenant_id) or "no sign-in address"
+    text = (
+        "An account has paid for Pro twice: two subscriptions are active for it at Stripe.\n\n"
+        f"Account:  {tenant_id} ({email})\n"
+        f"Kept:     {kept}, the one the dashboard's Manage billing opens\n"
+        f"Second:   {second}" + (f", Stripe customer {customer}" if customer else "") + "\n\n"
+        "In Stripe, cancel the second subscription now and refund its payment in full: the refund policy says a "
+        "month charged twice is refunded. The account stays on Pro through the first.\n"
+    )
+    try:
+        await mailer.send_notice(to, "[Billing] An account has paid for Pro twice", text)
+    except Exception as exc:  # noqa: BLE001 — the event is acknowledged either way; the error line above stands
+        logger.error("billing: second-subscription mail not sent: %s", type(exc).__name__)
+
+
 def verify_signature(payload: bytes, header: str, secret: str, now: float | None = None) -> bool:
     """Stripe's scheme: HMAC-SHA256 of "<t>.<body>" with the endpoint's
     secret, in a `v1=` entry of the Stripe-Signature header, timestamped
@@ -124,8 +206,10 @@ def verify_signature(payload: bytes, header: str, secret: str, now: float | None
         return False
     if abs((now if now is not None else time.time()) - stamp) > SIGNATURE_TOLERANCE:
         return False
-    expected = hmac.new(secret.encode(), f"{stamp}.".encode() + payload, hashlib.sha256).hexdigest()
-    return any(hmac.compare_digest(expected, sig) for sig in parts.get("v1", []))
+    expected = hmac.new(secret.encode(), f"{stamp}.".encode() + payload, hashlib.sha256).hexdigest().encode()
+    # Bytes: compare_digest refuses a str with a character outside ASCII,
+    # and a header can carry one. Such a signature is wrong, not an error.
+    return any(hmac.compare_digest(expected, sig.encode("utf-8", "replace")) for sig in parts.get("v1", []))
 
 
 async def session_owner(request: Request, authorization: str = Header(default=""),
@@ -196,12 +280,15 @@ def build_router() -> APIRouter:
                 "current_period_end": record["current_period_end"].isoformat() if record["current_period_end"] else None,
             },
             "can_manage": record is not None and bool(record["customer_id"]),
+            # The policy's own words for this page, shown ahead of the Upgrade button.
+            "notice": policy.plan_page(), "refunds_url": policy.refunds_url(), "terms_url": policy.terms_url(),
         }
 
     @router.post("/checkout")
     async def checkout(request: Request, tenant=Depends(session_owner)) -> dict[str, str]:
         if not enabled():
             raise HTTPException(503, "card payments are not switched on yet")
+        enforce(request, (BILLING_TENANT, tenant.id))
         store = get_store()
         if (await quota_for(tenant)).plan != "free":
             raise HTTPException(409, "this account is already on a paid plan")
@@ -242,12 +329,16 @@ def build_router() -> APIRouter:
         # webhook marks this row, and only this one, when it is paid.
         await store.open_checkout(tenant.id, str(session["id"]), policy_version=form["metadata[refund_policy]"],
                                   at=now, ip=client_ip(request))
+        # And it is the only one that can be paid: the account's earlier
+        # sessions (another tab, an earlier click) are ended at Stripe.
+        await end_other_sessions(tenant.id, keep=str(session["id"]), before=now)
         return {"url": session["url"]}
 
     @router.post("/portal")
-    async def portal(tenant=Depends(session_owner)) -> dict[str, str]:
+    async def portal(request: Request, tenant=Depends(session_owner)) -> dict[str, str]:
         if not enabled():
             raise HTTPException(503, "card payments are not switched on yet")
+        enforce(request, (BILLING_TENANT, tenant.id))
         record = await get_store().billing_for(tenant.id)
         if record is None or not record["customer_id"]:
             raise HTTPException(409, "there is no billing to manage yet")
@@ -269,29 +360,56 @@ def build_router() -> APIRouter:
             tenant_id = await _tenant_for(obj)
             store = get_store()
             if tenant_id and obj.get("subscription"):
-                known = await store.billing_for(tenant_id)
-                if known and known["subscription_id"] == obj["subscription"] and known["status"] not in PAID:
-                    # A late retry of this event: the subscription already ended.
-                    return {"received": True}
-                await store.save_billing(
-                    tenant_id, customer_id=str(obj.get("customer") or ""),
-                    subscription_id=str(obj["subscription"]), status="active",
-                    cancel_at_period_end=False, current_period_end=None)
+                # The record first. This session was paid, whatever state the
+                # subscription is in by the time this event is handled: Stripe
+                # does not order its events, and one that is sent late, or
+                # sent again by hand, still says which session took the money.
                 stamp = event.get("created")
                 when = datetime.fromtimestamp(int(stamp), UTC) if stamp else datetime.now(UTC)
                 ticked = (obj.get("consent") or {}).get("terms_of_service") == "accepted"
                 if not await store.checkout_paid(
                         tenant_id, str(obj.get("id") or ""), at=when, subscription_id=str(obj["subscription"]),
                         terms_accepted_at=when if ticked else None):
-                    # Paid, and Pro follows; but not through a session this
-                    # service opened, so there is no record of what it showed.
+                    # Paid, but not through a session this service opened, so
+                    # there is no record of what it showed.
                     logger.warning("billing: paid checkout for %s has no record of what it showed", tenant_id)
+                # Paid: nothing else the account has open may take a second payment.
+                await end_other_sessions(tenant_id, keep=str(obj.get("id") or ""))
+                first = await _paying_for_another(tenant_id, str(obj["subscription"]))
+                if first:
+                    # It did anyway (two pages paid before either was heard
+                    # of). The record keeps the first subscription, which is
+                    # the one Manage billing opens; a person undoes the second.
+                    await _tell_paid_twice(tenant_id, first["subscription_id"], str(obj["subscription"]),
+                                           str(obj.get("customer") or ""))
+                    return {"received": True, "plan": PRO, "second_subscription": True}
+                known = await store.billing_for(tenant_id)
+                if (known and known["subscription_id"] == obj["subscription"]
+                        and known["status"] not in PAID and known["status"] != NOT_YET):
+                    # The subscription is already known to have ended: a late
+                    # retry of this event must not bring Pro back. One that is
+                    # only waiting for its first payment is not ended, and
+                    # this event is that payment.
+                    return {"received": True}
+                await store.save_billing(
+                    tenant_id, customer_id=str(obj.get("customer") or ""),
+                    subscription_id=str(obj["subscription"]), status="active",
+                    cancel_at_period_end=False, current_period_end=None)
                 await store.set_plan(tenant_id, PRO)
                 return {"received": True, "plan": PRO}
         if kind in ("customer.subscription.created", "customer.subscription.updated",
                     "customer.subscription.deleted"):
             tenant_id = await _tenant_for(obj)
             if tenant_id:
+                first = await _paying_for_another(tenant_id, str(obj.get("id") or ""))
+                if first:
+                    # About a subscription that is not the one on record while
+                    # that one is paying: an older one ending late, or a second
+                    # one. Neither changes the plan or takes over the record.
+                    if kind != "customer.subscription.deleted" and str(obj.get("status") or "") in PAID:
+                        await _tell_paid_twice(tenant_id, first["subscription_id"], str(obj.get("id") or ""),
+                                               str(obj.get("customer") or ""))
+                    return {"received": True, "plan": (await get_store().get_plan(tenant_id))[0]}
                 if kind == "customer.subscription.deleted":
                     obj = {**obj, "status": "canceled"}
                 return {"received": True, "plan": await apply_subscription(tenant_id, obj)}

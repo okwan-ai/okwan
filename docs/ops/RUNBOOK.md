@@ -621,7 +621,7 @@ it is cancelled at period end, unpaid or expired.
   the same module puts the policy beside Stripe Checkout's pay button and
   gives the copy sent to a bank in a dispute. To change it, in one pull
   request: change the words in `policy.py`; give it a new `VERSION` and
-  `UPDATED`; move what `policy.text()` returned before into its `ARCHIVE`
+  `UPDATED`; move what `policy.said()` returned before into its `ARCHIVE`
   under the old version; write the page's file again
   (`python -m okwan_api.policy > apps/web/app/refunds/policy.json`); add
   the new digest in `tests/test_refund_policy.py`; and change the Terms'
@@ -631,6 +631,11 @@ it is cancelled at period end, unpaid or expired.
   it was made: each Checkout session has a row in `billing_checkouts` with
   the version, the time and the address, and the row of the session that
   was paid is marked with when and with its subscription.
+- **An account has paid twice** (`[Billing] An account has paid for Pro twice`). Two checkout pages were paid
+  before Okwan heard of either. Okwan ends an account's other open pages at Stripe whenever one is opened or
+  paid, so this needs both to be paid within moments. The account stays on Pro through the first
+  subscription, the one *Manage billing* opens. In Stripe, cancel the second subscription the mail names
+  and refund its payment in full, then tell the customer: the policy promises it.
 - **A customer asks for a refund.** The policy: a month is not refunded
   once it has started; a payment taken by mistake (twice for one month,
   or after a cancellation took effect) is refunded in full. Refund it in
@@ -810,7 +815,7 @@ In Okwan's own Stripe account (Global Tech Startup LLC), live mode:
 7. **A box to tick** (optional, after step 6). Set
    `OKWAN_BILLING_REQUIRE_TERMS=on` on the `okwan` service: Checkout then
    makes the customer tick agreement to the Terms and the refund policy,
-   and the account's record keeps when Stripe reported it ticked. Do one
+   and that checkout's record keeps when Stripe reported it ticked. Do one
    test checkout after switching it on: Stripe refuses every checkout
    with this set if the Terms' address in step 6 is missing.
 

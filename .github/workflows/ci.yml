@@ -80,11 +80,16 @@ jobs:
         run: npm run typecheck
       - run: npm run build
 
-      # The refund page as it will be served says the policy, whole, and
-      # nothing else: every word between <main> and </main> against the file
-      # okwan_api/policy.py writes. Part of the required `web (web)` check.
+      # The refund page, as a browser shows it, says the policy, whole, and
+      # nothing else: the built site is served and opened, and the words on
+      # the screen are compared with the file okwan_api/policy.py writes.
+      # Part of the required `web (web)` check.
       - if: matrix.app == 'web'
-        run: node scripts/check-refunds.mjs
+        name: The refund page, as a browser shows it
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+          node scripts/check-refunds.mjs
 
       # The layout check (docs/ops/RUNBOOK.md, "Layout check"): the built
       # dashboard against the API with a seeded, in-memory workspace, every

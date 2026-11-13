@@ -25,6 +25,7 @@ The last four sections keep what an attacker's pass found.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import html
@@ -40,6 +41,7 @@ import httpx
 import pytest
 from okwan_api import billing, policy
 from okwan_api.main import app
+from okwan_api.ratelimit import BILLING_TENANT
 from okwan_vault import EnvMasterKey, MemoryStore, PostgresStore, accounts, new_key
 from okwan_vault.accounts import SESSION_PREFIX, new_token
 from okwan_vault.usage import UNPAID_CHECKOUT_KEPT
@@ -52,12 +54,14 @@ PAGE = "apps/web/app/refunds/page.tsx"
 PAGE_FILE = "apps/web/app/refunds/policy.json"
 TERMS = "apps/web/app/terms/page.tsx"
 
-#: The words of each version of the policy, by digest of the page's file.
-#: A line here is never edited. New words are a new version: change VERSION
-#: and UPDATED in okwan_api/policy.py, put what text() returned before into
-#: its ARCHIVE under the old version, and add the new line.
+#: Everything each version of the policy says, by digest of policy.said():
+#: the page, the words at checkout and beside the tick box, the copy for a
+#: bank and the statement of how it was shown. A line here is never
+#: edited. New words anywhere are a new version: change VERSION and UPDATED
+#: in okwan_api/policy.py, put what said() returned before into its
+#: ARCHIVE under the old version, and add the new line.
 PINNED = {
-    "2026-11-13": "1a55d79b4b9fcf8c3475190cd77e7d55802c174f0a29f7993161e2be12093525",
+    "2026-11-13": "b3730adab829c8c01d18546062a77c05e533d4d719070367546d44edf9d28cfa",
 }
 #: The Terms' "Plans and fees" section, by digest of its words. If this
 #: fails, the Terms changed there: read the section against the refund
@@ -85,6 +89,22 @@ def _plans_section(terms: str) -> str:
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _pin(said: dict[str, str]) -> str:
+    """The digest of everything one version says."""
+    return _digest(json.dumps(said, sort_keys=True, ensure_ascii=False))
+
+
+def _versions_are_pinned() -> None:
+    """The check itself, so a forged archive can be put through it below."""
+    assert _pin(policy.said()) == PINNED[policy.VERSION], (
+        "something the policy says has changed: give it a new VERSION (see PINNED above)")
+    assert set(PINNED) == {policy.VERSION} | set(policy.ARCHIVE), "every earlier version is kept, whole"
+    for version in policy.ARCHIVE:
+        kept = policy.said(version)
+        assert _pin(kept) == PINNED[version], f"version {version} in the archive is not what was pinned"
+        assert policy.text(version) == kept["text"] and f"(version {version})" in kept["text"]
 
 
 #: Everything the page's source may say in a string, outside its comments:
@@ -134,12 +154,11 @@ def test_the_date_on_the_page_is_the_version():
     assert said.date().isoformat() == policy.VERSION == policy.published()["version"]
 
 
-def test_the_words_cannot_change_without_the_version():
-    assert _digest(policy.page_file()) == PINNED[policy.VERSION], (
-        "the policy's words changed: give it a new VERSION (see PINNED above)")
-    assert set(PINNED) == {policy.VERSION} | set(policy.ARCHIVE), "every earlier version is kept, whole"
-    for version, words in policy.ARCHIVE.items():
-        assert policy.text(version) == words and f"(version {version})" in words
+def test_the_words_cannot_change_without_the_version(monkeypatch):
+    monkeypatch.delenv("OKWAN_SITE_URL", raising=False)
+    _versions_are_pinned()
+    assert set(policy.said()) == {"page", "plan_page", "at_checkout", "acceptance", "text", "disclosure"}
+    assert policy.said()["page"] == _read(PAGE_FILE)
 
 
 def test_the_policy_as_sent_to_a_card_issuer_is_the_whole_page():
@@ -205,13 +224,37 @@ def test_the_site_links_the_policy_from_every_legal_page_and_the_home_page():
     assert '["Refunds", "/refunds"]' in _read("apps/web/app/page.tsx")
 
 
-def test_the_plan_page_shows_the_policy_before_the_upgrade_button():
+def test_the_plan_page_shows_the_policys_own_words_before_the_upgrade_button():
     card = _read("apps/dashboard/app/_components/settings/billing-card.tsx")
-    shown, button = card.index("href={REFUNDS}"), card.index("Upgrade for $")
+    shown, button = card.index("{notice}"), card.index("Upgrade for $")
     assert shown < button, "ahead of the button in the page: beside it on a wide screen, above it on a phone"
-    assert 'const REFUNDS = "https://okwan.ai/refunds"' in card
-    assert "isn't refunded once its month has started" in html.unescape(card).replace("&apos;", "'")
-    assert "renews each month until you cancel" in card
+    assert "<p data-policy-notice" in card and card.count("data-upgrade") == 2, "what the layout check reads in a browser"
+    assert "href={refundsUrl}" in card and "href={termsUrl}" in card
+    # The card has none of the policy's words of its own to drift: they come from the API.
+    for word in ("refunded", "renews", "okwan.ai/refunds"):
+        assert word not in card, word
+    page = _read("apps/dashboard/app/settings/page.tsx")
+    assert "notice={bill.notice}" in page and "refundsUrl={bill.refunds_url}" in page and "termsUrl={bill.terms_url}" in page
+    # And the layout check holds the rendered page to the same sentence.
+    check = _read("apps/dashboard/scripts/layout-check.mjs")
+    assert f'const PLAN_NOTICE = "{policy.plan_page()} Refunds and cancellation · Terms";' in check
+    assert "await checkPlanNotice(page, w, h);" in check
+    assert f"for ${policy.PRO_PRICE_USD} a month. Cancel any time;" in check, "the card's own line, read whole in a browser"
+    assert f'"Upgrade for ${policy.PRO_PRICE_USD}/month"' in check
+
+
+def test_what_a_bank_is_told_was_shown_is_what_both_places_show():
+    """Second pass: the statement sent to a bank said the plan page shows
+    how to cancel. It said that it could be cancelled, not how."""
+    told = policy.disclosure()
+    for claimed, shown in (("the price", f"{policy.PRO_PRICE_USD} US dollars a month"),
+                           ("renews monthly until cancelled", "renews each month until you cancel"),
+                           ("how to cancel", "Manage billing"),
+                           ("not refunded once its month has started", "not refunded once its month has started")):
+        assert claimed in told, claimed
+        assert shown in policy.plan_page(), f"the plan page does not show {claimed}"
+        assert shown in policy.at_checkout(), f"Stripe's page does not show {claimed}"
+    assert "next to the Upgrade button" in told and "beside the pay button" in told
 
 
 # ── at checkout ─────────────────────────────────────────────────────
@@ -247,14 +290,26 @@ class FakeStripe:
     def __init__(self) -> None:
         self.forms: list[dict] = []
         self.status = 200
+        self.delay = 0.0
         self.tag = os.urandom(4).hex()
+        self.ended: list[str] = []            # sessions Okwan asked Stripe to end, and Stripe ended
+        self.will_not_end: set[str] = set()   # already paid, as Stripe sees it
+        self.ends = True
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
+    async def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/expire"):
+            session = request.url.path.split("/")[-2]
+            if not self.ends or session in self.will_not_end or session in self.ended:    # ended once, as at Stripe
+                return httpx.Response(400, json={"error": {"type": "invalid_request_error"}})
+            self.ended.append(session)
+            return httpx.Response(200, json={"id": session, "status": "expired"})
         self.forms.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+        nth = len(self.forms)
+        await asyncio.sleep(self.delay)      # Stripe takes its time to answer
         if self.status != 200:
             return httpx.Response(self.status, json={"error": {"type": "invalid_request_error"}})
         if request.url.path.endswith("/checkout/sessions"):
-            session = f"cs_test_{self.tag}_{len(self.forms)}"
+            session = f"cs_test_{self.tag}_{nth}"
             return httpx.Response(200, json={"id": session, "url": f"https://checkout.stripe.com/c/pay/{session}"})
         return httpx.Response(200, json={"id": "bps_1", "url": "https://billing.stripe.com/p/session/bps_1"})
 
@@ -281,6 +336,29 @@ async def client(store):
     set_store(store)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://okwan.test") as c:
         yield c
+
+
+class Outbox:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send_verification(self, email, link):  # pragma: no cover
+        raise AssertionError("not here")
+
+    async def send_notice(self, to, subject, text, html=None, reply_to=None, headers=None):
+        self.sent.append({"to": to, "subject": subject, "text": text})
+
+
+@pytest.fixture
+def outbox(monkeypatch):
+    from okwan_api import mail
+
+    box = Outbox()
+    mail.set_mailer(box)
+    monkeypatch.setenv("OKWAN_SUPPORT_ESCALATION_TO", "owner-inbox@okwan.test")
+    yield box
+    mail._overridden = False
+    mail._mailer = None
 
 
 def _from(session: str, ip: str = "203.0.113.24") -> dict:
@@ -373,6 +451,8 @@ async def test_what_a_checkout_showed_is_recorded_under_its_own_session(client, 
     assert await store.billing_for(tenant.id) is None
     shown = (await client.get("/v1/billing", headers=headers)).json()
     assert (shown["plan"], shown["subscription"], shown["can_manage"]) == ("free", None, False)
+    assert (shown["notice"], shown["refunds_url"], shown["terms_url"]) == (
+        policy.plan_page(), "https://okwan.ai/refunds", "https://okwan.ai/terms"), "the plan page's words"
 
 
 async def test_the_paid_session_is_marked_once_and_nothing_later_changes_it(client, store, stripe):
@@ -426,12 +506,14 @@ async def test_the_site_address_in_the_links_follows_the_setting(client, store, 
     assert "(https://staging.okwan.test/refunds)" in stripe.forms[0]["custom_text[submit][message]"]
 
 
-async def test_an_account_opens_only_so_many_checkouts_a_day(client, store, stripe):
+async def test_an_account_keeps_only_so_many_unpaid_checkouts_from_one_day(client, store, stripe):
     tenant, headers = await _account(store)
-    for _ in range(billing.MAX_OPEN_CHECKOUTS):
-        await _open(client, headers)
+    now = datetime.now(UTC)
+    for n in range(billing.MAX_OPEN_CHECKOUTS):          # opened over the day, a few an hour
+        await store.open_checkout(tenant.id, f"cs_{stripe.tag}_{n}", policy_version=policy.VERSION,
+                                  at=now - timedelta(hours=23) + timedelta(minutes=n), ip="203.0.113.24")
     r = await client.post("/v1/billing/checkout", headers=headers)
-    assert r.status_code == 429 and len(stripe.forms) == billing.MAX_OPEN_CHECKOUTS, "Stripe is not asked again"
+    assert r.status_code == 429 and stripe.forms == [], "Stripe is not asked"
     assert len(await store.checkouts_for(tenant.id)) == billing.MAX_OPEN_CHECKOUTS
 
 
@@ -526,15 +608,16 @@ async def test_the_record_marked_paid_is_the_session_that_was_paid(client, store
     monkeypatch.setenv("OKWAN_BILLING_REQUIRE_TERMS", "on")
     tenant, headers = await _account(store)
     first = await _open(client, headers)
+    stripe.will_not_end.add(first)                       # being paid at Stripe as the second is opened
     monkeypatch.setattr(policy, "VERSION", "2027-02-01")
     second = await _open(client, {**headers, "x-okwan-client-ip": "192.0.2.66"})
     assert (await _paid(client, tenant.id, first, consent={"terms_of_service": "accepted"},
                         metadata={"tenant_id": tenant.id, "refund_policy": "2026-11-13"})).json()["plan"] == "pro"
-    paid, unpaid = await _row(store, tenant.id, first), await _row(store, tenant.id, second)
+    paid = await _row(store, tenant.id, first)
     assert (paid["policy_version"], paid["ip"]) == ("2026-11-13", "203.0.113.24")
     assert paid["paid_at"] is not None and paid["terms_accepted_at"] is not None
-    assert (unpaid["policy_version"], unpaid["ip"], unpaid["paid_at"], unpaid["terms_accepted_at"]) == (
-        "2027-02-01", "192.0.2.66", None, None)
+    # The other was never paid, and paying the first ended it at Stripe.
+    assert stripe.ended == [second] and [c["session_id"] for c in await store.checkouts_for(tenant.id)] == [first]
 
 
 async def test_a_second_click_before_stripes_report_lands_does_not_postdate_the_payment(client, store, stripe):
@@ -543,12 +626,13 @@ async def test_a_second_click_before_stripes_report_lands_does_not_postdate_the_
     The paid session's record still says it was opened before it was paid."""
     tenant, headers = await _account(store)
     first = await _open(client, headers)
+    stripe.will_not_end.add(first)                       # paid on Stripe's page; Stripe will not end it
     paid_at = int(time.time()) + 1
     second = await _open(client, {**headers, "x-okwan-client-ip": "192.0.2.66"})
     assert (await _paid(client, tenant.id, first, created=paid_at)).json()["plan"] == "pro"
     row = await _row(store, tenant.id, first)
     assert row["ip"] == "203.0.113.24" and row["opened_at"] <= row["paid_at"] == datetime.fromtimestamp(paid_at, UTC)
-    assert (await _row(store, tenant.id, second))["paid_at"] is None
+    assert second in stripe.ended and [c["session_id"] for c in await store.checkouts_for(tenant.id)] == [first]
 
 
 # ── attacker's pass 3: a payment names its account only through Okwan ──
@@ -578,6 +662,267 @@ async def test_a_payment_marks_only_its_own_accounts_session(client, store, stri
     assert (row["paid_at"], row["subscription_id"], row["terms_accepted_at"]) == (None, None, None)
     assert await store.checkouts_for(a.id) == [] and (await store.get_plan(b.id))[0] == "free"
     assert not await store.checkout_paid(a.id, bs, at=datetime.now(UTC), subscription_id="s", terms_accepted_at=None)
+
+
+# ── second pass 1: the record is marked whatever order Stripe's events come in ──
+
+async def _sub(client, tenant_id: str, status: str, kind: str = "customer.subscription.updated") -> httpx.Response:
+    return await _send(client, {"type": kind, "data": {"object": {
+        "id": "sub_1", "object": "subscription", "customer": "cus_1", "status": status,
+        "cancel_at_period_end": False, "metadata": {"tenant_id": tenant_id}}}})
+
+
+async def _backdate(store, session: str, to: datetime) -> None:
+    """Move a checkout's row back in time: all that waiting does."""
+    if hasattr(store, "pool"):
+        await store.pool.execute("UPDATE billing_checkouts SET opened_at = $2 WHERE session_id = $1", session, to)
+    else:
+        store._checkouts[session]["opened_at"] = to
+
+
+async def test_the_paid_session_is_marked_when_the_subscription_is_heard_of_first(client, store, stripe, monkeypatch):
+    """Stripe reports a new subscription as `incomplete` until its first
+    payment is confirmed, and does not order its events. The guard meant
+    for a late retry took the session's event: the account paid and had
+    Pro, and the record of the session that took the money stayed blank."""
+    monkeypatch.setenv("OKWAN_BILLING_REQUIRE_TERMS", "on")
+    tenant, headers = await _account(store)
+    session = await _open(client, headers)
+    assert (await _sub(client, tenant.id, "incomplete", "customer.subscription.created")).json()["plan"] == "free"
+    at = int(time.time()) - 2
+    r = await _paid(client, tenant.id, session, consent={"terms_of_service": "accepted"}, created=at)
+    assert r.json() == {"received": True, "plan": "pro"}, "a paid session is the first payment: Pro does not wait"
+    when = datetime.fromtimestamp(at, UTC)
+    row = await _row(store, tenant.id, session)
+    assert (row["paid_at"], row["subscription_id"], row["terms_accepted_at"]) == (when, "sub_1", when)
+    assert (await _sub(client, tenant.id, "active")).json()["plan"] == "pro"
+
+    # And so it is not an "unpaid" row that the account's next click drops a week on.
+    assert (await _ended(client, tenant.id)).json()["plan"] == "free"
+    await _backdate(store, session, datetime.now(UTC) - UNPAID_CHECKOUT_KEPT - timedelta(minutes=1))
+    later = await _open(client, {**headers, "x-okwan-client-ip": "192.0.2.66"})
+    kept = await _row(store, tenant.id, session)
+    assert (kept["paid_at"], kept["ip"], kept["subscription_id"]) == (when, "203.0.113.24", "sub_1")
+    assert {c["session_id"] for c in await store.checkouts_for(tenant.id)} == {session, later}
+
+
+async def test_a_session_event_sent_after_the_subscription_ended_marks_the_record_and_not_the_plan(
+        client, store, stripe):
+    tenant, headers = await _account(store)
+    session = await _open(client, headers)
+    assert (await _sub(client, tenant.id, "active")).json()["plan"] == "pro"
+    assert (await _ended(client, tenant.id)).json()["plan"] == "free"
+    assert (await _paid(client, tenant.id, session)).json() == {"received": True}
+    assert (await _row(store, tenant.id, session))["paid_at"] is not None
+    assert (await store.get_plan(tenant.id))[0] == "free", "a late event does not bring Pro back"
+
+
+async def test_the_two_events_together_in_either_order_leave_the_record_marked(client, store, stripe):
+    tenant, headers = await _account(store)
+    for n in range(6):
+        sub = f"sub_{n}"
+        session = await _open(client, headers)
+        events = [
+            _paid(client, tenant.id, session, subscription=sub),
+            _send(client, {"type": "customer.subscription.updated", "data": {"object": {
+                "id": sub, "object": "subscription", "customer": "cus_1", "status": "active",
+                "cancel_at_period_end": False, "metadata": {"tenant_id": tenant.id}}}}),
+        ]
+        await _send(client, {"type": "customer.subscription.created", "data": {"object": {
+            "id": sub, "object": "subscription", "customer": "cus_1", "status": "incomplete",
+            "metadata": {"tenant_id": tenant.id}}}})
+        await asyncio.gather(*(events if n % 2 else reversed(events)))
+        row = await _row(store, tenant.id, session)
+        assert (row["paid_at"] is not None, row["subscription_id"]) == (True, sub), n
+        assert (await store.get_plan(tenant.id))[0] == "pro"
+        await _send(client, {"type": "customer.subscription.deleted", "data": {"object": {
+            "id": sub, "object": "subscription", "customer": "cus_1", "status": "canceled",
+            "metadata": {"tenant_id": tenant.id}}}})
+
+
+# ── second pass 2: the limit is taken before Stripe is asked ───────────
+
+async def test_a_burst_of_clicks_reaches_stripe_only_as_often_as_the_limit(client, store, stripe):
+    """The count of rows was read, then Stripe was asked, then the row was
+    written: two hundred requests at once all passed the count."""
+    tenant, headers = await _account(store)
+    stripe.delay = 0.05
+    answers = await asyncio.gather(*(client.post("/v1/billing/checkout", headers=headers) for _ in range(60)))
+    opened = [r for r in answers if r.status_code == 200]
+    refused = [r for r in answers if r.status_code == 429]
+    assert len(opened) == len(stripe.forms) == BILLING_TENANT.limit and len(refused) == 60 - BILLING_TENANT.limit
+    assert all(int(r.headers["Retry-After"]) > 0 for r in refused)
+    left = await store.checkouts_for(tenant.id)
+    assert 1 <= len(left) <= BILLING_TENANT.limit and len(left) + len(stripe.ended) == BILLING_TENANT.limit
+    assert left[0]["session_id"] not in stripe.ended, "the newest is never the one ended"
+
+
+async def test_a_call_stripe_refuses_still_counts(client, store, stripe):
+    tenant, headers = await _account(store)
+    stripe.status = 429
+    codes = [(await client.post("/v1/billing/checkout", headers=headers)).status_code for _ in range(40)]
+    assert codes == [502] * BILLING_TENANT.limit + [429] * (40 - BILLING_TENANT.limit)
+    assert len(stripe.forms) == BILLING_TENANT.limit and await store.checkouts_for(tenant.id) == []
+
+
+async def test_the_portal_is_limited_with_it_and_another_account_is_not_held_up(client, store, stripe):
+    tenant, headers = await _account(store)
+    await store.save_billing(tenant.id, customer_id="cus_x", subscription_id="sub_x", status="canceled",
+                             cancel_at_period_end=False, current_period_end=None)
+    codes = [(await client.post("/v1/billing/portal", headers=headers)).status_code for _ in range(30)]
+    assert codes == [200] * BILLING_TENANT.limit + [429] * (30 - BILLING_TENANT.limit)
+    assert (await client.post("/v1/billing/checkout", headers=headers)).status_code == 429, "one allowance for both"
+    _, other = await _account(store, "Another account")
+    await _open(client, other)
+
+
+async def test_no_number_of_unpaid_sessions_pushes_a_paid_one_out_of_the_record(store):
+    """The list was the newest 500 of both kinds together. An account that
+    paid, then opened checkouts in bursts over a few days, had more unpaid
+    rows than that, all newer: the paid one was no longer in what the
+    store returned."""
+    from okwan_vault.usage import CHECKOUTS_LISTED
+
+    tenant = await store.create_tenant("Paying ISV")
+    now = datetime.now(UTC).replace(microsecond=0)
+    tag = os.urandom(4).hex()
+    paid_at = now - timedelta(days=5)
+    await store.open_checkout(tenant.id, f"cs_{tag}_paid", policy_version="2026-11-13", at=paid_at, ip="203.0.113.24")
+    assert await store.checkout_paid(tenant.id, f"cs_{tag}_paid", at=paid_at, subscription_id="sub_1",
+                                     terms_accepted_at=None)
+    for n in range(CHECKOUTS_LISTED + 30):
+        await store.open_checkout(tenant.id, f"cs_{tag}_{n:04d}", policy_version="2026-11-13",
+                                  at=now - timedelta(minutes=CHECKOUTS_LISTED + 30 - n), ip="192.0.2.66")
+    listed = await store.checkouts_for(tenant.id)
+    assert len(listed) == CHECKOUTS_LISTED + 1 and listed[-1]["session_id"] == f"cs_{tag}_paid"
+    assert listed[0]["session_id"] == f"cs_{tag}_{CHECKOUTS_LISTED + 29:04d}", "still newest first"
+
+
+# ── second pass 3: one account, one payable checkout ──────────────────
+
+async def test_opening_another_checkout_ends_the_one_before_it(client, store, stripe):
+    """A second tab or a second click left two pages at Stripe that could
+    each take a card for a day: two subscriptions, a month charged twice."""
+    tenant, headers = await _account(store)
+    first = await _open(client, headers)
+    second = await _open(client, headers)
+    assert stripe.ended == [first], "the earlier page can no longer take a payment"
+    assert [c["session_id"] for c in await store.checkouts_for(tenant.id)] == [second]
+    third = await _open(client, headers)
+    assert stripe.ended == [first, second]
+    assert [c["session_id"] for c in await store.checkouts_for(tenant.id)] == [third]
+
+
+async def test_a_session_stripe_will_not_end_keeps_its_record(client, store, stripe):
+    """It is being paid, or Stripe did not answer: the row stays, for the
+    payment that may be on its way."""
+    tenant, headers = await _account(store)
+    first = await _open(client, headers)
+    stripe.ends = False
+    second = await _open(client, headers)
+    assert stripe.ended == [] and {c["session_id"] for c in await store.checkouts_for(tenant.id)} == {first, second}
+
+
+async def test_a_payment_ends_every_other_session_the_account_has_open(client, store, stripe):
+    tenant, headers = await _account(store)
+    stripe.ends = False
+    a, b, c = [await _open(client, headers) for _ in range(3)]
+    stripe.ends = True
+    assert (await _paid(client, tenant.id, b)).json()["plan"] == "pro"
+    assert sorted(stripe.ended) == sorted([a, c])
+    left = await store.checkouts_for(tenant.id)
+    assert [x["session_id"] for x in left] == [b] and left[0]["paid_at"] is not None
+
+
+async def test_a_second_subscription_does_not_take_over_the_record_and_the_operator_is_told(
+        client, store, stripe, outbox):
+    """Both pages were paid before either was heard of. The record keeps
+    the first subscription, the one Manage billing opens; the second's
+    events change nothing; and a person is told to cancel and refund it."""
+    tenant, headers = await _account(store)
+    stripe.ends = False                                  # Stripe ended neither in time
+    a = await _open(client, headers)
+    b = await _open(client, headers)
+    assert (await _paid(client, tenant.id, a, customer="cus_A", subscription="sub_A")).json()["plan"] == "pro"
+    r = await _paid(client, tenant.id, b, customer="cus_B", subscription="sub_B")
+    assert r.json() == {"received": True, "plan": "pro", "second_subscription": True}
+    bill = await store.billing_for(tenant.id)
+    assert (bill["customer_id"], bill["subscription_id"], bill["status"]) == ("cus_A", "sub_A", "active")
+    # Both payments are on record, each under the session that took it.
+    assert {c["session_id"]: c["subscription_id"] for c in await store.checkouts_for(tenant.id)} == {a: "sub_A", b: "sub_B"}
+
+    def second(kind: str, status: str) -> dict:
+        return {"type": kind, "data": {"object": {"id": "sub_B", "object": "subscription", "customer": "cus_B",
+                                                  "status": status, "metadata": {"tenant_id": tenant.id}}}}
+    assert (await _send(client, second("customer.subscription.created", "active"))).json()["plan"] == "pro"
+    assert (await _send(client, second("customer.subscription.updated", "active"))).json()["plan"] == "pro"
+    [mail] = outbox.sent
+    assert mail["to"] == "owner-inbox@okwan.test" and mail["subject"] == "[Billing] An account has paid for Pro twice"
+    for said in (tenant.id, "Kept:     sub_A", "Second:   sub_B, Stripe customer cus_B", "refund its payment in full"):
+        assert said in mail["text"], said
+
+    # The operator cancels the second in Stripe: the account stays on Pro, through the first.
+    assert (await _send(client, second("customer.subscription.deleted", "canceled"))).json()["plan"] == "pro"
+    bill = await store.billing_for(tenant.id)
+    assert (bill["customer_id"], bill["subscription_id"], bill["status"]) == ("cus_A", "sub_A", "active")
+    assert (await store.get_plan(tenant.id))[0] == "pro"
+    assert (await client.post("/v1/billing/portal", headers=headers)).status_code == 200
+    assert stripe.forms[-1]["customer"] == "cus_A", "Manage billing opens the subscription that is kept"
+
+
+async def test_an_old_subscription_ending_late_does_not_end_the_one_that_replaced_it(client, store, stripe):
+    tenant, _ = await _account(store)
+
+    def sub(n: int, kind: str, status: str) -> dict:
+        return {"type": kind, "data": {"object": {"id": f"sub_{n}", "object": "subscription", "customer": "cus_1",
+                                                  "status": status, "metadata": {"tenant_id": tenant.id}}}}
+    assert (await _send(client, sub(1, "customer.subscription.updated", "active"))).json()["plan"] == "pro"
+    assert (await _send(client, sub(1, "customer.subscription.updated", "canceled"))).json()["plan"] == "free"
+    assert (await _send(client, sub(2, "customer.subscription.updated", "active"))).json()["plan"] == "pro"
+    # Stripe sends the first one's end again, late.
+    assert (await _send(client, sub(1, "customer.subscription.deleted", "canceled"))).json()["plan"] == "pro"
+    assert (await store.billing_for(tenant.id))["subscription_id"] == "sub_2"
+    # The one on record ending is still an end.
+    assert (await _send(client, sub(2, "customer.subscription.deleted", "canceled"))).json()["plan"] == "free"
+
+
+# ── second pass 4: two older faults on the same paths ─────────────────
+
+async def test_a_signature_no_one_could_have_made_is_refused_not_an_error(client, store, stripe):
+    """A header arrives decoded, and a character outside ASCII in it made
+    the comparison raise: anyone could draw a 500 from the webhook."""
+    stamp = int(time.time())
+    for forged in (f"t={stamp},v1=é", f"t={stamp},v1=\u2603", f"t={stamp},v1=", f"t={stamp}", "v1=00", ""):
+        assert billing.verify_signature(b"{}", forged, SECRET) is False, forged
+    r = await client.post("/v1/billing/webhook", content=b"{}",
+                          headers={"Stripe-Signature": f"t={stamp},v1=é".encode("latin-1")})
+    assert r.status_code == 400
+
+
+async def test_instances_starting_together_all_start():
+    """Four at once, on a database with nothing in it and then on a current
+    one. Postgres aborted one of two schema runs side by side ("tuple
+    concurrently updated", a deadlock, a duplicate); only a deadlock was
+    tried again."""
+    if not DSN:
+        pytest.skip("no vault database configured")
+    import asyncpg
+
+    name = "start_race_" + os.urandom(4).hex()
+    admin = await asyncpg.connect(DSN)
+    await admin.execute(f"CREATE SCHEMA {name}")
+    scoped = f"{DSN}?search_path={name}"
+    try:
+        for _ in range(3):
+            started = await asyncio.gather(
+                *(PostgresStore(scoped, EnvMasterKey(new_key())).connect() for _ in range(4)), return_exceptions=True)
+            for one in started:
+                if not isinstance(one, BaseException):
+                    await one.close()
+            assert [repr(one) for one in started if isinstance(one, BaseException)] == []
+    finally:
+        await admin.execute(f"DROP SCHEMA {name} CASCADE")
+        await admin.close()
 
 
 # ── attacker's pass 4: the page cannot say what the policy does not ────
@@ -616,9 +961,46 @@ def test_the_real_page_passes_the_same_reading():
     assert own_words(REAL_PAGE) == []
 
 
+@pytest.mark.parametrize(("where", "now"), [
+    ("plan_page", "Not for you? Tell us within 30 days and we refund the payment in full."),
+    ("at_checkout", "A payment is refunded in full if you ask within 30 days."),
+    ("acceptance", "I agree to the Terms, and I give up any right to dispute a payment"),
+    ("disclosure", "Before paying, the customer ticked a box agreeing to the policy."),
+    ("text", "By paying, the customer agreed never to ask their bank to reverse a payment."),
+])
+def test_words_changed_anywhere_the_policy_is_said_are_seen(monkeypatch, where, now):
+    """Second pass: only the page's file was pinned. The words beside the
+    pay button, beside the tick box, sent to a bank and said of how it was
+    shown could all change with the version, and every test, unmoved."""
+    monkeypatch.delenv("OKWAN_SITE_URL", raising=False)
+    monkeypatch.setattr(policy, where, lambda *_: now)
+    assert policy.said()[where] == now
+    with pytest.raises(AssertionError, match="give it a new VERSION"):
+        _versions_are_pinned()
+
+
+def test_an_archived_version_must_be_word_for_word_what_was_pinned(monkeypatch):
+    """Second pass: the next change of policy, done as the runbook says,
+    with the old version typed into the archive a little differently."""
+    monkeypatch.delenv("OKWAN_SITE_URL", raising=False)
+    before = policy.said()
+    monkeypatch.setattr(policy, "VERSION", "2027-02-01")
+    monkeypatch.setattr(policy, "UPDATED", "February 1, 2027")
+    monkeypatch.setitem(PINNED, "2027-02-01", _pin(policy.said()))
+    monkeypatch.setattr(policy, "ARCHIVE", {"2026-11-13": before})
+    _versions_are_pinned()                                # done honestly, it passes
+    assert policy.text("2026-11-13") == before["text"] and policy.said("2026-11-13") == before
+    forged = {**before, "text": before["text"].replace("is not refunded, in whole or in part, once its month has "
+                                                       "started", "is not refunded for any reason")}
+    assert forged != before
+    monkeypatch.setattr(policy, "ARCHIVE", {"2026-11-13": forged})
+    with pytest.raises(AssertionError, match="is not what was pinned"):
+        _versions_are_pinned()
+
+
 def test_a_changed_file_or_changed_words_are_seen():
     """The file edited by hand, and the words changed with the version left alone."""
     softer = policy.page_file().replace("is not refunded, in whole or in part,", "is refunded on request")
-    assert softer != policy.page_file() and _digest(softer) != PINNED[policy.VERSION]
+    assert softer != policy.page_file() and _pin({**policy.said(), "page": softer}) != PINNED[policy.VERSION]
     hidden = _read(TERMS).replace("Fees are", "A Pro payment is refunded in full on request within 60 days. Fees are", 1)
     assert _digest(_plans_section(hidden)) != TERMS_PLANS

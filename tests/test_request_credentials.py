@@ -108,6 +108,7 @@ def test_every_route_that_can_read_a_rail_requires_a_key():
 
     Public routes are named explicitly, so adding one is a decision."""
     from okwan_api.auth import admin_actor, check_quota, current_tenant
+    from okwan_api.billing import session_owner
     from okwan_api.main import app
     from okwan_api.ops import operator
 
@@ -122,7 +123,9 @@ def test_every_route_that_can_read_a_rail_requires_a_key():
               "/v1/unsubscribe"}
     # The operator console's gate: a dashboard session whose login is on the
     # allowlist (tests/test_ops.py), which reaches no rail.
-    gates = {current_tenant, check_quota, admin_actor, operator}
+    # Billing's gate: the dashboard session of the paying account itself,
+    # never a key (tests/test_refund_policy.py), which reaches no rail.
+    gates = {current_tenant, check_quota, admin_actor, operator, session_owner}
 
     def gated(dependant) -> bool:
         return any(d.call in gates or gated(d) for d in dependant.dependencies)

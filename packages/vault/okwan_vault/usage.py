@@ -102,5 +102,5 @@ async def quota(store, tenant_id: str, now: datetime | None = None) -> Quota:
 #: session a day after it opens and retries a webhook for three days; after
 #: a week no event can arrive for one.
 UNPAID_CHECKOUT_KEPT = timedelta(days=7)
-#: The most checkout rows read for one account.
+#: The most checkout rows read for one account, paid and unpaid each.
 CHECKOUTS_LISTED = 500

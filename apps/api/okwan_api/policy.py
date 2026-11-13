@@ -6,19 +6,24 @@ them can say different things:
 * the page at okwan.ai/refunds renders `apps/web/app/refunds/policy.json`
   and has no words of its own; that file is `published()`, written by
   `python -m okwan_api.policy`, and a test fails if the two differ;
-* Stripe Checkout shows `at_checkout()` beside the pay button, so the
-  policy is in front of the customer before any card is charged;
+* the dashboard's plan page shows `plan_page()`, sent by the API, next to
+  the Upgrade button, and Stripe Checkout shows `at_checkout()` beside the
+  pay button, so the policy is in front of the customer twice before any
+  card is charged;
 * each Checkout session's record keeps `VERSION`, the policy it showed;
 * a disputed payment is answered with `text()`, the whole policy in the
   version that payment was shown, and `disclosure()`, how it was shown
   (docs/ops/RUNBOOK.md, "A payment is disputed").
 
 Changing the policy: change the words here, give it a new `VERSION` and
-`UPDATED`, move what `text()` returned before into `ARCHIVE` under the old
+`UPDATED`, move what `said()` returned before into `ARCHIVE` under the old
 version, write the page's file again, and read the Terms of Service
 ("Plans and fees") against it. `tests/test_refund_policy.py` holds a
-digest of each version's words and fails if the words move without the
-version, or if an earlier version is not in the archive.
+digest of everything each version says (the page, the words at checkout,
+the words beside the tick box, the copy for a bank and the statement of
+how it was shown) and fails if any of it moves without the version, if an
+earlier version is not in the archive, or if an archived version is not
+word for word what was pinned while it was in force.
 """
 from __future__ import annotations
 
@@ -89,10 +94,10 @@ POLICY: tuple[tuple[str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
     )),
 )
 
-#: Earlier versions, each whole and exactly as `text()` gave it while it
+#: Earlier versions, each whole and exactly as `said()` gave it while it
 #: was in force. A payment is covered by the version it was shown, so a
 #: dispute over an older payment is answered with that one.
-ARCHIVE: dict[str, str] = {}
+ARCHIVE: dict[str, dict[str, str]] = {}
 
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
@@ -147,7 +152,7 @@ def text(version: str | None = None) -> str:
     version in force, or the earlier one a payment was shown. An unknown
     version is a KeyError, never the wrong words."""
     if version is not None and version != VERSION:
-        return ARCHIVE[version]
+        return ARCHIVE[version]["text"]
     out = [f"Okwan: {TITLE} (version {VERSION}), {refunds_url()}", "", *(_plain(s) for s in INTRO), ""]
     for title, blocks in POLICY:
         out += [title, *(_plain(line) for _, lines in blocks for line in lines), ""]
@@ -166,6 +171,18 @@ def at_checkout() -> str:
     )
 
 
+def plan_page() -> str:
+    """What the dashboard's plan page shows next to the Upgrade button,
+    ahead of it in reading order: the price, that it renews, how to
+    cancel, and that a month is not refunded. The page shows these words,
+    sent by the API, and adds links to the policy and the Terms."""
+    return (
+        f"Pro is {PRO_PRICE_USD} US dollars a month and renews each month until you cancel. To cancel, use Manage "
+        "billing on this page: Pro stays on to the end of the month you have paid for. A payment is not refunded "
+        "once its month has started."
+    )
+
+
 def acceptance() -> str:
     """The words beside the box a customer ticks, when agreement is required."""
     return (f"I agree to Okwan's [Terms of Service]({terms_url()}) and its "
@@ -181,6 +198,19 @@ def disclosure() -> str:
         "in two places: on the plan page of the dashboard next to the Upgrade button, and on Stripe "
         f"Checkout's payment page beside the pay button. The policy is published at {refunds_url()}."
     )
+
+
+def said(version: str | None = None) -> dict[str, str]:
+    """Everything a version of the policy says, wherever it says it: the
+    page's file, the words on the dashboard's plan page, the words beside
+    Stripe's pay button, the words beside
+    the box a customer ticks, the copy sent to a bank, and the statement
+    of how and where it was shown. The version in force, or an earlier
+    one from the archive; an unknown version is a KeyError."""
+    if version is not None and version != VERSION:
+        return dict(ARCHIVE[version])
+    return {"page": page_file(), "plan_page": plan_page(), "at_checkout": at_checkout(),
+            "acceptance": acceptance(), "text": text(), "disclosure": disclosure()}
 
 
 if __name__ == "__main__":

@@ -101,6 +101,7 @@ class Store(Protocol):
     async def checkout_paid(self, tenant_id: str, session_id: str, *, at: datetime, subscription_id: str,
                             terms_accepted_at: datetime | None) -> bool: ...
     async def checkouts_for(self, tenant_id: str) -> list[dict]: ...
+    async def drop_checkout(self, tenant_id: str, session_id: str) -> None: ...
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None: ...
     async def create_session(
         self, tenant_id: str, token_hash: str, expires_at: datetime
@@ -329,11 +330,20 @@ class MemoryStore:
                                            "terms_accepted_at": terms_accepted_at}
         return True
 
+    async def drop_checkout(self, tenant_id: str, session_id: str) -> None:
+        row = self._checkouts.get(session_id)
+        if row is not None and row["tenant_id"] == tenant_id and row["paid_at"] is None:
+            del self._checkouts[session_id]
+
     async def checkouts_for(self, tenant_id: str) -> list[dict]:
         rows = [dict(v) for v in self._checkouts.values() if v["tenant_id"] == tenant_id]
         rows.sort(key=lambda r: r["session_id"])
         rows.sort(key=lambda r: r["opened_at"], reverse=True)
-        return rows[:CHECKOUTS_LISTED]
+        # The paid ones and the newest unpaid ones, each bounded apart: no
+        # number of unpaid sessions pushes a paid one out of the list.
+        paid = [r for r in rows if r["paid_at"] is not None][:CHECKOUTS_LISTED]
+        unpaid = [r for r in rows if r["paid_at"] is None][:CHECKOUTS_LISTED]
+        return [r for r in rows if r in paid or r in unpaid]
 
     async def tenant_for_billing_customer(self, customer_id: str) -> str | None:
         return next((t for t, b in self._billing.items() if b["customer_id"] == customer_id), None)

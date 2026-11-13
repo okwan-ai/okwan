@@ -7,6 +7,9 @@ type Props = {
   enabled: boolean;
   plan: string;
   price: number;
+  notice: string;
+  refundsUrl: string;
+  termsUrl: string;
   canManage: boolean;
   periodEnd: string | null;
   cancelling: boolean;
@@ -15,12 +18,10 @@ type Props = {
 };
 
 const CALL = "mailto:info@globaltechstartup.com?subject=Okwan%20%E2%80%94%20plan";
-const REFUNDS = "https://okwan.ai/refunds";
-const TERMS = "https://okwan.ai/terms";
 
 /** Upgrade to Pro, or manage what is already paid for. Card details go to
  *  Stripe's own page and never reach Okwan. */
-export function BillingCard({ enabled, plan, price, canManage, periodEnd, cancelling, pastDue, upgraded }: Props) {
+export function BillingCard({ enabled, plan, price, notice, refundsUrl, termsUrl, canManage, periodEnd, cancelling, pastDue, upgraded }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,21 +56,24 @@ export function BillingCard({ enabled, plan, price, canManage, periodEnd, cancel
               Cancel any time; Pro stays on to the end of the month you paid for.
             </p>
             {/* Ahead of the button (beside it on a wide screen, above it on a
-                phone), so it is read before any card is asked for.
-                okwan_api/policy.py says the same on Stripe's page. */}
-            <p className="mt-2 text-sm text-ink-soft">
-              It renews each month until you cancel, and a payment isn&apos;t refunded once its month has started.{" "}
-              <a href={REFUNDS} target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">Refunds and cancellation</a>
+                phone), so it is read before any card is asked for. The
+                words are the refund policy's own (okwan_api/policy.py,
+                plan_page), sent by the API: this page, Stripe's page and
+                the answer to a disputed payment say one thing. The layout
+                check reads them here in a browser. */}
+            <p data-policy-notice className="mt-2 text-sm text-ink-soft">
+              {notice}{" "}
+              <a href={refundsUrl} target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">Refunds and cancellation</a>
               {" · "}
-              <a href={TERMS} target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">Terms</a>
+              <a href={termsUrl} target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">Terms</a>
             </p>
           </div>
           {enabled ? (
-            <Button variant="primary" disabled={busy} onClick={() => go("checkout")}>
+            <Button data-upgrade variant="primary" disabled={busy} onClick={() => go("checkout")}>
               {busy ? "Opening Stripe…" : `Upgrade for $${price}/month`}
             </Button>
           ) : (
-            <a href={CALL} className={buttonClass("secondary")}>Talk to us about Pro</a>
+            <a data-upgrade href={CALL} className={buttonClass("secondary")}>Talk to us about Pro</a>
           )}
         </div>
       ) : (
