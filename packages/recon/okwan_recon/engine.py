@@ -203,13 +203,13 @@ class ReconResult:
         read, and the record's own amount, currency and date. Figures and
         a date, never the record."""
         paths = self.figures.get(side) or {}
-        amount = dig(record, paths["amount"]) if record is not None and paths.get("amount") else None
-        currency = dig(record, paths["currency"]) if record is not None and paths.get("currency") else None
-        stated = {
-            "amount_minor": amount if isinstance(amount, int) and not isinstance(amount, bool) else None,
-            "currency": str(currency).upper() if currency else None,
-            "when": _when(dig(record, paths["when"])) if record is not None and paths.get("when") else None,
-        }
+
+        def at(name: str) -> Any:
+            return dig(record, paths[name]) if record is not None and paths.get(name) else None
+
+        # Each held to what it is: a field in a record is whatever its
+        # source put there, and only a figure, a code and a date are kept.
+        stated = {"amount_minor": _figure(at("amount")), "currency": _code(at("currency")), "when": _when(at("when"))}
         out = {**(looked or {}), **({"record": stated} if any(v is not None for v in stated.values()) else {})}
         return out or None
 
@@ -380,23 +380,45 @@ def _as_dt(value: Any) -> datetime | None:
 
 
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+_CODE = re.compile(r"[A-Za-z]{3}")
+#: Beyond any amount of money in minor units; a larger whole number is not one.
+_MOST_MINOR = 10**15
 
 
 def _when(value: Any) -> str | None:
     """A record's date as a result keeps it: the day, when the source
     states a day (a batch's close date, a statement line), otherwise the
-    instant in UTC to the second. None for what does not read as either."""
+    instant in UTC to the second. None for what does not read as either,
+    and for what reads as one and cannot be moved to UTC (the first and
+    last hours of the calendar, with an offset). Never raises: it runs on
+    every row of every check, and one record must not take a check down."""
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, str) and _DAY.fullmatch(value.strip()):
-        return value.strip()
     try:
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, str) and _DAY.fullmatch(value.strip()):
+            return date.fromisoformat(value.strip()).isoformat()
         at = _as_dt(value)
-    except (OverflowError, OSError, ValueError):
+        return at.astimezone(UTC).isoformat(timespec="seconds") if at else None
+    except (OverflowError, OSError, ValueError, TypeError):
         return None
-    return at.astimezone(UTC).isoformat(timespec="seconds") if at else None
+
+
+def _code(value: Any) -> str | None:
+    """A currency as a result keeps it: a three-letter code, or nothing.
+    The field is whatever its source put there (a customer's own column,
+    a file's cell), so anything else, of any type or length, is dropped."""
+    if not isinstance(value, str) or not _CODE.fullmatch(value.strip()):
+        return None
+    return value.strip().upper()
+
+
+def _figure(value: Any) -> int | None:
+    """An amount as a result keeps it: a whole number of minor units."""
+    if isinstance(value, bool) or not isinstance(value, int) or abs(value) >= _MOST_MINOR:
+        return None
+    return value
 
 
 def _ref_key(value: Any, case_sensitive: bool) -> str | None:
@@ -1273,7 +1295,7 @@ def _describe_groups(spec: Reconciliation, result: ReconResult) -> None:
         # privacy policy says a stored result holds; never a member's record.
         pair.evidence["members"] = [
             {"ref": None if not ref else dig(m, ref),
-             "amount_minor": None if not amount_path else dig(m, amount_path),
+             "amount_minor": None if not amount_path else _figure(dig(m, amount_path)),
              "when": None if not when_path else _when(dig(m, when_path))}
             for m in pair.members
         ]

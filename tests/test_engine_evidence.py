@@ -256,8 +256,70 @@ def test_a_date_is_kept_as_the_day_or_the_instant_and_nothing_else():
     assert _when("2026-10-13T14:03:22-04:00") == "2026-10-13T18:03:22+00:00"      # an instant, in UTC
     assert _when(datetime(2026, 10, 13, 9, 30, tzinfo=UTC)) == "2026-10-13T09:30:00+00:00"
     assert _when(1_791_900_000) == "2026-10-13T14:00:00+00:00"                    # a rail's epoch seconds
-    for odd in (None, True, "", "next Tuesday", 10**20, {"at": 1}):
+    for odd in (None, True, "", "next Tuesday", "9999-99-99", 10**20, float("nan"), {"at": 1}):
         assert _when(odd) is None, odd
+
+
+@pytest.mark.parametrize("stamp", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])
+def test_a_date_at_the_edge_of_the_calendar_does_not_take_the_check_down(stamp):
+    """Attacker's pass: such a timestamp parses and compares, and cannot be
+    moved to UTC. Dating a record did that outside its guard, so one row,
+    in a customer's own table, made the whole check a 500 on every
+    surface and left no stored run. It is now kept as no date."""
+    spec = Reconciliation(
+        name="edge_of_the_calendar_fixture",
+        left=ResourceRef(connector="shop", resource="payments"),
+        right=ResourceRef(connector="rail", resource="charges"),
+        keys=[ExactRef(left="reference", right="order_ref"),
+              Fuzzy(amount="amount", currency="currency", timestamp_left="created_at", timestamp_right="created_at",
+                    window="3d")],
+    )
+    paid = {"reference": "#1", "amount": 5_000, "currency": "USD", "created_at": stamp}
+    alone = {"reference": "#2", "amount": 700, "currency": "USD", "created_at": stamp}
+    result = match(spec, [paid, alone], [{"order_ref": "#1", "amount": 5_000, "currency": "USD",
+                                          "created_at": "2026-11-02T10:00:00+00:00"}])
+    rows = {r["status"]: r for r in result.trimmed_rows("reference", "order_ref")}
+    assert rows["matched"]["evidence"]["dated"] == {"left": None, "right": "2026-11-02T10:00:00+00:00"}
+    assert rows["unmatched_left"]["evidence"]["record"] == {"amount_minor": 700, "currency": "USD", "when": None}
+    assert len(result.rows()) == 2
+
+
+def test_only_a_code_a_whole_amount_and_a_date_are_kept_of_a_record():
+    """Attacker's pass: the currency of a record with no counterpart was
+    kept as whatever its field held, any type, any length. Where that
+    field is a customer's own column it carried a name, an email and card
+    digits into the stored run, REST, the SQL view and MCP. Before this
+    change such a row kept the record's reference and nothing else."""
+    from okwan_recon.engine import _code, _figure
+
+    note = "refund to Jane Doe <jane.doe@example.com>, card 4242 4242 4242 4242"
+    for odd in (note, {"code": "USD", "payer": "Jane Doe"}, ["USD", "jane.doe@example.com"], "x" * 100_000,
+                "US", "USDT", "U$D", 840, None, True, ""):
+        assert _code(odd) is None, odd
+    assert (_code("usd"), _code(" GHS ")) == ("USD", "GHS")
+    for odd in (12.5, "1200", True, None, [1200], 10**15, -(10**15), 10**400):
+        assert _figure(odd) is None, odd
+    assert (_figure(0), _figure(-455), _figure(10**15 - 1)) == (0, -455, 10**15 - 1)
+    # And on every check there is, on either side: nothing of the note is kept.
+    from okwan_recon import registry
+
+    seen = 0
+    for spec in registry.all_reconciliations():
+        amount = spec.resolved_amount
+        if amount is None:
+            continue
+        left_when, right_when = spec.timestamp_paths
+        for side, cur, amt, when in (("left", amount.currency, amount.left, left_when),
+                                     ("right", amount.right_currency, amount.right_path, right_when)):
+            record = {}
+            for path, value in ((cur, note), (amt, note), (when, note)):
+                if path and "." not in path:
+                    record[path] = value
+            result = match(spec, [record] if side == "left" else [], [record] if side == "right" else [])
+            kept = json.dumps(result.trimmed_rows("reference", "reference"))
+            assert "JANE" not in kept.upper() and "4242" not in kept, (spec.name, side)
+            seen += 1
+    assert seen >= 16
 
 
 def test_a_check_that_names_no_amount_or_date_reports_a_miss_as_it_did():

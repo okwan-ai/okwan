@@ -23,7 +23,7 @@ for (const name of ["money", "file-checks"]) {
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
   writeFileSync(join(out, `${name}.js`), js.outputText);
 }
-const { batchLines, dayOf, FILE_CHECKS, verdict } = require(join(out, "file-checks.js"));
+const { batchLines, dayOf, FILE_CHECKS, reach, unread, verdict } = require(join(out, "file-checks.js"));
 
 const row = (status, over = {}) => ({
   status, discrepancy: null, explained_by: null, reason: null, candidates: null, members: null,
@@ -32,7 +32,12 @@ const row = (status, over = {}) => ({
 const summary = (over = {}) => ({
   matched: 0, matched_with_explained_discrepancy: 0, matched_with_unexplained_discrepancy: 0, unmatched_left: 0,
   unmatched_right: 0, ambiguous: 0, unverifiable_left: 0, unverifiable_right: 0,
-  coverage: { left: { records: 4 }, right: { records: 2 } }, ...over,
+  coverage: { left: side(4), right: side(2) }, ...over,
+});
+// What one side read: the 120 days to 14 Nov 2026, under its cap.
+const side = (records, over = {}) => ({
+  records, cap: 5000, truncated: false, span_start: "2026-07-17T00:00:00+00:00",
+  span_end: "2026-11-14T23:59:59.999999+00:00", ...over,
 });
 const checks = [];
 const check = (name, fn) => checks.push([name, fn]);
@@ -92,21 +97,59 @@ check("the headline says a batch was not deposited before anything else", () => 
   assert.deepEqual(said.counts, ["2 deposits matched to their batches", "1 batch not deposited", "1 deposit with no batch"]);
 });
 
-check("every batch was deposited is said only when every batch was paired", () => {
-  assert.deepEqual(verdict(summary({ matched: 5 })).headline, "Every batch was deposited");
+check("every batch was deposited is said only when every batch read was paired", () => {
+  assert.deepEqual(verdict(summary({ matched: 5 })).headline, "Every batch since 17 Jul 2026 was deposited");
   assert.equal(verdict(summary({ matched: 5 })).tone, "ok");
-  assert.equal(verdict(summary({ matched: 5, unmatched_right: 1 })).headline, "Every batch was deposited; 1 deposit has no batch");
+  assert.equal(verdict(summary({ matched: 5, unmatched_right: 1 })).headline,
+    "Every batch since 17 Jul 2026 was deposited; 1 deposit has no batch");
   for (const unsure of [{ unverifiable_left: 1 }, { ambiguous: 1 }, { unverifiable_right: 2 }]) {
     const said = verdict(summary({ matched: 5, ...unsure }));
-    assert.ok(!said.headline.includes("Every batch was deposited"), `${JSON.stringify(unsure)}: ${said.headline}`);
+    assert.ok(!/Every batch .*was deposited/.test(said.headline), `${JSON.stringify(unsure)}: ${said.headline}`);
     assert.equal(said.tone, "warn");
   }
   assert.equal(verdict(summary({ matched: 5, unverifiable_left: 1, unmatched_right: 1 })).headline,
     "No missing deposit found; 2 lines need a look");
 });
 
+check("every batch means every batch the run read: the days it read are said, never every batch there is", () => {
+  // Attacker's pass: a batch older than the days the check reads is in the
+  // file and in no row, and the page said "Every batch was deposited".
+  const s = summary({ matched: 2 });
+  assert.ok(!verdict(s).headline.startsWith("Every batch was deposited"));
+  assert.equal(reach(s).read, "The check read 4 batches and 2 deposits dated 17 Jul 2026 to 14 Nov 2026. "
+    + "Anything in the files outside those days is not in this result.");
+  assert.equal(reach(s).cut, "");
+  // With nothing said about what was read, the line still claims no more than the run.
+  assert.equal(verdict(summary({ matched: 2, coverage: null })).headline, "Every batch the check read was deposited");
+  // And a file that starts before the first day read is said to hold lines that were not checked.
+  assert.equal(unread("batch report", "2026-07-07", reach(s).from),
+    "The batch report on file goes back to 7 Jul 2026. Batches before 17 Jul 2026 were not checked.");
+  assert.equal(unread("bank statement", "2026-06-30", reach(s).from),
+    "The bank statement on file goes back to 30 Jun 2026. Deposits before 17 Jul 2026 were not checked.");
+  assert.equal(unread("batch report", "2026-07-17", reach(s).from), "", "a file inside the days read needs no such line");
+  assert.equal(unread("batch report", null, reach(s).from), "");
+});
+
+check("a run that stopped at its cap never says every batch was deposited", () => {
+  // Attacker's pass: with more than 5,000 batches in the days read, the
+  // rest were in no row and the page was green.
+  const cutLeft = summary({ matched: 5000, coverage: { left: side(5000, { truncated: true }), right: side(5000) } });
+  const said = verdict(cutLeft);
+  assert.deepEqual([said.headline, said.tone],
+    ["No missing deposit among what was read, and not everything was read", "warn"]);
+  assert.equal(reach(cutLeft).cut, "It stopped at 5,000 batches, oldest first: the files hold more in those days, "
+    + "and what was not read is in no line here.");
+  const cutRight = summary({ matched: 5, coverage: { left: side(5), right: side(5000, { truncated: true }) } });
+  assert.equal(verdict(cutRight).tone, "warn");
+  assert.match(reach(cutRight).cut, /^It stopped at 5,000 deposits, oldest first/);
+  // A batch that was not deposited is still the headline; the cut is said beside it.
+  const both = summary({ matched: 4999, unmatched_left: 1, coverage: { left: side(5000, { truncated: true }), right: side(4999) } });
+  assert.equal(verdict(both).headline, "1 batch was not deposited");
+  assert.notEqual(reach(both).cut, "");
+});
+
 check("files with nothing in the days the check reads are said to hold nothing, not to be clean", () => {
-  const said = verdict(summary({ coverage: { left: { records: 0 }, right: { records: 0 } } }));
+  const said = verdict(summary({ coverage: { left: side(0), right: side(0) } }));
   assert.deepEqual([said.headline, said.tone], ["The files hold nothing in the days this check reads", "neutral"]);
 });
 

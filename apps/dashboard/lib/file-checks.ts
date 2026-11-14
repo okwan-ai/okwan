@@ -52,7 +52,17 @@ export type PairSummary = {
   ambiguous: number;
   unverifiable_left: number;
   unverifiable_right: number;
-  coverage: { left: { records: number } | null; right: { records: number } | null } | null;
+  coverage: { left: Coverage | null; right: Coverage | null } | null;
+};
+
+/** What one side of a run read: how many records, between which days, and
+ *  whether it stopped at its cap before the end. */
+export type Coverage = {
+  records: number;
+  cap?: number | null;
+  truncated?: boolean;
+  span_start?: string | null;
+  span_end?: string | null;
 };
 
 export type PairRun = {
@@ -181,9 +191,48 @@ function count(n: number, one: string, many: string): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 }
 
+/**
+ * What the run read, said beside every result: a check reads a fixed
+ * number of days and at most so many records, so "every batch" means
+ * every batch it read and nothing wider. `cut` when either side stopped
+ * at its cap: records past it are in no row, so nothing is known of them.
+ */
+export function reach(s: PairSummary): { read: string; since: string; from: string; cut: string } {
+  const left = s.coverage?.left ?? null;
+  const right = s.coverage?.right ?? null;
+  if (!left && !right) return { read: "", since: "", from: "", cut: "" };
+  const from = (left?.span_start ?? right?.span_start ?? "").slice(0, 10);
+  const since = dayOf(left?.span_start ?? right?.span_start);
+  const until = dayOf(left?.span_end ?? right?.span_end);
+  const dated = since && until ? ` dated ${since} to ${until}` : since ? ` dated from ${since}` : "";
+  const read = `The check read ${count(left?.records ?? 0, "batch", "batches")} and `
+    + `${count(right?.records ?? 0, "deposit", "deposits")}${dated}. Anything in the files outside those days is not in this result.`;
+  const stopped = [left?.truncated ? "batches" : "", right?.truncated ? "deposits" : ""].filter(Boolean);
+  const cap = (left?.truncated ? left.cap : right?.cap) ?? null;
+  const cut = stopped.length
+    ? `It stopped at ${cap ? cap.toLocaleString("en-US") : "its limit of"} ${stopped.join(" and ")}, oldest first: `
+      + "the files hold more in those days, and what was not read is in no line here."
+    : "";
+  return { read, since, from, cut };
+}
+
+/**
+ * Said when a file on record starts before the first day the check read:
+ * its earlier lines were not checked, and the page says so in as many
+ * words. `first` is the earliest day of the merchant's files of that kind.
+ */
+export function unread(what: "batch report" | "bank statement", first: string | null | undefined, from: string): string {
+  if (!first || !from || first >= from) return "";
+  const lines = what === "batch report" ? "Batches" : "Deposits";
+  return `The ${what} on file goes back to ${dayOf(first)}. ${lines} before ${dayOf(from)} were not checked.`;
+}
+
 /** The run in one sentence, and whether anything in it needs a look. */
 export function verdict(s: PairSummary): { headline: string; tone: Tone; counts: string[] } {
   const read = (s.coverage?.left?.records ?? 0) + (s.coverage?.right?.records ?? 0);
+  const { since, cut } = reach(s);
+  // Every batch the run read, never every batch there is.
+  const every = since ? `Every batch since ${since} was deposited` : "Every batch the check read was deposited";
   const total = s.matched + s.unmatched_left + s.unmatched_right + s.ambiguous + s.unverifiable_left + s.unverifiable_right;
   const counts = [
     s.matched ? count(s.matched, "deposit matched to its batches", "deposits matched to their batches") : "",
@@ -209,8 +258,8 @@ export function verdict(s: PairSummary): { headline: string; tone: Tone; counts:
       tone: "danger", counts,
     };
   }
-  // "Every batch was deposited" only when every batch was paired: one that
-  // could not be checked, or that fits more than one way, is not known to be.
+  // "Every batch … was deposited" only when every batch read was paired: one
+  // that could not be checked, or that fits more than one way, is not known to be.
   const unsure = s.ambiguous + s.unverifiable_left + s.unverifiable_right;
   if (unsure) {
     return {
@@ -218,11 +267,10 @@ export function verdict(s: PairSummary): { headline: string; tone: Tone; counts:
       tone: "warn", counts,
     };
   }
+  // A run that stopped at its cap did not read every batch: never the clean line.
+  if (cut) return { headline: "No missing deposit among what was read, and not everything was read", tone: "warn", counts };
   if (s.unmatched_right) {
-    return {
-      headline: `Every batch was deposited; ${count(s.unmatched_right, "deposit has", "deposits have")} no batch`,
-      tone: "warn", counts,
-    };
+    return { headline: `${every}; ${count(s.unmatched_right, "deposit has", "deposits have")} no batch`, tone: "warn", counts };
   }
-  return { headline: "Every batch was deposited", tone: "ok", counts };
+  return { headline: every, tone: "ok", counts };
 }

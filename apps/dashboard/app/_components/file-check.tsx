@@ -1,4 +1,4 @@
-import { batchLines, BATCHES_DEPOSITS, type CheckLine, dayOf, FILE_CHECKS, type PairRun, verdict } from "@/lib/file-checks";
+import { batchLines, BATCHES_DEPOSITS, type CheckLine, dayOf, FILE_CHECKS, type PairRun, reach, unread, verdict } from "@/lib/file-checks";
 import { type ImportFile, KIND_LABEL } from "@/lib/imports";
 import { RunCheck } from "./run-check";
 import { Badge } from "./ui/badge";
@@ -57,9 +57,14 @@ export function FileCheck({ tenantId, files, run }: {
   const importHref = `/merchants/${encodeURIComponent(tenantId)}/import`;
   const summary = run?.status === "ok" ? run.summary : null;
   const said = summary ? verdict(summary) : null;
+  const read = summary ? reach(summary) : null;
   const { attention, paid } = summary ? batchLines(run?.rows ?? []) : { attention: [], paid: [] };
   const stale = run ? files.some((f) => Date.parse(f.created_at) > Date.parse(run.finished_at)) : false;
   const statementEnd = files.filter((f) => f.kind === "bank_deposits" && f.last_date).map((f) => f.last_date!).sort().at(-1);
+  const earliest = (kind: string) => files.filter((f) => f.kind === kind && f.first_date).map((f) => f.first_date!).sort()[0];
+  const older = read
+    ? [unread("batch report", earliest("settlement_batches"), read.from), unread("bank statement", earliest("bank_deposits"), read.from)].filter(Boolean)
+    : [];
   const shown = attention.length + paid.length;
 
   return (
@@ -97,6 +102,9 @@ export function FileCheck({ tenantId, files, run }: {
               Checked {when(run.finished_at)}
               {stale && <> · A file was imported after this check ran. Run it again to include it.</>}
             </p>
+            {read?.cut && <p className="mt-2 text-sm font-semibold text-danger">{read.cut}</p>}
+            {older.map((line) => <p key={line} className="mt-2 text-sm font-semibold">{line}</p>)}
+            {read?.read && <p className="mt-1 text-xs text-ink-soft">{read.read}</p>}
           </div>
           {attention.length > 0 && <ul className="divide-y divide-line">{attention.map((l) => <Line key={l.key} line={l} />)}</ul>}
           {paid.length > 0 && (

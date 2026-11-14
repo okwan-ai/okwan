@@ -182,7 +182,8 @@ async function checkFileCheck(page, w, h, merchant) {
   if (!(await section.count())) return note(page, where, "the check is not on the Files tab");
   const read = async () => (await section.innerText()).replace(/\s+/g, " ").trim();
   const expected = ["1 batch was not deposited", "2 deposits matched to their batches · 1 batch not deposited",
-    "Not deposited Batch B-2004 $1,238.27", "No deposit on the statement pays it."];
+    "Not deposited Batch B-2004 $1,238.27", "No deposit on the statement pays it.",
+    "The check read 4 batches and 2 deposits dated"];
   const before = await read();
   for (const words of expected) if (!before.includes(words)) await note(page, where, `it does not say "${words}"`);
   await section.locator("details summary").click();
