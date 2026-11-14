@@ -169,6 +169,61 @@ async function checkImport(page, w, h, merchant) {
   for (const hit of res.hits) await note(page, where, hit);
 }
 
+// The Files tab's check, on the seeded merchant: what the stored run holds
+// is what the page says (one batch never paid, with its amount; two deposits
+// matched, one of them to two batches), a click runs it again through the
+// dashboard's own route and the page reads the new run back, and that route
+// runs nothing but the checks the tab offers.
+async function checkFileCheck(page, w, h, merchant) {
+  const path = `${merchant}?tab=files`;
+  const where = `${w}x${h} ${path} the batches-against-deposits check`;
+  await page.goto(BASE + path, { waitUntil: "networkidle" });
+  const section = page.locator("section", { has: page.locator("h2", { hasText: "Batches against deposits" }) }).first();
+  if (!(await section.count())) return note(page, where, "the check is not on the Files tab");
+  const read = async () => (await section.innerText()).replace(/\s+/g, " ").trim();
+  const expected = ["1 batch was not deposited", "2 deposits matched to their batches · 1 batch not deposited",
+    "Not deposited Batch B-2004 $1,238.27", "No deposit on the statement pays it."];
+  const before = await read();
+  for (const words of expected) if (!before.includes(words)) await note(page, where, `it does not say "${words}"`);
+  await section.locator("details summary").click();
+  const open = await read();
+  for (const words of ["$1,786.64", "Paid batch B-2001", "$1,291.92", "Paid 2 batches:", "B-2002", "$893.81", "B-2003", "$398.11"]) {
+    if (!open.includes(words)) await note(page, where, `opened, it does not say "${words}"`);
+  }
+  // Measured from the top, like every other page: scrolled, the phone's
+  // header sits over whatever passes beneath it, as it is meant to.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const res = await page.evaluate(inspect);
+  if (res.sideways) await note(page, `${where} (opened)`, "the page scrolls sideways");
+  for (const hit of res.hits) await note(page, `${where} (opened)`, hit);
+
+  // Run it again: one request to the dashboard's route, then the stored run read back.
+  const ran = page.waitForResponse((r) => r.url().includes("/checks/batches_deposits") && r.request().method() === "POST", { timeout: 30000 });
+  await section.getByRole("button", { name: "Check again" }).click();
+  const response = await ran.catch(() => null);
+  if (!response || response.status() !== 200) return note(page, where, `running it answered ${response ? response.status() : "nothing"}`);
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(400);
+  const after = await read();
+  for (const words of expected) if (!after.includes(words)) await note(page, where, `after running again it does not say "${words}"`);
+  if (await section.locator('[role="alert"]').count()) await note(page, where, `running it showed "${await section.locator('[role="alert"]').innerText()}"`);
+
+  // The route runs only the checks the tab offers: not the cross-rail fold, not another check.
+  const id = merchant.split("/").pop();
+  const refused = await page.evaluate(async (tenant) => {
+    const out = {};
+    for (const name of ["rails", "across%2Frails", "shopify_stripe", "batches_deposits%2F..%2Frails"]) {
+      const r = await fetch(`/api/merchants/${tenant}/checks/${name}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      out[name] = r.status;
+    }
+    return out;
+  }, id);
+  for (const [name, status] of Object.entries(refused)) {
+    if (status !== 404) await note(page, where, `the route ran "${name}" (answered ${status})`);
+  }
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -219,6 +274,7 @@ try {
     const page = await ctx.newPage();
     for (const path of [...SIGNED_IN, ...detail]) await checkPage(page, w, h, path);
     await checkPlanNotice(page, w, h);
+    if (merchant) await checkFileCheck(page, w, h, merchant);
     if (merchant) await checkImport(page, w, h, merchant);
     if (w >= 900) await checkMenu(page, w, h);
     await ctx.close();
@@ -232,4 +288,4 @@ if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds.`);

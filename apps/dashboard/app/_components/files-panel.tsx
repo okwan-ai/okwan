@@ -1,5 +1,7 @@
+import type { PairRun } from "@/lib/file-checks";
 import { day, kindLabel, type ImportFile, type Layout, span } from "@/lib/imports";
 import { DeleteButton } from "./delete-button";
+import { FileCheck } from "./file-check";
 import { Badge } from "./ui/badge";
 import { ButtonLink } from "./ui/button";
 import { Card, CardBody } from "./ui/card";
@@ -11,23 +13,31 @@ import { Section } from "./ui/page-header";
 const FORMAT: Record<string, string> = { csv: "CSV", xlsx: "Excel", ofx: "OFX" };
 
 /**
- * A merchant's Files tab: the files imported for it and the column mappings
- * saved for the next one. A file holds only the columns its mapping named,
- * and goes 13 months after upload; deleting it deletes its rows at once.
+ * A merchant's Files tab: what its files show (each batch against the
+ * deposit that paid it), the files imported for it, and the column
+ * mappings saved for the next one. A file holds only the columns its
+ * mapping named, and goes 13 months after upload; deleting it deletes its
+ * rows at once.
  */
-export function FilesPanel({ tenantId, files, layouts, unavailable }: {
+export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
   tenantId: string;
   files: ImportFile[];
   layouts: Layout[];
   /** The listings didn't load: say so instead of claiming none. */
   unavailable: boolean;
+  /** The newest stored run of the batches-against-deposits check, if any. */
+  check: PairRun | null;
 }) {
   const id = encodeURIComponent(tenantId);
   const importHref = `/merchants/${id}/import`;
+  // With no file yet the empty state below says what to import; the check
+  // has nothing to say until there is one.
+  const checkable = !unavailable && files.length > 0;
   return (
     <div>
+      {checkable && <FileCheck tenantId={tenantId} files={files} run={check} />}
       <Section
-        className="mt-0"
+        className={checkable ? undefined : "mt-0"}
         title="Imported files"
         description="Settlement reports, delivery platform reports and bank statements, read for this merchant's checks."
         aside={<ButtonLink variant="primary" href={importHref}><IconFileUp className="h-4 w-4" />Import a file</ButtonLink>}

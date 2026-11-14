@@ -78,6 +78,13 @@ jobs:
       - run: npm ci
       - if: matrix.app == 'dashboard'
         run: npm run typecheck
+      # What the Files tab says about a check, held to what the stored run
+      # says: a batch not deposited is said to be, "every batch was
+      # deposited" only when every batch was paired, and a result the page
+      # does not know is never shown as paid.
+      - if: matrix.app == 'dashboard'
+        name: What the Files tab says about a check
+        run: node scripts/check-file-checks.mjs
       - run: npm run build
 
       # The refund page, as a browser shows it, says the policy, whole, and

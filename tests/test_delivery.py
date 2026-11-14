@@ -66,6 +66,15 @@ FILES = [("doordash-transactions-2026-10.csv", DOORDASH_LINES),
          ("bank-statement-delivery-2026-10.csv", STATEMENT)]
 
 
+@pytest.fixture(autouse=True)
+def _read_at_the_end_of_october_2026(as_of):
+    """The sample reports are two weeks of October 2026, and the check of
+    payouts against their lines reads 60 days back: read from today, the
+    test that runs it through the API would start failing in early
+    December 2026."""
+    as_of(2026, 10, 31)
+
+
 def _prepared(name: str, mapping: Mapping) -> list[dict]:
     rows = prepare((SAMPLES / name).read_bytes(), name, mapping).normalized.rows
     return [{**fields, "file_id": name, "row": n, "layout": mapping.name} for n, _day, fields in rows]

@@ -2,9 +2,10 @@ import { redirect } from "next/navigation";
 import { apiUrl } from "@/lib/api";
 import { ATTENTION, missingFor, rowKey, toFinding } from "@/lib/finding";
 import { configured, connectors, railState } from "@/lib/merchants";
+import { BATCHES_DEPOSITS } from "@/lib/file-checks";
 import { defaultTab, tabOf } from "@/lib/merchant-tabs";
 import { importedFiles, savedLayouts } from "@/lib/merchant-files";
-import { latestRuns, runHistory, storedRun } from "@/lib/stored-runs";
+import { latestPairRun, latestRuns, runHistory, storedRun } from "@/lib/stored-runs";
 import { ConnectionsGrid } from "../../_components/connections-grid";
 import { FilesPanel } from "../../_components/files-panel";
 import { FindingsPanel } from "../../_components/findings-panel";
@@ -34,13 +35,16 @@ export default async function MerchantPage({
   const active = tabOf(tab, defaultTab(ready, Boolean(latest?.[id])), Boolean(order || runParam));
 
   if (active === "files") {
-    const [files, layouts] = await Promise.all([importedFiles(id), savedLayouts(id)]);
+    const [files, layouts, check] = await Promise.all([
+      importedFiles(id), savedLayouts(id), latestPairRun(id, BATCHES_DEPOSITS),
+    ]);
     return (
       <FilesPanel
         tenantId={id}
         files={files.ok ? files.data.imports : []}
         layouts={layouts.ok ? layouts.data.layouts : []}
         unavailable={!files.ok || !layouts.ok}
+        check={check}
       />
     );
   }

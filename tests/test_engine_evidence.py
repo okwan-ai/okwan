@@ -195,12 +195,80 @@ def test_a_grouped_deposit_lists_its_batches_by_reference_and_amount():
     result = match(spec, [batch("B1", 100, 0), batch("B2", 250, 0)], [deposit("D1", 350)])
     (row,) = result.rows()
     ev = row["evidence"]
-    assert ev["members"] == [{"ref": "B1", "amount_minor": 100}, {"ref": "B2", "amount_minor": 250}]
+    assert ev["members"] == [{"ref": "B1", "amount_minor": 100, "when": "2026-11-02"},
+                             {"ref": "B2", "amount_minor": 250, "when": "2026-11-02"}]
+    # The deposit has one date; the group has none of its own, its members do.
+    assert ev["dated"] == {"left": None, "right": "2026-11-03"}
     assert ev["share"] == {"mid": "MID-1"}
     assert row["left"]["batch_id"] == "B1+B2"
     # The stored row names both sides by reference.
     (stored,) = result.trimmed_rows("batch_id", "fitid")
     assert stored["left_ref"] == "B1+B2" and stored["right_ref"] == "D1" and stored["members"] == 2
+
+
+def _batches_deposits() -> Reconciliation:
+    return Reconciliation(
+        name="unpaired_figures_fixture",
+        left=ResourceRef(connector="processor", resource="batches"),
+        right=ResourceRef(connector="bank", resource="deposits"),
+        keys=[GroupSum(many="left", amount="gross_minor", amount_one="amount_minor",
+                       timestamp_many="closed_on", timestamp_one="posted_on", share=("mid",),
+                       ref_many="batch_id", ref_one="fitid", lag=SettlementLag(max_days=2))],
+    )
+
+
+def test_a_record_with_no_counterpart_is_reported_with_its_amount_and_date():
+    """A stored row named a batch that was never paid by its reference and
+    nothing else, and a deposit from a statement with no reference column
+    by nothing at all: not something a person can act on. Each now carries
+    the amount, the currency and the date the check read it by."""
+    unreferenced = {"posted_on": "2026-11-06", "amount_minor": 31_240, "currency": "usd"}
+    result = match(_batches_deposits(), [batch("B1", 100, 0), batch("B9", 94_406, 0)],
+                   [deposit("D1", 100), unreferenced])
+    rows = {r["status"]: r for r in result.trimmed_rows("batch_id", "fitid")}
+    assert (rows["unmatched_left"]["left_ref"], rows["unmatched_left"]["evidence"]) == (
+        "B9", {"record": {"amount_minor": 94_406, "currency": "USD", "when": "2026-11-02"}})
+    assert (rows["unmatched_right"]["right_ref"], rows["unmatched_right"]["evidence"]) == (
+        None, {"record": {"amount_minor": 31_240, "currency": "USD", "when": "2026-11-06"}})
+    # Figures and a date, never the record: nothing else of either one travels.
+    unpaired = json.dumps([rows["unmatched_left"], rows["unmatched_right"]])
+    assert all(word not in unpaired for word in ("posted_on", "closed_on", "gross_minor", "fees_minor", "MID-1"))
+    # What the other side read is still said beside it.
+    covered = match(_batches_deposits(), [batch("B9", 94_406, 0)], [], cov("processor.batches.list"),
+                    cov("bank.deposits.list"))
+    (row,) = covered.rows()
+    assert row["evidence"]["counterpart"]["source"] == "bank.deposits.list"
+    assert row["evidence"]["record"] == {"amount_minor": 94_406, "currency": "USD", "when": "2026-11-02"}
+
+
+def test_a_pair_says_when_each_side_happened():
+    result = match(_batches_deposits(), [batch("B1", 100, 0)], [deposit("D1", 100, day="2026-11-04")])
+    (row,) = result.rows()
+    assert row["members"] is None and row["evidence"]["dated"] == {"left": "2026-11-02", "right": "2026-11-04"}
+
+
+def test_a_date_is_kept_as_the_day_or_the_instant_and_nothing_else():
+    from datetime import UTC, date, datetime
+
+    from okwan_recon.engine import _when
+
+    assert _when("2026-10-13") == _when(date(2026, 10, 13)) == "2026-10-13"       # a file's day stays a day
+    assert _when("2026-10-13T14:03:22-04:00") == "2026-10-13T18:03:22+00:00"      # an instant, in UTC
+    assert _when(datetime(2026, 10, 13, 9, 30, tzinfo=UTC)) == "2026-10-13T09:30:00+00:00"
+    assert _when(1_791_900_000) == "2026-10-13T14:00:00+00:00"                    # a rail's epoch seconds
+    for odd in (None, True, "", "next Tuesday", 10**20, {"at": 1}):
+        assert _when(odd) is None, odd
+
+
+def test_a_check_that_names_no_amount_or_date_reports_a_miss_as_it_did():
+    spec = Reconciliation(
+        name="reference_only_fixture",
+        left=ResourceRef(connector="shop", resource="orders"),
+        right=ResourceRef(connector="rail", resource="charges"),
+        keys=[ExactRef(left="name", right="order_ref")],
+    )
+    (row,) = match(spec, [{"name": "#1", "total": 5}], []).rows()
+    assert row["status"] == "unmatched_left" and row["evidence"] is None
 
 
 def test_a_miss_shows_the_other_side_looked():

@@ -853,13 +853,22 @@ Part of `web (dashboard)`, so required. The owner's rule (§9 2026-11-06):
 nothing on a page may overlap. The job builds the dashboard, starts the
 API with an in-memory workspace (`scripts/ui_server.py`: *Acme ISV* with
 *Kofi's Store*, every rail connected, one real check over fixture rows,
-and two imported files with their mappings saved, and *Accra Coffee Co.*
-with only Stripe), and runs `apps/dashboard/scripts/layout-check.mjs`. It
+two imported files with their mappings saved and the batches-against-
+deposits check run on them, and *Accra Coffee Co.* with only Stripe), and
+runs `apps/dashboard/scripts/layout-check.mjs`. It
 opens the sign-in pages and every signed-in page, a merchant's three tabs,
 its import page (also with a file chosen, so the column-matching form is
 checked) and a connector included, at 1670, 1366, 1024 and 390px, and
 fails if any visible text overlaps other text, a page scrolls sideways, or
-anything covers an item of the open account menu.
+anything covers an item of the open account menu. On the Files tab it also
+reads the check's result as a person would (the batch that was not
+deposited, with its amount; the deposits and the batches each paid), runs
+the check again through the dashboard's own route, and asks that route for
+checks the tab does not offer, which it must refuse. The job's
+`node scripts/check-file-checks.mjs` step holds the words of that result
+to the stored run: a batch not deposited is said to be, "every batch was
+deposited" only when every batch was paired, and a result the page does
+not know is never shown as paid.
 
 **When it fails:** the job's summary has a `layout-check` artifact with a
 full-page screenshot of each failing page, named by width and path, and

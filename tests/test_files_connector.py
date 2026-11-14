@@ -17,6 +17,7 @@ says a source is ready when it has no files.
 from __future__ import annotations
 
 import base64
+import json
 from datetime import date
 from types import SimpleNamespace
 
@@ -54,6 +55,14 @@ BANK_MAPPING = Mapping(
     columns={"posted_on": "Date", "description": "Description", "amount_minor": "Amount",
              "fitid": "Ref"},
 )
+
+
+@pytest.fixture(autouse=True)
+def _read_in_september_2026(as_of):
+    """The files here are dated the first days of September 2026, and the
+    check reads 120 days back: read from today, these tests would start
+    failing in the first days of January 2027."""
+    as_of(2026, 9, 20)
 
 
 def _body(data: bytes, mapping: Mapping | None = None, name: str = "f.csv", **extra) -> dict:
@@ -214,6 +223,38 @@ async def test_batches_against_deposits_over_rest(api):
     assert [x["left"]["batch_id"] for x in rows["unmatched_left"]] == ["B-5"]
     # The monthly fee is money out, not a deposit; the stray credit is unexplained.
     assert [x["right"]["fitid"] for x in rows["unmatched_right"]] == ["D-4"]
+
+
+async def test_the_stored_run_says_what_each_batch_and_deposit_were(api):
+    """What the dashboard's Files tab reads back. A stored row named an
+    unpaid batch by its id alone, and a deposit with no batch by a
+    reference a statement may not even have: nothing to act on. Each now
+    carries the amount and the day, a deposit's batches carry theirs, and
+    still no row carries a record."""
+    client, _, shop, _ = api
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    ran = await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")
+    assert ran.status_code == 200, ran.text
+    latest = (await client.get(f"/v1/tenants/{shop.id}/runs/latest?kind=pair&name=batches_deposits")).json()
+    stored = latest["data"][shop.id]
+    assert (stored["id"], stored["status"], stored["has_more"]) == (ran.json()["run_id"], "ok", False)
+    rows = _verdicts(stored["rows"])
+    (unpaid,) = rows["unmatched_left"]
+    assert (unpaid["left_ref"], unpaid["evidence"]["record"]) == (
+        "B-5", {"amount_minor": 3_884, "currency": "USD", "when": "2026-09-08"})
+    (stray,) = rows["unmatched_right"]
+    assert (stray["right_ref"], stray["evidence"]["record"]) == (
+        "D-4", {"amount_minor": 1_200, "currency": "USD", "when": "2026-09-10"})
+    paid = {m["right_ref"]: m["evidence"] for m in rows["matched"]}
+    assert paid["D-1"]["members"] == [
+        {"ref": "B-1", "amount_minor": 9_710, "when": "2026-09-04"},
+        {"ref": "B-2", "amount_minor": 19_420, "when": "2026-09-05"},
+        {"ref": "B-3", "amount_minor": 4_855, "when": "2026-09-06"}]
+    assert paid["D-1"]["dated"] == {"left": None, "right": "2026-09-08"}      # the Tuesday after Labor Day
+    assert paid["D-2"]["dated"] == {"left": "2026-09-08", "right": "2026-09-09"}
+    kept = json.dumps(stored["rows"])
+    assert all(words not in kept for words in ("MERCHANT DEPOSIT", "UNKNOWN CREDIT", "description", "gross_minor"))
 
 
 async def test_batches_against_deposits_as_a_sql_table(api):

@@ -6,6 +6,7 @@ records it already paired.
 """
 from __future__ import annotations
 
+import re
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -190,6 +191,27 @@ class ReconResult:
     #: which case nothing can be classed unverifiable.
     left_coverage: Coverage | None = None
     right_coverage: Coverage | None = None
+    #: Where each side states the figures a person finds a record by (its
+    #: amount, its currency, its date), from the declaration: set by
+    #: `match`. A record with no counterpart is reported with them, since
+    #: a reference alone ("B-1013", or none at all on a bank statement
+    #: with no reference column) is not something to act on.
+    figures: dict[str, dict[str, str | None]] = field(default_factory=dict)
+
+    def _found_by(self, side: str, record: Row | None, looked: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """The evidence of a record that has no pair: what the other side
+        read, and the record's own amount, currency and date. Figures and
+        a date, never the record."""
+        paths = self.figures.get(side) or {}
+        amount = dig(record, paths["amount"]) if record is not None and paths.get("amount") else None
+        currency = dig(record, paths["currency"]) if record is not None and paths.get("currency") else None
+        stated = {
+            "amount_minor": amount if isinstance(amount, int) and not isinstance(amount, bool) else None,
+            "currency": str(currency).upper() if currency else None,
+            "when": _when(dig(record, paths["when"])) if record is not None and paths.get("when") else None,
+        }
+        out = {**(looked or {}), **({"record": stated} if any(v is not None for v in stated.values()) else {})}
+        return out or None
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -306,13 +328,13 @@ class ReconResult:
         out += [
             {"status": "unmatched_left", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": None, "left": r, "right": None,
-             "evidence": looked_right}
+             "evidence": self._found_by("left", r, looked_right)}
             for r in self.unmatched_left
         ]
         out += [
             {"status": "unmatched_right", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": None, "left": None, "right": r,
-             "evidence": looked_left}
+             "evidence": self._found_by("right", r, looked_left)}
             for r in self.unmatched_right
         ]
         out += [
@@ -321,23 +343,23 @@ class ReconResult:
              "left": a.left if a.side == "left" else None,
              "right": a.left if a.side == "right" else None,
              "candidates": a.candidates,
-             "evidence": {
+             "evidence": self._found_by(a.side, a.left, {
                  "candidates": len(a.candidates),
                  **({"more": True} if a.more else {}),
                  **({"groupings": [len(g) for g in a.alternatives]} if a.alternatives else {}),
-             }}
+             })}
             for a in self.ambiguous
         ]
         out += [
             {"status": "unverifiable_left", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": u.reason, "left": u.record, "right": None,
-             "evidence": looked_right}
+             "evidence": self._found_by("left", u.record, looked_right)}
             for u in self.unverifiable_left
         ]
         out += [
             {"status": "unverifiable_right", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": u.reason, "left": None, "right": u.record,
-             "evidence": looked_left}
+             "evidence": self._found_by("right", u.record, looked_left)}
             for u in self.unverifiable_right
         ]
         return out
@@ -355,6 +377,26 @@ def _as_dt(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _when(value: Any) -> str | None:
+    """A record's date as a result keeps it: the day, when the source
+    states a day (a batch's close date, a statement line), otherwise the
+    instant in UTC to the second. None for what does not read as either."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str) and _DAY.fullmatch(value.strip()):
+        return value.strip()
+    try:
+        at = _as_dt(value)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return at.astimezone(UTC).isoformat(timespec="seconds") if at else None
 
 
 def _ref_key(value: Any, case_sensitive: bool) -> str | None:
@@ -1177,9 +1219,31 @@ def match(
     )
     result.unverifiable_left += result.waiting["left"]
     result.unverifiable_right += result.waiting["right"]
+    amount = spec.resolved_amount
+    result.figures = {
+        "left": {"amount": amount.left if amount else None, "currency": amount.currency if amount else None,
+                 "when": left_ts},
+        "right": {"amount": amount.right_path if amount else None,
+                  "currency": amount.right_currency if amount else None, "when": right_ts},
+    }
     _score_discrepancies(spec, result)
     _describe_groups(spec, result)
+    _date_pairs(spec, result)
     return result
+
+
+def _date_pairs(spec: Reconciliation, result: ReconResult) -> None:
+    """Say when each side of a pair happened (E4): "paid the next business
+    day" is only something a person can check with both dates in front of
+    them. A group's side has no one date; its members carry their own."""
+    left_ts, right_ts = spec.timestamp_paths
+    for pair in result.matched:
+        dated = {
+            "left": None if pair.grouped == "left" or not left_ts else _when(dig(pair.left, left_ts)),
+            "right": None if pair.grouped == "right" or not right_ts else _when(dig(pair.right, right_ts)),
+        }
+        if any(dated.values()):
+            pair.evidence["dated"] = dated
 
 
 def _describe_groups(spec: Reconciliation, result: ReconResult) -> None:
@@ -1204,11 +1268,13 @@ def _describe_groups(spec: Reconciliation, result: ReconResult) -> None:
             put(summary, path, pair.value(side, path))
         ref = refs[0] if side == "left" else refs[1]
         amount_path = None if amount is None else (amount.left if side == "left" else amount.right_path)
-        # A reference and an amount per member, the figures the privacy
-        # policy says a stored result holds; never a member's record.
+        when_path = spec.timestamp_paths[0 if side == "left" else 1]
+        # A reference, an amount and a date per member, the figures the
+        # privacy policy says a stored result holds; never a member's record.
         pair.evidence["members"] = [
             {"ref": None if not ref else dig(m, ref),
-             "amount_minor": None if not amount_path else dig(m, amount_path)}
+             "amount_minor": None if not amount_path else dig(m, amount_path),
+             "when": None if not when_path else _when(dig(m, when_path))}
             for m in pair.members
         ]
         if ref:
