@@ -81,9 +81,14 @@ class RunRecord:
     summary: dict | None = None
     rows: list | None = None
     error: str | None = None
+    #: The check read the account's imported files. Such a run holds
+    #: references, amounts and dates taken from them, so it is deleted with
+    #: any of them: when a file is deleted and when one expires.
+    reads_files: bool = False
 
 
 #: Runs kept per (tenant, kind, name); older ones are pruned on insert.
+#: A run that read imported files goes sooner, with the files.
 RUNS_KEPT = 50
 
 #: A support conversation is kept this long after its last message.

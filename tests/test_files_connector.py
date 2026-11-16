@@ -257,6 +257,46 @@ async def test_the_stored_run_says_what_each_batch_and_deposit_were(api):
     assert all(words not in kept for words in ("MERCHANT DEPOSIT", "UNKNOWN CREDIT", "description", "gross_minor"))
 
 
+async def test_deleting_a_file_takes_the_stored_result_with_it(api):
+    """The Files tab drew a result for as long as it was the newest one,
+    whatever had become of the files: delete the statement, and the tab
+    still said which deposits paid which batches, from a file no longer
+    there. The result is deleted with the file, on every surface that
+    reads it, and the next run is of what is left."""
+    client, store, shop, _ = api
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    statement = await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    ran = (await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")).json()
+    latest = f"/v1/tenants/{shop.id}/runs/latest?kind=pair&name=batches_deposits"
+    assert (await client.get(latest)).json()["data"][shop.id]["id"] == ran["run_id"]
+    assert (await store.get_run(shop.id, ran["run_id"])).reads_files is True
+
+    assert (await client.delete(f"/v1/tenants/{shop.id}/imports/{statement['id']}")).status_code == 204
+    assert (await client.get(latest)).json()["data"] == {}
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs/{ran['run_id']}")).status_code == 404
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs")).json()["data"] == []
+    listed = {x["name"]: x for x in (await client.get("/v1/reconciliations")).json()["data"]}
+    assert listed["batches_deposits"]["status"]["last_run"] is None
+
+    again = (await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")).json()
+    rows = (await client.get(latest)).json()["data"][shop.id]["rows"]
+    assert again["run_id"] != ran["run_id"] and {r["status"] for r in rows} == {"unmatched_left"}
+
+
+def test_the_checks_that_read_files_are_known_from_their_declarations():
+    """Which stored results go with a file is read off each check's two
+    sides, never from a list someone has to remember to extend."""
+    from okwan_api.runs import reads_files
+    from okwan_recon.registry import all_across, all_reconciliations
+
+    reading = {spec.name for spec in all_reconciliations() if reads_files(spec)}
+    assert reading == {"batches_deposits", "square_payouts_deposits", "clover_payments_settlements",
+                       "delivery_payout_lines", "delivery_payouts_deposits", "avatax_collected_filed"}
+    assert all(spec.name in reading or "files" not in (spec.left.connector, spec.right.connector)
+               for spec in all_reconciliations())
+    assert [reads_files(spec) for spec in all_across()] == [False] * len(all_across())
+
+
 async def test_batches_against_deposits_as_a_sql_table(api):
     client, _, shop, _ = api
     await _upload(client, shop, BATCHES, BATCH_MAPPING)

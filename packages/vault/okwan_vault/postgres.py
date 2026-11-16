@@ -435,7 +435,7 @@ class PostgresStore:
     async def add_run(
         self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
         started_at: datetime, finished_at: datetime, summary: dict | None,
-        rows: list | None, error: str | None,
+        rows: list | None, error: str | None, reads_files: bool = False,
     ) -> RunRecord:
         """Insert, then prune to the newest RUNS_KEPT for the same tenant,
         kind and name, in one transaction: history is bounded by
@@ -445,11 +445,11 @@ class PostgresStore:
             async with self._scoped(tenant_id) as con:
                 row = await con.fetchrow(
                     "INSERT INTO reconciliation_runs (id, tenant_id, kind, name, surface, "
-                    "status, started_at, finished_at, summary, rows, error) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11) "
+                    "status, started_at, finished_at, summary, rows, error, reads_files) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12) "
                     f"RETURNING {_RUN_COLS}",
                     run_id, tenant_id, kind, name, surface, status, started_at, finished_at,
-                    _dumps(summary), _dumps(rows), error,
+                    _dumps(summary), _dumps(rows), error, reads_files,
                 )
                 await con.execute(
                     "DELETE FROM reconciliation_runs WHERE tenant_id = $1 AND kind = $2 "
@@ -1211,9 +1211,11 @@ class PostgresStore:
         expires = add_months(now, IMPORT_KEPT_MONTHS)
         try:
             async with self._scoped(tenant_id) as con:
-                await con.execute(
-                    "DELETE FROM import_files WHERE tenant_id = $1 AND expires_at <= $2",
-                    tenant_id, now)
+                expired = await con.fetch(
+                    "DELETE FROM import_files WHERE tenant_id = $1 AND expires_at <= $2 "
+                    "RETURNING id", tenant_id, now)
+                if expired:
+                    await con.execute(_DROP_FILE_RUNS, tenant_id)
                 same = await con.fetchval(
                     "SELECT id FROM import_files WHERE tenant_id = $1 AND kind = $2 AND sha256 = $3",
                     tenant_id, kind, sha256)
@@ -1265,11 +1267,15 @@ class PostgresStore:
         return None if row is None else _import(row)
 
     async def delete_import(self, tenant_id: str, file_id: str) -> bool:
-        """The file and, by cascade, every row it produced."""
+        """The file and, by cascade, every row it produced; and in the same
+        transaction the account's stored runs that read files, which hold
+        references, amounts and dates taken from them."""
         async with self._scoped(tenant_id) as con:
             gone = await con.fetchval(
                 "DELETE FROM import_files WHERE tenant_id = $1 AND id = $2 RETURNING id",
                 tenant_id, file_id)
+            if gone is not None:
+                await con.execute(_DROP_FILE_RUNS, tenant_id)
         return gone is not None
 
     async def import_rows(
@@ -1351,14 +1357,18 @@ class PostgresStore:
         return gone is not None
 
     async def sweep_imports(self, now: datetime | None = None) -> int:
-        """Delete every tenant's expired files, and by cascade their rows.
+        """Delete every tenant's expired files, by cascade their rows, and
+        those tenants' stored runs that read files: one statement, so a
+        file never goes without them.
 
         Across tenants on purpose, so as the login role, like deleting a
         tenant: it reads nothing back and touches only what has expired.
         """
-        status = await self.pool.execute(
-            "DELETE FROM import_files WHERE expires_at <= $1", now or datetime.now(UTC))
-        return int(status.split()[-1])
+        return await self.pool.fetchval(
+            "WITH gone AS (DELETE FROM import_files WHERE expires_at <= $1 RETURNING tenant_id), "
+            "runs AS (DELETE FROM reconciliation_runs WHERE reads_files "
+            "         AND tenant_id IN (SELECT tenant_id FROM gone)) "
+            "SELECT count(*) FROM gone", now or datetime.now(UTC))
 
     # ── access log ──────────────────────────────────────────────────
 
@@ -1622,9 +1632,12 @@ _TICKET_COLS = ("id, tenant_id, conversation_id, severity, category, summary, no
 # ── reconciliation runs: row shapes ─────────────────────────────────
 
 _RUN_COLS = ("id, tenant_id, kind, name, surface, status, started_at, finished_at, "
-             "summary, rows, error")
+             "summary, rows, error, reads_files")
 _RUN_COLS_NO_ROWS = ("id, tenant_id, kind, name, surface, status, started_at, "
-                     "finished_at, summary, NULL::jsonb AS rows, error")
+                     "finished_at, summary, NULL::jsonb AS rows, error, reads_files")
+#: A stored run that read imported files goes when any file of its account
+#: does (deleted or expired), in the transaction that removes the file.
+_DROP_FILE_RUNS = "DELETE FROM reconciliation_runs WHERE tenant_id = $1 AND reads_files"
 
 
 def _dumps(value) -> str | None:
@@ -1663,7 +1676,7 @@ def _run(row) -> RunRecord:
         id=row["id"], tenant_id=row["tenant_id"], kind=row["kind"], name=row["name"],
         surface=row["surface"], status=row["status"], started_at=row["started_at"],
         finished_at=row["finished_at"], summary=_loads(row["summary"]),
-        rows=_loads(row["rows"]), error=row["error"],
+        rows=_loads(row["rows"]), error=row["error"], reads_files=row["reads_files"],
     )
 
 

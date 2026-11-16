@@ -239,7 +239,8 @@ def build_router() -> APIRouter:
 
     @router.delete("/{tenant_id}/imports/{file_id}", status_code=204)
     async def delete_import(tenant_id: str, file_id: str, actor=Depends(admin_actor)) -> None:
-        """Delete a file and every row it produced, at once."""
+        """Delete a file and every row it produced, at once, and with them the
+        tenant's stored results of checks that read its files."""
         await _guard(actor, tenant_id)
         if not await get_store().delete_import(tenant_id, file_id):
             raise HTTPException(404, f"no such import: {file_id}")

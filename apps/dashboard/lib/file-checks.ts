@@ -78,19 +78,51 @@ export type PairRun = {
 
 export type Tone = "danger" | "warn" | "ok" | "neutral";
 
-/** One row as the page draws it. */
+/**
+ * One row as the page draws it. `title` and `detail` are the page's own
+ * words and hold nothing a file said; what a file said (a batch id, a
+ * statement reference) is in `refs` and `parts`, drawn apart as data.
+ */
 export type CheckLine = {
   key: string;
   tone: Tone;
   symbol: string;
   label: string;
-  /** What it is: "Batch B-2004", "Deposit on 6 Oct 2026". */
+  /** What it is, in the page's words: "Batch", "Deposit on 6 Oct 2026". */
   title: string;
+  /** The file's own references for it, each already through `asWritten`. */
+  refs: string[];
   amount: string;
   detail: string;
-  /** The batches a deposit paid, when it paid more than one. */
+  /** The batches behind a deposit: each one's reference (through `asWritten`), amount and day. */
   parts: { ref: string; amount: string; when: string }[];
 };
+
+/** How much of a reference is drawn; a file may hold 200 characters. */
+export const REF_SHOWN = 64;
+
+// A character that draws nothing, moves the cursor, or changes the direction
+// of the text around it: controls, format characters (zero-width, bidi
+// overrides and isolates, soft hyphen), unassigned and private-use code
+// points, lone surrogates, line and paragraph separators, and every space
+// that is not the plain one.
+const UNSEEN = /^(?:[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}]|(?! )\p{Zs})$/u;
+
+/**
+ * A reference from a file, made safe to read beside the page's own words.
+ * The file's characters are kept, except that one a reader cannot see is
+ * spelled out ("B-2004[U+200B]"), so two ids that differ never look the
+ * same and no id redraws the text around it; a long one is cut, with its
+ * length said. The page draws the result in its own element, never inside
+ * a sentence.
+ */
+export function asWritten(ref: string): string {
+  const chars = Array.from(ref);
+  const spelled = chars.slice(0, REF_SHOWN)
+    .map((c) => (UNSEEN.test(c) ? `[U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]` : c))
+    .join("");
+  return chars.length > REF_SHOWN ? `${spelled}… (${chars.length.toLocaleString("en-US")} characters)` : spelled;
+}
 
 /** "6 Oct 2026" from a day ("2026-10-06") or an instant; "" when there is none. */
 export function dayOf(when: string | null | undefined): string {
@@ -102,14 +134,13 @@ export function dayOf(when: string | null | undefined): string {
 
 /** A statement line with no reference column gets an id the importer
  *  makes up ("h_…"): nothing a person would recognise, so it is not shown. */
-function shownRef(ref: string | null): string {
-  return ref && !/^h_[0-9a-f]{20}$/.test(ref) ? ref : "";
+function shownRef(ref: string | null): string[] {
+  return ref && !/^h_[0-9a-f]{20}$/.test(ref) ? [asWritten(ref)] : [];
 }
 
-function deposit(when: string | null | undefined, ref: string | null): string {
+function deposit(when: string | null | undefined): string {
   const day = dayOf(when);
-  const named = shownRef(ref);
-  return `Deposit${day ? ` on ${day}` : ""}${named ? ` (${named})` : ""}`;
+  return `Deposit${day ? ` on ${day}` : ""}`;
 }
 
 function closed(when: string | null | undefined): string {
@@ -121,6 +152,10 @@ function closed(when: string | null | undefined): string {
  * The rows of a batches-against-deposits run as lines: what needs a look
  * first, in the order the run stored them (worst first), then what was
  * paid. Batches are the left side, deposits the right.
+ *
+ * A batch id and a statement reference are free text from a merchant's
+ * file. Neither is ever put inside a sentence here: a sentence on this
+ * page is the page's own, start to end.
  */
 export function batchLines(rows: PairRow[]): { attention: CheckLine[]; paid: CheckLine[] } {
   const attention: CheckLine[] = [];
@@ -129,58 +164,61 @@ export function batchLines(rows: PairRow[]): { attention: CheckLine[]; paid: Che
     const ev = row.evidence ?? {};
     const rec = ev.record;
     const cur = ev.compared?.currency ?? rec?.currency ?? null;
-    const key = `${n}:${row.status}:${row.left_ref ?? ""}:${row.right_ref ?? ""}`;
-    const parts = (ev.members ?? []).map((m) => ({
-      ref: m.ref ?? "(no batch id)", amount: formatMinor(m.amount_minor, cur), when: dayOf(m.when),
-    }));
-    const refs = row.left_ref ? row.left_ref.split("+").join(", ") : "";
-    const batches = refs ? `Batch${parts.length > 1 ? "es" : ""} ${refs}` : "A batch";
-    const line = (tone: Tone, symbol: string, label: string, title: string, amount: string, detail: string): CheckLine =>
-      ({ key, tone, symbol, label, title, amount, detail, parts: parts.length > 1 ? parts : [] });
+    const key = `${n}:${row.status}`;
+    // The batches behind the row: a group's members, or the one batch. A
+    // group's reference is its members' joined, and is never split back.
+    const members = ev.members ?? [];
+    const behind = members.length > 0
+      ? members.map((m) => ({ ref: m.ref === null ? "(no batch id)" : asWritten(m.ref), amount: formatMinor(m.amount_minor, cur), when: dayOf(m.when) }))
+      : row.left_ref !== null && ev.compared
+        ? [{ ref: asWritten(row.left_ref), amount: formatMinor(ev.compared.left_minor, cur), when: dayOf(ev.dated?.left) }]
+        : [];
+    const batch = { title: row.left_ref === null ? "A batch with no id" : "Batch", refs: row.left_ref === null ? [] : [asWritten(row.left_ref)] };
+    const line = (tone: Tone, symbol: string, label: string, what: { title: string; refs: string[] }, amount: string,
+      detail: string, parts: CheckLine["parts"] = []): CheckLine => ({ key, tone, symbol, label, ...what, amount, detail, parts });
+    const paidBy = (when: string | null | undefined) => ({ title: deposit(when), refs: shownRef(row.right_ref) });
+    const batches = behind.length === 1 ? "1 batch" : `${behind.length} batches`;
 
     switch (row.status) {
       case "unmatched_left":
-        attention.push(line("danger", "✕", "Not deposited", batches, formatMinor(rec?.amount_minor, cur),
+        attention.push(line("danger", "✕", "Not deposited", batch, formatMinor(rec?.amount_minor, cur),
           `${closed(rec?.when)}No deposit on the statement pays it.`));
         break;
       case "unmatched_right":
-        attention.push(line("warn", "?", "No batch", deposit(rec?.when, row.right_ref), formatMinor(rec?.amount_minor, cur),
+        attention.push(line("warn", "?", "No batch", paidBy(rec?.when), formatMinor(rec?.amount_minor, cur),
           "Money in that no batch, and no group of batches, adds up to."));
         break;
-      case "ambiguous": {
-        const isDeposit = row.right_ref !== null || row.left_ref === null;
+      case "ambiguous":
         attention.push(line("warn", "?", "More than one fit",
-          isDeposit ? deposit(rec?.when, row.right_ref) : batches, formatMinor(rec?.amount_minor, cur),
+          row.right_ref !== null || row.left_ref === null ? paidBy(rec?.when) : batch, formatMinor(rec?.amount_minor, cur),
           row.reason ?? "More than one grouping of batches adds up to it. Okwan does not pick one."));
         break;
-      }
       case "matched_discrepant":
       case "matched_explained": {
         const c = ev.compared;
         const apart = formatMinor(Math.abs(row.discrepancy ?? 0), cur);
-        const said = c ? `${batches} total ${formatMinor(c.left_minor, cur)}; the deposit is ${formatMinor(c.right_minor, cur)}, ${apart} apart.` : `${apart} apart.`;
+        const said = c
+          ? `${behind.length > 1 ? `Its ${batches} total` : "Its batch totals"} ${formatMinor(c.left_minor, cur)}; the deposit is ${formatMinor(c.right_minor, cur)}, ${apart} apart.`
+          : `${apart} apart.`;
         attention.push(row.status === "matched_explained"
-          ? line("neutral", "≈", "Explained", deposit(ev.dated?.right, row.right_ref), formatMinor(c?.right_minor, cur),
-              `${said} Accounted for by ${row.explained_by ?? "a recorded adjustment"}.`)
-          : line("danger", "≠", "Amounts differ", deposit(ev.dated?.right, row.right_ref), formatMinor(c?.right_minor, cur), said));
+          ? line("neutral", "≈", "Explained", paidBy(ev.dated?.right), formatMinor(c?.right_minor, cur),
+              `${said} Accounted for by ${row.explained_by ?? "a recorded adjustment"}.`, behind)
+          : line("danger", "≠", "Amounts differ", paidBy(ev.dated?.right), formatMinor(c?.right_minor, cur), said, behind));
         break;
       }
       case "unverifiable_left":
       case "unverifiable_right":
         attention.push(line("neutral", "…", "Could not be checked",
-          row.status === "unverifiable_left" ? batches : deposit(rec?.when, row.right_ref), formatMinor(rec?.amount_minor, cur),
+          row.status === "unverifiable_left" ? batch : paidBy(rec?.when), formatMinor(rec?.amount_minor, cur),
           row.reason ?? "The other file does not reach this date."));
         break;
-      case "matched": {
-        const one = parts.length > 1
-          ? `Paid ${parts.length} batches:`
-          : `Paid ${refs ? `batch ${refs}` : "one batch"}${ev.dated?.left ? `, closed ${dayOf(ev.dated.left)}` : ""}.`;
-        paid.push(line("ok", "✓", "Paid", deposit(ev.dated?.right, row.right_ref), formatMinor(ev.compared?.right_minor, cur), one));
+      case "matched":
+        paid.push(line("ok", "✓", "Paid", paidBy(ev.dated?.right), formatMinor(ev.compared?.right_minor, cur),
+          behind.length > 0 ? `Paid ${batches}:` : "Paid one batch.", behind));
         break;
-      }
       default:
         // A status this page does not know is never shown as paid.
-        attention.push(line("neutral", "…", "Not read", row.left_ref ? batches : deposit(rec?.when, row.right_ref),
+        attention.push(line("neutral", "…", "Not read", row.left_ref !== null ? batch : paidBy(rec?.when),
           formatMinor(rec?.amount_minor, cur), "This page does not know this result yet. The API and MCP return it in full."));
     }
   });
@@ -227,28 +265,47 @@ export function unread(what: "batch report" | "bank statement", first: string | 
   return `The ${what} on file goes back to ${dayOf(first)}. ${lines} before ${dayOf(from)} were not checked.`;
 }
 
+/** Deposits whose batches add up to them exactly: a match that needs no look. */
+export function paidClean(s: PairSummary): number {
+  return Math.max(0, s.matched - s.matched_with_explained_discrepancy - s.matched_with_unexplained_discrepancy);
+}
+
 /** The run in one sentence, and whether anything in it needs a look. */
 export function verdict(s: PairSummary): { headline: string; tone: Tone; counts: string[] } {
-  const read = (s.coverage?.left?.records ?? 0) + (s.coverage?.right?.records ?? 0);
+  const left = s.coverage?.left ?? null;
+  const right = s.coverage?.right ?? null;
   const { since, cut } = reach(s);
   // Every batch the run read, never every batch there is.
   const every = since ? `Every batch since ${since} was deposited` : "Every batch the check read was deposited";
   const total = s.matched + s.unmatched_left + s.unmatched_right + s.ambiguous + s.unverifiable_left + s.unverifiable_right;
+  const clean = paidClean(s);
   const counts = [
-    s.matched ? count(s.matched, "deposit matched to its batches", "deposits matched to their batches") : "",
+    clean ? count(clean, "deposit matched to its batches", "deposits matched to their batches") : "",
     s.unmatched_left ? count(s.unmatched_left, "batch not deposited", "batches not deposited") : "",
     s.unmatched_right ? count(s.unmatched_right, "deposit with no batch", "deposits with no batch") : "",
     s.matched_with_unexplained_discrepancy ? count(s.matched_with_unexplained_discrepancy, "deposit of a different amount", "deposits of a different amount") : "",
+    s.matched_with_explained_discrepancy ? count(s.matched_with_explained_discrepancy, "difference accounted for", "differences accounted for") : "",
     s.ambiguous ? count(s.ambiguous, "with more than one fit", "with more than one fit") : "",
     s.unverifiable_left + s.unverifiable_right
       ? count(s.unverifiable_left + s.unverifiable_right, "could not be checked", "could not be checked") : "",
   ].filter(Boolean);
   if (total === 0) {
     return {
-      headline: read === 0 && s.coverage ? "The files hold nothing in the days this check reads" : "Nothing to check",
+      headline: s.coverage && (left?.records ?? 0) + (right?.records ?? 0) === 0
+        ? "The files hold nothing in the days this check reads" : "Nothing to check",
       tone: "neutral", counts,
     };
   }
+  // A side the run read nothing of. With no batch read, no batch was
+  // deposited or not; with no deposit read, no batch could have been paired.
+  // Where an older stored run does not say what it read, its rows do.
+  // (A row that fits more than one way may be of either side.)
+  const batches = left ? left.records : s.matched + s.unmatched_left + s.unverifiable_left + s.ambiguous;
+  const deposits = right ? right.records : s.matched + s.unmatched_right + s.unverifiable_right + s.ambiguous;
+  if (deposits === 0) {
+    return { headline: "The check read no deposits, so no batch could be matched to one", tone: "warn", counts };
+  }
+  // A batch with no deposit comes before everything else that can be said.
   const breaks = s.unmatched_left + s.matched_with_unexplained_discrepancy;
   if (breaks) {
     return {
@@ -257,6 +314,9 @@ export function verdict(s: PairSummary): { headline: string; tone: Tone; counts:
         : `${count(breaks, "deposit does", "deposits do")} not match the batches behind it`,
       tone: "danger", counts,
     };
+  }
+  if (batches === 0) {
+    return { headline: "The check read no batches, so no deposit could be matched to one", tone: "warn", counts };
   }
   // "Every batch … was deposited" only when every batch read was paired: one
   // that could not be checked, or that fits more than one way, is not known to be.
@@ -269,8 +329,30 @@ export function verdict(s: PairSummary): { headline: string; tone: Tone; counts:
   }
   // A run that stopped at its cap did not read every batch: never the clean line.
   if (cut) return { headline: "No missing deposit among what was read, and not everything was read", tone: "warn", counts };
+  // Nor is it said of a run in which no batch was paired with anything.
+  if (s.matched === 0) return { headline: "No batch was matched to a deposit", tone: "warn", counts };
   if (s.unmatched_right) {
     return { headline: `${every}; ${count(s.unmatched_right, "deposit has", "deposits have")} no batch`, tone: "warn", counts };
   }
   return { headline: every, tone: "ok", counts };
+}
+
+/** How many lines of each list the page draws. A stored run holds up to
+ *  1,000; the page draws the first of them and says how many it left out. */
+export const LINES_SHOWN = 100;
+
+/**
+ * What the page draws of a run: the first lines of each list, and the
+ * figures said beside them. `clean` and `total` come from the run's own
+ * summary, never from the lines on hand, which are a cut of it.
+ */
+export function drawn(run: { rows?: PairRow[]; rows_total: number | null }, s: PairSummary):
+  { attention: CheckLine[]; paid: CheckLine[]; clean: number; shown: number; total: number } {
+  const lines = batchLines(run.rows ?? []);
+  const attention = lines.attention.slice(0, LINES_SHOWN);
+  const paid = lines.paid.slice(0, LINES_SHOWN);
+  return {
+    attention, paid, clean: paidClean(s), shown: attention.length + paid.length,
+    total: Math.max(run.rows_total ?? 0, lines.attention.length + lines.paid.length),
+  };
 }

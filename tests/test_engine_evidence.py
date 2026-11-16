@@ -322,6 +322,51 @@ def test_only_a_code_a_whole_amount_and_a_date_are_kept_of_a_record():
     assert seen >= 16
 
 
+def test_a_pair_and_a_groups_members_keep_a_code_a_whole_amount_and_a_date_and_nothing_else():
+    """Attacker's pass: the same guard on a group's members and on a
+    pair's two dates could be taken out and every test still passed; and a
+    pair's compared currency was kept as whatever its field held. Each is
+    held here with the values a customer's own column can carry."""
+    from okwan_recon.engine import (
+        MatchedPair,
+        ReconResult,
+        _date_pairs,
+        _describe_groups,
+        _score_discrepancies,
+    )
+
+    note = "refund to Jane Doe <jane.doe@example.com>, card 4242 4242 4242 4242"
+    spec = _batches_deposits()
+    odd = [{"batch_id": "B1", "gross_minor": note, "closed_on": note, "currency": note, "mid": "MID-1"},
+           {"batch_id": "B2", "gross_minor": 10**400, "closed_on": {"day": note}, "currency": note, "mid": "MID-1"},
+           {"batch_id": "B3", "gross_minor": 12.5, "closed_on": 10**30, "currency": note, "mid": "MID-1"},
+           {"batch_id": "B4", "gross_minor": 60, "closed_on": "2026-11-02", "currency": note, "mid": "MID-1"}]
+    group = MatchedPair(left={"members": odd}, right={"fitid": "D1", "posted_on": note, "amount_minor": 60, "currency": note},
+                        rule="group_sum", confidence=1.0, members=odd, grouped="left")
+    single = MatchedPair(left={"batch_id": "B9", "gross_minor": 70, "closed_on": note, "currency": note},
+                         right={"fitid": "D2", "posted_on": "2026-11-03", "amount_minor": 60, "currency": note},
+                         rule="group_sum", confidence=1.0)
+    plain = MatchedPair(left={"batch_id": "B8", "gross_minor": 70, "closed_on": "2026-11-02T09:30:00+02:00", "currency": "usd"},
+                        right={"fitid": "D3", "posted_on": 1_791_900_000, "amount_minor": 60, "currency": "usd"},
+                        rule="group_sum", confidence=1.0)
+    result = ReconResult(name=spec.name, matched=[group, single, plain])
+    _score_discrepancies(spec, result)
+    _describe_groups(spec, result)
+    _date_pairs(spec, result)
+
+    assert group.evidence["members"] == [
+        {"ref": "B1", "amount_minor": None, "when": None}, {"ref": "B2", "amount_minor": None, "when": None},
+        {"ref": "B3", "amount_minor": None, "when": None}, {"ref": "B4", "amount_minor": 60, "when": "2026-11-02"}]
+    assert "dated" not in group.evidence                      # neither side has a date that reads as one
+    assert single.evidence["dated"] == {"left": None, "right": "2026-11-03"}
+    assert single.evidence["compared"]["currency"] is None    # the same words on both sides are still not a code
+    assert (single.discrepancy_minor, plain.discrepancy_minor) == (10, 10)
+    assert plain.evidence["compared"]["currency"] == "USD"
+    assert plain.evidence["dated"] == {"left": "2026-11-02T07:30:00+00:00", "right": "2026-10-13T14:00:00+00:00"}
+    kept = json.dumps(result.trimmed_rows("batch_id", "fitid"))
+    assert "JANE" not in kept.upper() and "4242" not in kept and "e+" not in kept and "12.5" not in kept
+
+
 def test_a_check_that_names_no_amount_or_date_reports_a_miss_as_it_did():
     spec = Reconciliation(
         name="reference_only_fixture",

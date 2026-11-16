@@ -136,7 +136,7 @@ class Store(Protocol):
     async def add_run(
         self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
         started_at: datetime, finished_at: datetime, summary: dict | None,
-        rows: list | None, error: str | None,
+        rows: list | None, error: str | None, reads_files: bool = False,
     ) -> RunRecord: ...
     async def list_runs(
         self, tenant_id: str, name: str | None = None, limit: int = 20
@@ -647,14 +647,14 @@ class MemoryStore:
     async def add_run(
         self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
         started_at: datetime, finished_at: datetime, summary: dict | None,
-        rows: list | None, error: str | None,
+        rows: list | None, error: str | None, reads_files: bool = False,
     ) -> RunRecord:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         rec = RunRecord(
             id=f"run_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id, kind=kind, name=name,
             surface=surface, status=status, started_at=started_at, finished_at=finished_at,
-            summary=summary, rows=rows, error=error,
+            summary=summary, rows=rows, error=error, reads_files=reads_files,
         )
         self._runs[rec.id] = rec
         # Prune with the insert: the newest RUNS_KEPT per (tenant, kind, name).
@@ -936,10 +936,13 @@ class MemoryStore:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         now = now or datetime.now(UTC)
-        for old in [f for f in self._imports.values()
-                    if f.tenant_id == tenant_id and f.expires_at <= now]:
+        expired = [f for f in self._imports.values()
+                   if f.tenant_id == tenant_id and f.expires_at <= now]
+        for old in expired:
             del self._imports[old.id]
             self._import_rows.pop(old.id, None)
+        if expired:
+            self._drop_file_runs({tenant_id})
         same = next((f for f in self._imports.values() if f.tenant_id == tenant_id
                      and f.kind == kind and f.sha256 == sha256), None)
         if same is not None:
@@ -977,7 +980,15 @@ class MemoryStore:
             return False
         del self._imports[file_id]
         self._import_rows.pop(file_id, None)
+        self._drop_file_runs({tenant_id})
         return True
+
+    def _drop_file_runs(self, tenant_ids: set[str]) -> None:
+        """A stored run that read imported files holds references, amounts
+        and dates from them: it goes when any file of its account does."""
+        for run_id in [k for k, r in self._runs.items()
+                       if r.reads_files and r.tenant_id in tenant_ids]:
+            del self._runs[run_id]
 
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,
@@ -1043,12 +1054,14 @@ class MemoryStore:
         return self._layouts.pop((tenant_id, name), None) is not None
 
     async def sweep_imports(self, now: datetime | None = None) -> int:
-        """Delete every tenant's expired files and their rows."""
+        """Delete every tenant's expired files, their rows, and the stored
+        runs of those tenants that read files."""
         now = now or datetime.now(UTC)
-        gone = [k for k, f in self._imports.items() if f.expires_at <= now]
+        gone = {k: f.tenant_id for k, f in self._imports.items() if f.expires_at <= now}
         for file_id in gone:
             del self._imports[file_id]
             self._import_rows.pop(file_id, None)
+        self._drop_file_runs(set(gone.values()))
         return len(gone)
 
     # ── access log ──────────────────────────────────────────────────

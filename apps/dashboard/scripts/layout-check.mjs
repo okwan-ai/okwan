@@ -188,9 +188,18 @@ async function checkFileCheck(page, w, h, merchant) {
   for (const words of expected) if (!before.includes(words)) await note(page, where, `it does not say "${words}"`);
   await section.locator("details summary").click();
   const open = await read();
-  for (const words of ["$1,786.64", "Paid batch B-2001", "$1,291.92", "Paid 2 batches:", "B-2002", "$893.81", "B-2003", "$398.11"]) {
+  for (const words of ["$1,786.64", "Paid 1 batch:", "B-2001", "$1,291.92", "Paid 2 batches:", "B-2002", "$893.81", "B-2003", "$398.11"]) {
     if (!open.includes(words)) await note(page, where, `opened, it does not say "${words}"`);
   }
+  // A batch id is a merchant's own text. Each is drawn in an element of its
+  // own, in its own direction, and in no sentence the page writes.
+  const refs = await section.locator("bdi[data-file-ref]").evaluateAll((all) => all.map((el) => [el.textContent, el.dir]));
+  const drawn = refs.map(([text]) => text).sort().join(" ");
+  if (drawn !== "B-2001 B-2002 B-2003 B-2004" || refs.some(([, dir]) => dir !== "ltr")) {
+    await note(page, where, `the batch ids are not each in an element of their own: ${JSON.stringify(refs)}`);
+  }
+  const sentences = await section.locator("li > p.text-sm").evaluateAll((all) => all.map((el) => el.textContent ?? ""));
+  for (const said of sentences) if (/B-20\d\d/.test(said)) await note(page, where, `a batch id is inside the page's own sentence: "${said}"`);
   // Measured from the top, like every other page: scrolled, the phone's
   // header sits over whatever passes beneath it, as it is meant to.
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -203,6 +212,10 @@ async function checkFileCheck(page, w, h, merchant) {
   await section.getByRole("button", { name: "Check again" }).click();
   const response = await ran.catch(() => null);
   if (!response || response.status() !== 200) return note(page, where, `running it answered ${response ? response.status() : "nothing"}`);
+  // The browser is told which stored run to read, and nothing of the result.
+  const answer = await response.json().catch(() => null);
+  const keys = answer ? Object.keys(answer).sort().join(",") : "nothing readable";
+  if (keys !== "at,run_id" || !/^run_[0-9a-f]{16}$/.test(answer.run_id)) await note(page, where, `running it answered with ${keys}`);
   await page.waitForLoadState("networkidle");
   await page.waitForTimeout(400);
   const after = await read();
@@ -222,6 +235,13 @@ async function checkFileCheck(page, w, h, merchant) {
   }, id);
   for (const [name, status] of Object.entries(refused)) {
     if (status !== 404) await note(page, where, `the route ran "${name}" (answered ${status})`);
+  }
+  // And only for a request this site's own page made: one sent by another
+  // site's page, with the signed-in browser's cookie, is refused.
+  for (const origin of ["https://okwan.example", "null"]) {
+    const other = await page.request.post(`${BASE}/api/merchants/${id}/checks/batches_deposits`, {
+      headers: { "Content-Type": "application/json", Origin: origin }, data: "{}", failOnStatusCode: false });
+    if (other.status() !== 403) await note(page, where, `a request from ${origin} ran the check (answered ${other.status()})`);
   }
 }
 

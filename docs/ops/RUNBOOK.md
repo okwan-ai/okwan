@@ -318,7 +318,12 @@ only means the other kind has not been uploaded yet.
 **Retention.** Each file and its rows expire 13 months after upload. Reads
 skip an expired file at once; the API deletes every tenant's expired
 files hourly (a warning "import sweep failed" in the logs means it will
-retry next hour). To delete them now:
+retry next hour). A stored result of a check that read a merchant's files
+quotes them (references, amounts, dates), so it goes with them: deleting
+a file, or a file expiring, deletes that merchant's stored results of
+every file-based check in the same step, and the Files tab goes back to
+"run the check". Results of checks that read no file stay. To delete
+expired files now:
 
 ```bash
 python -m okwan_vault imports sweep

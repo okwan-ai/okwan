@@ -17,7 +17,8 @@ const FORMAT: Record<string, string> = { csv: "CSV", xlsx: "Excel", ofx: "OFX" }
  * deposit that paid it), the files imported for it, and the column
  * mappings saved for the next one. A file holds only the columns its
  * mapping named, and goes 13 months after upload; deleting it deletes its
- * rows at once.
+ * rows at once, and with them every stored result of a check that read
+ * this merchant's files.
  */
 export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
   tenantId: string;
@@ -115,7 +116,7 @@ export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
           items={[
             "It is read once, in memory, and never kept. Only the columns you map are stored, as rows.",
             "A file holding a full card number anywhere is refused before anything is kept. Mask card columns to the last four digits.",
-            "Rows go 13 months after upload. Deleting a file deletes its rows at once.",
+            "Rows go 13 months after upload. Deleting a file deletes its rows at once, and with them the results of checks that read this merchant's files: run the check again on what is left.",
           ]}
         />
       </div>

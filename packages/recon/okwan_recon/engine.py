@@ -1163,7 +1163,9 @@ def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
         pair.evidence["compared"] = {
             "left_path": ref.left, "right_path": ref.right_path,
             "left_minor": int(l_amt), "right_minor": int(r_amt),
-            "currency": l_cur or r_cur or None,
+            # A code or nothing, as for a record with no pair: a currency
+            # column is a merchant's free text, and this is stored and drawn.
+            "currency": _code(l_cur) or _code(r_cur),
         }
         parts = _explanation(spec, pair)
         if parts:

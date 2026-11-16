@@ -501,6 +501,104 @@ async def test_the_sweep_deletes_every_tenants_expired_files(store):
     assert await store.list_imports(a.id, now=long_ago + timedelta(days=1)) == []
 
 
+async def _ran(store, tenant_id, name, *, reads_files, at=None):
+    """A stored result of a check, as the API records one."""
+    at = at or datetime.now(UTC)
+    return await store.add_run(
+        tenant_id, kind="pair", name=name, surface="dashboard", status="ok",
+        started_at=at, finished_at=at, summary={"matched": 1},
+        rows=[{"status": "unmatched_left", "left_ref": "B-1001",
+               "evidence": {"record": {"amount_minor": 178_664, "currency": "USD", "when": "2026-11-02"}}}],
+        error=None, reads_files=reads_files)
+
+
+async def _stored(store, tenant_id) -> list[str]:
+    return sorted(r.name for r in await store.list_runs(tenant_id))
+
+
+async def test_a_result_read_from_files_goes_with_a_deleted_file(store):
+    """A stored result of a file check names the file's batches by their
+    ids, amounts and days. Deleting the file left all of it on the Files
+    tab and in the table, under a promise that a deleted file is gone at
+    once. It goes in the same step; a result that read no file stays, and
+    so does everything of another account."""
+    a, b = await store.create_tenant("A"), await store.create_tenant("B")
+    batches = await _save(store, a.id)
+    await _save(store, a.id, BANK_CSV, BANK_MAPPING)
+    await _save(store, b.id)
+    for t in (a, b):
+        await _ran(store, t.id, "batches_deposits", reads_files=True)
+        await _ran(store, t.id, "delivery_payout_lines", reads_files=True)
+        await _ran(store, t.id, "shopify_stripe", reads_files=False)
+    kept = await store.latest_runs([a.id], "pair", "batches_deposits")
+    assert kept[a.id].reads_files is True and kept[a.id].rows[0]["left_ref"] == "B-1001"
+
+    assert await store.delete_import(b.id, batches.id) is False      # not B's file: nothing goes
+    assert await _stored(store, a.id) == ["batches_deposits", "delivery_payout_lines", "shopify_stripe"]
+
+    assert await store.delete_import(a.id, batches.id) is True
+    assert await _stored(store, a.id) == ["shopify_stripe"]
+    assert await store.latest_runs([a.id], "pair", "batches_deposits") == {}
+    assert await _stored(store, b.id) == ["batches_deposits", "delivery_payout_lines", "shopify_stripe"]
+
+
+async def test_a_result_read_from_files_goes_when_a_file_expires(store):
+    """Thirteen months, then gone: the result that quotes the file cannot
+    outlast it. Both ways a file expires are covered, the hourly sweep and
+    the next upload, which clears the account's expired files itself."""
+    swept, uploads, other = [await store.create_tenant(n) for n in ("Swept", "Uploads", "Other")]
+    long_ago = datetime.now(UTC) - timedelta(days=400)
+    for t in (swept, uploads):
+        await _save(store, t.id, now=long_ago)
+    await _save(store, other.id)
+    for t in (swept, uploads, other):
+        await _ran(store, t.id, "batches_deposits", reads_files=True)
+        await _ran(store, t.id, "shopify_stripe", reads_files=False)
+
+    await _save(store, uploads.id, BANK_CSV, BANK_MAPPING)            # an upload clears the expired one
+    assert await _stored(store, uploads.id) == ["shopify_stripe"]
+    assert await _stored(store, swept.id) == ["batches_deposits", "shopify_stripe"]
+
+    assert await store.sweep_imports() >= 1
+    assert await _stored(store, swept.id) == ["shopify_stripe"]
+    assert await _stored(store, other.id) == ["batches_deposits", "shopify_stripe"]   # its file is live
+
+
+async def test_a_run_says_whether_it_read_files_and_by_default_it_did_not(store):
+    t = await store.create_tenant("Dealer")
+    now = datetime.now(UTC)
+    plain = await store.add_run(t.id, kind="across", name="rails", surface="rest", status="failed",
+                                started_at=now, finished_at=now, summary=None, rows=None, error="x")
+    assert plain.reads_files is False and (await store.get_run(t.id, plain.id)).reads_files is False
+    read = await _ran(store, t.id, "batches_deposits", reads_files=True)
+    assert (await store.get_run(t.id, read.id)).reads_files is True
+    assert [r.reads_files for r in await store.list_runs(t.id, name="batches_deposits")] == [True]
+
+
+async def test_runs_stored_before_the_mark_are_marked_by_the_checks_that_read_files(store):
+    """The column came after the table. A database from before it gets it
+    on the next start, and the results already stored for the file checks
+    are marked, so they too go with their files."""
+    if isinstance(store, MemoryStore):
+        pytest.skip("the in-memory store has no earlier shape")
+    t = await store.create_tenant("Dealer")
+    file = await _save(store, t.id)
+    for name in ("batches_deposits", "avatax_collected_filed", "shopify_stripe"):
+        await _ran(store, t.id, name, reads_files=False)
+    await store.pool.execute("ALTER TABLE reconciliation_runs DROP COLUMN reads_files")
+    try:
+        await store._migrate()
+    finally:
+        await store.pool.execute(
+            "ALTER TABLE reconciliation_runs ADD COLUMN IF NOT EXISTS reads_files boolean NOT NULL DEFAULT false")
+    marked = {r.name: r.reads_files for r in await store.list_runs(t.id)}
+    assert marked == {"batches_deposits": True, "avatax_collected_filed": True, "shopify_stripe": False}
+    await store._migrate()                                            # a second start changes nothing
+    assert {r.name: r.reads_files for r in await store.list_runs(t.id)} == marked
+    assert await store.delete_import(t.id, file.id) is True
+    assert await _stored(store, t.id) == ["shopify_stripe"]
+
+
 async def test_deleting_a_tenant_deletes_its_imports(store):
     root = await store.create_tenant("Leaving")
     shop = await store.create_tenant("Leaving shop", parent_id=root.id)

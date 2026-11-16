@@ -130,7 +130,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- reference, currency, totals, per-rail amounts, reasons); a raw rail
 -- record is never written. `error` is scrubbed of stored values and cut
 -- to 300 characters. The newest 50 per (tenant, kind, name) are kept;
--- the insert prunes the rest in the same transaction.
+-- the insert prunes the rest in the same transaction. A run of a check
+-- that reads imported files (`reads_files`) holds references, amounts and
+-- dates taken from them, so it is deleted with any file of its tenant:
+-- when one is deleted and when one expires.
 CREATE TABLE IF NOT EXISTS reconciliation_runs (
     id           text PRIMARY KEY,
     tenant_id    text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -142,8 +145,26 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
     finished_at  timestamptz NOT NULL,
     summary      jsonb,
     rows         jsonb,
-    error        text
+    error        text,
+    reads_files  boolean NOT NULL DEFAULT false
 );
+
+-- `reads_files` came after the table. The runs stored before it are
+-- marked by the names of the checks that read files at that moment, once.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'reconciliation_runs'
+          AND column_name = 'reads_files'
+    ) THEN
+        ALTER TABLE reconciliation_runs ADD COLUMN reads_files boolean NOT NULL DEFAULT false;
+        UPDATE reconciliation_runs SET reads_files = true
+        WHERE name IN ('batches_deposits', 'square_payouts_deposits',
+                       'clover_payments_settlements', 'delivery_payout_lines',
+                       'delivery_payouts_deposits', 'avatax_collected_filed');
+    END IF;
+END $$;
 
 -- The newest run per tenant and name is what every page asks for.
 CREATE INDEX IF NOT EXISTS reconciliation_runs_latest_idx
