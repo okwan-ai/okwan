@@ -324,12 +324,12 @@ check("a reference is drawn so that what cannot be seen is spelled out, and a lo
     compared: { left_minor: 2, right_minor: 2, currency: "USD" },
     members: [{ ref: "a​", amount_minor: 1, when: null }, { ref: null, amount_minor: 1, when: null }] } })]).paid;
   assert.deepEqual([line.refs, line.parts.map((p) => p.ref)], [["d[U+202E]"], ["a[U+200B]", "(no batch id)"]]);
-  // And the page draws each in its own element, in its own direction, and nowhere else.
-  const page = readFileSync(new URL("../app/_components/file-check.tsx", import.meta.url), "utf8");
-  assert.match(page, /<bdi dir="ltr"[^>]*data-file-ref/);
-  assert.equal(page.match(/\{line\.refs\.map\(/g)?.length, 1);
-  assert.equal(page.match(/<Ref value=\{(?:ref|p\.ref)\} \/>/g)?.length, 2);
-  assert.ok(!/\{p\.ref\}|\{ref\}/.test(page.replace(/<Ref value=\{(?:ref|p\.ref)\} \/>/g, "")), "a reference is drawn outside its element");
+  // And the card draws each in its own element, in its own direction, and nowhere else.
+  const card = readFileSync(new URL("../app/_components/check-result.tsx", import.meta.url), "utf8");
+  assert.match(card, /<bdi dir="ltr"[^>]*data-file-ref/);
+  assert.equal(card.match(/\{line\.refs\.map\(/g)?.length, 1);
+  assert.equal(card.match(/<Ref value=\{(?:ref|p\.ref)\} \/>/g)?.length, 2);
+  assert.ok(!/\{p\.ref\}|\{ref\}/.test(card.replace(/<Ref value=\{(?:ref|p\.ref)\} \/>/g, "")), "a reference is drawn outside its element");
 });
 
 check("the page draws the first lines of a long run and counts the rest from the run's summary", () => {
@@ -351,6 +351,20 @@ check("the page draws the first lines of a long run and counts the rest from the
   const page = readFileSync(new URL("../app/_components/file-check.tsx", import.meta.url), "utf8");
   assert.match(page, /drawn\(run, summary\)/);
   assert.ok(!/batchLines|paid\.length === 1|\.rows\b/.test(page), "the page counts or cuts lines itself");
+  // The card is handed the result as data and draws it in the browser's own
+  // pass, as the findings list is. As server markup, a long result arrived in
+  // pieces and the page took it over before the last one: React then threw
+  // the server's page away (2 loads in 60 of a 1,000-line result; none in 450
+  // drawn from data). So the card is a client component, it is given words
+  // and works nothing out, and nothing else draws a line.
+  const card = readFileSync(new URL("../app/_components/check-result.tsx", import.meta.url), "utf8");
+  assert.ok(card.startsWith('"use client";'), "the result card is not a client component");
+  assert.deepEqual(card.match(/^import .*$/gm), [
+    'import type { CheckLine, Tone } from "@/lib/file-checks";', 'import { Badge } from "./ui/badge";', 'import { Card } from "./ui/card";',
+  ], "the card imports something that could work a result out");
+  assert.ok(!/toLocale|new Date|Date\.|Math\.|\.slice\(|\.filter\(|\.sort\(/.test(card), "the card works something out itself");
+  assert.match(page, /<CheckResult result=\{result\} \/>/);
+  assert.ok(!/<li\b|<ul\b|<details\b|<bdi\b/.test(page), "a line is drawn outside the card");
 });
 
 check("a day reads as a day, an instant as its day in UTC, and anything else as nothing", () => {

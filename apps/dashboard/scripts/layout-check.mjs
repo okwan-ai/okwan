@@ -293,6 +293,9 @@ try {
 
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", storageState: session });
     const page = await ctx.newPage();
+    // A page that throws while the browser takes it over (React's "hydration
+    // failed", or anything else) is a broken page, whatever it then draws.
+    page.on("pageerror", (e) => problems.push(`${w}x${h} ${new URL(page.url()).pathname}: the page threw: ${String(e).split("\n")[0].slice(0, 200)}`));
     for (const path of [...SIGNED_IN, ...detail]) await checkPage(page, w, h, path);
     await checkPlanNotice(page, w, h);
     if (merchant) await checkFileCheck(page, w, h, merchant);

@@ -1,12 +1,10 @@
-import { BATCHES_DEPOSITS, type CheckLine, dayOf, drawn, FILE_CHECKS, type PairRun, reach, unread, verdict } from "@/lib/file-checks";
+import { BATCHES_DEPOSITS, dayOf, drawn, FILE_CHECKS, type PairRun, reach, unread, verdict } from "@/lib/file-checks";
 import { type ImportFile, KIND_LABEL } from "@/lib/imports";
+import { CheckResult, type Result } from "./check-result";
 import { RunCheck } from "./run-check";
-import { Badge } from "./ui/badge";
 import { ButtonLink } from "./ui/button";
 import { Card } from "./ui/card";
 import { Section } from "./ui/page-header";
-
-const HEADLINE = { danger: "text-danger", warn: "text-ink", ok: "text-ok", neutral: "text-ink-soft" } as const;
 
 function when(iso: string): string {
   const at = new Date(iso);
@@ -15,47 +13,7 @@ function when(iso: string): string {
   return `${dayOf(iso)}, ${time} UTC`;
 }
 
-/**
- * A reference as the merchant's file has it: its own element, in the type
- * of data and with a rule around it, so it cannot be read as part of the
- * sentence beside it; and its own direction, so nothing in it can turn
- * that sentence around. `value` has been through `asWritten`.
- */
-function Ref({ value }: { value: string }) {
-  return (
-    <bdi dir="ltr" title="As written in the file" data-file-ref
-      className="rounded border border-line bg-canvas px-1.5 py-0.5 font-mono text-[13px] font-medium text-ink break-all">
-      {value}
-    </bdi>
-  );
-}
-
-function Line({ line }: { line: CheckLine }) {
-  return (
-    <li className="px-5 py-3.5">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
-        <Badge tone={line.tone} symbol={line.symbol}>{line.label}</Badge>
-        <p className="min-w-0 flex-1 basis-48 font-semibold break-words">
-          {line.title}
-          {line.refs.map((ref, n) => <span key={n}>{" "}<Ref value={ref} /></span>)}
-        </p>
-        <p className="font-semibold tabular-nums">{line.amount}</p>
-      </div>
-      <p className="mt-1.5 text-sm text-ink-soft">{line.detail}</p>
-      {line.parts.length > 0 && (
-        <ul className="mt-2 space-y-1.5 text-sm text-ink-soft">
-          {line.parts.map((p, n) => (
-            <li key={n} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5">
-              <span className="min-w-24"><Ref value={p.ref} /></span>
-              {p.when && <span className="whitespace-nowrap">closed {p.when}</span>}
-              <span className="whitespace-nowrap tabular-nums">{p.amount}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </li>
-  );
-}
+const n = (count: number) => count.toLocaleString("en-US");
 
 /**
  * The Files tab's check: each processor batch against the bank deposit
@@ -74,16 +32,7 @@ export function FileCheck({ tenantId, files, run }: {
   const missing = check.needs.filter((k) => !have.has(k));
   const importHref = `/merchants/${encodeURIComponent(tenantId)}/import`;
   const summary = run?.status === "ok" ? run.summary : null;
-  const said = summary ? verdict(summary) : null;
-  const read = summary ? reach(summary) : null;
-  const { attention, paid, clean, shown, total } = run && summary
-    ? drawn(run, summary) : { attention: [], paid: [], clean: 0, shown: 0, total: 0 };
-  const stale = run ? files.some((f) => Date.parse(f.created_at) > Date.parse(run.finished_at)) : false;
-  const statementEnd = files.filter((f) => f.kind === "bank_deposits" && f.last_date).map((f) => f.last_date!).sort().at(-1);
-  const earliest = (kind: string) => files.filter((f) => f.kind === kind && f.first_date).map((f) => f.first_date!).sort()[0];
-  const older = read
-    ? [unread("batch report", earliest("settlement_batches"), read.from), unread("bank statement", earliest("bank_deposits"), read.from)].filter(Boolean)
-    : [];
+  const result = run && summary ? resultOf(run, summary, files) : null;
 
   return (
     <Section
@@ -105,53 +54,49 @@ export function FileCheck({ tenantId, files, run }: {
           The batch report and the bank statement are both here. Run the check to see which batches were deposited and
           which were not. Each run counts toward your plan.
         </Card>
-      ) : run.status === "failed" || !said ? (
+      ) : run.status === "failed" || !result ? (
         <Card as="div" className="px-5 py-4 text-sm">
           <p className="font-semibold text-danger">The last check did not finish.</p>
           <p className="mt-1 text-ink-soft break-words">{run.error ?? "No reason was recorded."}</p>
           <p className="mt-1 text-xs text-ink-soft">{when(run.finished_at)}</p>
         </Card>
       ) : (
-        <Card flush>
-          <div className="border-b border-line px-5 py-4">
-            <p className={`text-lg font-bold ${HEADLINE[said.tone]}`}>{said.headline}</p>
-            {said.counts.length > 0 && <p className="mt-1 text-sm text-ink-soft">{said.counts.join(" · ")}</p>}
-            <p className="mt-1 text-xs text-ink-soft">
-              Checked {when(run.finished_at)}
-              {stale && <> · A file was imported after this check ran. Run it again to include it.</>}
-            </p>
-            {read?.cut && <p className="mt-2 text-sm font-semibold text-danger">{read.cut}</p>}
-            {older.map((line) => <p key={line} className="mt-2 text-sm font-semibold">{line}</p>)}
-            {read?.read && <p className="mt-1 text-xs text-ink-soft">{read.read}</p>}
-          </div>
-          {attention.length > 0 && <ul className="divide-y divide-line">{attention.map((l) => <Line key={l.key} line={l} />)}</ul>}
-          {paid.length > 0 && (
-            <details className={attention.length > 0 ? "border-t border-line" : ""} open={attention.length === 0}>
-              <summary className="cursor-pointer px-5 py-3.5 text-sm font-semibold">
-                {clean === 1 ? "1 deposit matched to its batches" : `${clean.toLocaleString("en-US")} deposits matched to their batches`}
-                {paid.length < clean && <span className="font-normal text-ink-soft"> · the first {paid.length.toLocaleString("en-US")} listed</span>}
-              </summary>
-              <ul className="divide-y divide-line border-t border-line">{paid.map((l) => <Line key={l.key} line={l} />)}</ul>
-            </details>
-          )}
-          {(shown < total || (summary?.unmatched_left ?? 0) > 0) && (
-            <div className="space-y-1 border-t border-line px-5 py-3 text-xs text-ink-soft">
-              {shown < total && (
-                <p>
-                  Showing {shown.toLocaleString("en-US")} of {total.toLocaleString("en-US")} lines, the ones that need a
-                  look first. The API and MCP return the stored result.
-                </p>
-              )}
-              {(summary?.unmatched_left ?? 0) > 0 && statementEnd && (
-                <p>
-                  The newest statement on file runs to {dayOf(statementEnd)}. A batch closed in the last few days before
-                  that may simply not be deposited yet.
-                </p>
-              )}
-            </div>
-          )}
-        </Card>
+        <CheckResult result={result} />
       )}
     </Section>
   );
+}
+
+/**
+ * Everything the result card says, as words: the headline, what the run
+ * read and did not, the first lines of each list, and the notes under
+ * them. Written here, on the server, from the stored run and the files on
+ * record; the card only draws it.
+ */
+function resultOf(run: PairRun, summary: NonNullable<PairRun["summary"]>, files: ImportFile[]): Result {
+  const said = verdict(summary);
+  const read = reach(summary);
+  const { attention, paid, clean, shown, total } = drawn(run, summary);
+  const stale = files.some((f) => Date.parse(f.created_at) > Date.parse(run.finished_at));
+  const statementEnd = files.filter((f) => f.kind === "bank_deposits" && f.last_date).map((f) => f.last_date!).sort().at(-1);
+  const earliest = (kind: string) => files.filter((f) => f.kind === kind && f.first_date).map((f) => f.first_date!).sort()[0];
+  return {
+    headline: said.headline,
+    tone: said.tone,
+    counts: said.counts.join(" · "),
+    checked: `Checked ${when(run.finished_at)}${stale ? " · A file was imported after this check ran. Run it again to include it." : ""}`,
+    cut: read.cut,
+    older: [unread("batch report", earliest("settlement_batches"), read.from), unread("bank statement", earliest("bank_deposits"), read.from)].filter(Boolean),
+    read: read.read,
+    attention,
+    paid,
+    paidCount: clean === 1 ? "1 deposit matched to its batches" : `${n(clean)} deposits matched to their batches`,
+    paidShown: paid.length < clean ? ` · the first ${n(paid.length)} listed` : "",
+    footnotes: [
+      shown < total
+        ? `Showing ${n(shown)} of ${n(total)} lines, the ones that need a look first. The API and MCP return the stored result.` : "",
+      summary.unmatched_left > 0 && statementEnd
+        ? `The newest statement on file runs to ${dayOf(statementEnd)}. A batch closed in the last few days before that may simply not be deposited yet.` : "",
+    ].filter(Boolean),
+  };
 }

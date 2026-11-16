@@ -865,15 +865,21 @@ opens the sign-in pages and every signed-in page, a merchant's three tabs,
 its import page (also with a file chosen, so the column-matching form is
 checked) and a connector included, at 1670, 1366, 1024 and 390px, and
 fails if any visible text overlaps other text, a page scrolls sideways, or
-anything covers an item of the open account menu. On the Files tab it also
-reads the check's result as a person would (the batch that was not
-deposited, with its amount; the deposits and the batches each paid), runs
-the check again through the dashboard's own route, and asks that route for
-checks the tab does not offer, which it must refuse. The job's
+anything covers an item of the open account menu, or if any signed-in page
+throws while the browser takes it over (React's "hydration failed" is one
+such). On the Files tab it also reads the check's result as a person would
+(the batch that was not deposited, with its amount; the deposits and the
+batches each paid, each batch id in an element of its own and in none of
+the page's sentences), runs the check again through the dashboard's own
+route and holds its answer to a run's id and a time, asks that route for
+checks the tab does not offer, which it must refuse, and sends it a
+request as another site's page would, which it must refuse too. The job's
 `node scripts/check-file-checks.mjs` step holds the words of that result
-to the stored run: a batch not deposited is said to be, "every batch was
-deposited" only when every batch was paired, and a result the page does
-not know is never shown as paid.
+to the stored run: a batch not deposited is said to be; "every batch was
+deposited" only of a run that read both files to the end and paired every
+batch, over every combination of counts; only a clean match is shown as
+paid; and a reference from a file is drawn apart, with what cannot be seen
+in it spelled out.
 
 **When it fails:** the job's summary has a `layout-check` artifact with a
 full-page screenshot of each failing page, named by width and path, and
