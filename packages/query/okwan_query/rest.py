@@ -37,13 +37,13 @@ def sql_run_recorder(tenant, resolver):
     """Store a reconciliation a query ran, like any other run (surface
     `sql`), and keep its result for the reuse window. Returns the run id."""
     from okwan_api.recon_reuse import cache
-    from okwan_api.runs import files_read, reads_files, record_run
+    from okwan_api.runs import files_read, record_run
 
     async def on_run(spec, started, *, result=None, error=None) -> str | None:
         run_id = await record_run(tenant, spec, "sql", started, result=result, error=error, resolver=resolver)
-        # A result that read imported files is kept for reuse only when its
-        # run was stored: the store refuses one whose file is gone.
-        if result is not None and (run_id is not None or not reads_files(spec)):
+        # Kept with the names of the imported files it read: a reuse asks
+        # the store whether each is still there (sql_run_reuse).
+        if result is not None:
             cache.put(tenant.id, spec, result, run_id, files_read(spec, result))
         return run_id
 

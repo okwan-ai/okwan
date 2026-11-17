@@ -17,13 +17,11 @@ Per process and per tenant: one tenant never sees another's entry, and a
 credential saved for the tenant forgets its entries, so a fixed key is
 read at once rather than after the window.
 
-A result that read imported files holds their rows whole. It is kept only
-when its run was stored (which the store refuses once a file it read is
-gone), it names the files it read, and every reuse first asks the store
-whether each is still there: a deleted or expired file's rows are never
-answered from here, on this instance or another. An upload or a delete
-forgets the tenant's entries as well, so the next query reads the files
-as they are.
+A result that read imported files holds their rows whole. It names the
+files it read, and every reuse first asks the store whether each is still
+there: a deleted or expired file's rows are never answered from here, on
+this instance or another. An upload forgets the tenant's entries, so the
+next query reads the new file too.
 """
 from __future__ import annotations
 

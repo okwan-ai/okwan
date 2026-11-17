@@ -344,9 +344,49 @@ async def test_a_deleted_files_rows_are_never_answered_from_the_reuse_window(api
     await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
     fresh, whole = await ask()
     assert fresh["reused"] is False and whole == lines
+    # A delete through the route needs no forgetting: the reuse asks, as above.
     files = (await client.get(f"/v1/tenants/{shop.id}/imports")).json()["imports"]
+    assert (await ask())[0]["reused"] is True
     assert (await client.delete(f"/v1/tenants/{shop.id}/imports/{files[0]['id']}")).status_code == 204
     assert (await ask())[0]["reused"] is False
+
+
+def test_a_result_names_every_file_its_rows_came_from():
+    """What the store checks before it keeps a run: the files behind every
+    row, wherever the row ended up. A group's members count each (a file
+    read only into groups was once not counted), and so do an unpaired
+    record, the candidates of an ambiguous one and one that could not be
+    checked; a side that is not imported files counts for nothing."""
+    from okwan_api.runs import files_read
+    from okwan_recon import registry
+    from okwan_recon.engine import Ambiguity, MatchedPair, ReconResult, Unverifiable
+
+    spec = registry.get("batches_deposits")
+    def row(file_id):
+        return {"file_id": file_id}
+
+    result = ReconResult(name=spec.name)
+    result.matched = [
+        MatchedPair(left={"members": 2}, right=row("imp_statement_1"), rule="group_sum", confidence=1.0,
+                    members=[row("imp_grouped_a"), row("imp_grouped_b")], grouped="left"),
+        MatchedPair(left=row("imp_batches"), right=row("imp_statement_1"), rule="group_sum", confidence=1.0),
+    ]
+    result.unmatched_left = [row("imp_unpaid")]
+    result.unmatched_right = [row("imp_stray")]
+    result.ambiguous = [Ambiguity(left=row("imp_unsure"), candidates=[row("imp_candidate")], rule="group_sum", side="right")]
+    result.unverifiable_left = [Unverifiable(row("imp_unread"), "the other file does not reach this date")]
+    result.waiting["right"].append(Unverifiable(row("imp_waiting"), "waiting"))
+    assert files_read(spec, result) == {
+        "imp_grouped_a", "imp_grouped_b", "imp_statement_1", "imp_batches", "imp_unpaid", "imp_stray",
+        "imp_unsure", "imp_candidate", "imp_unread", "imp_waiting"}
+    assert files_read(spec, None) == frozenset()
+    # A check with a rail on one side: only the side read from files is asked.
+    mixed = registry.get("square_payouts_deposits")
+    files_side = "left" if mixed.left.connector == "files" else "right"
+    one = ReconResult(name=mixed.name)
+    one.unmatched_left, one.unmatched_right = [row("left_side")], [row("right_side")]
+    assert files_read(mixed, one) == {f"{files_side}_side"}
+    assert files_read(registry.get("shopify_stripe"), one) == frozenset()
 
 
 def test_the_checks_that_read_files_are_known_from_their_declarations():

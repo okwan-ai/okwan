@@ -459,6 +459,7 @@ class PostgresStore:
         try:
             async with self._scoped(tenant_id) as con:
                 if files:
+                    await con.execute(_RUNS_FIRST)
                     live = await con.fetch(
                         "SELECT id FROM import_files WHERE tenant_id = $1 AND id = ANY($2::text[]) "
                         "AND expires_at > $3 FOR SHARE", tenant_id, list(set(files)), now or datetime.now(UTC))
@@ -1232,6 +1233,7 @@ class PostgresStore:
         expires = add_months(now, IMPORT_KEPT_MONTHS)
         try:
             async with self._scoped(tenant_id) as con:
+                await con.execute(_RUNS_FIRST)
                 expired = await con.fetch(
                     "DELETE FROM import_files WHERE tenant_id = $1 AND expires_at <= $2 "
                     "RETURNING id", tenant_id, now)
@@ -1292,6 +1294,7 @@ class PostgresStore:
         transaction the account's stored runs that read files, which hold
         references, amounts and dates taken from them."""
         async with self._scoped(tenant_id) as con:
+            await con.execute(_RUNS_FIRST)
             gone = await con.fetchval(
                 "DELETE FROM import_files WHERE tenant_id = $1 AND id = $2 RETURNING id",
                 tenant_id, file_id)
@@ -1405,6 +1408,7 @@ class PostgresStore:
         tenant: it reads nothing back and touches only what has expired.
         """
         async with self.pool.acquire() as con, con.transaction():
+            await con.execute(_RUNS_FIRST)
             gone = await con.fetch(
                 "DELETE FROM import_files WHERE expires_at <= $1 RETURNING tenant_id",
                 now or datetime.now(UTC))
@@ -1684,6 +1688,13 @@ _RUN_COLS_NO_ROWS = ("id, tenant_id, kind, name, surface, status, started_at, "
 #: does (deleted or expired), in the transaction that removes the file and
 #: in a statement after the one that removes it. $2: the names of the
 #: checks that read files, for a run stored without the mark.
+#: Every transaction that touches both stored runs and imported files takes
+#: the runs table first, as the schema run does at a start. Taken in the
+#: other order, a delete, a run being stored against the file and an
+#: instance starting at that moment waited on each other in a ring, and
+#: Postgres ended one of them. The lock is the one any write to the table
+#: takes, so it holds nobody up.
+_RUNS_FIRST = "LOCK TABLE reconciliation_runs IN ROW EXCLUSIVE MODE"
 _DROP_FILE_RUNS = ("DELETE FROM reconciliation_runs WHERE tenant_id = $1 "
                    "AND (reads_files OR name = ANY($2::text[]))")
 

@@ -685,9 +685,50 @@ async def test_a_delete_and_a_run_being_stored_never_leave_the_run_behind(store)
             except FilesGone:
                 pass
 
-        await asyncio.gather(keep(), store.delete_import(t.id, f.id), keep(), keep())
+        # ... and an instance starting at that moment, which runs the schema
+        # against the same tables: taken in different orders, the three
+        # waited on each other in a ring and Postgres ended one of them.
+        starting = [store._migrate()] if hasattr(store, "_migrate") and _round % 5 == 0 else []
+        await asyncio.gather(keep(), store.delete_import(t.id, f.id), keep(), keep(), *starting)
         left_behind += len(await store.list_runs(t.id))
     assert left_behind == 0
+
+
+async def test_a_delete_and_a_run_being_stored_take_the_runs_table_before_the_files(store):
+    """An instance starting runs the schema, which takes stored runs and
+    then imported files. A delete took them the other way round, and so did
+    a run being stored: with a start at that moment the three waited on
+    each other in a ring, and Postgres ended one of them (eight runs in ten
+    of the test above, with another process starting instances beside it).
+    Held here without luck: while something holds the runs table as a start
+    does, a delete and a run being stored wait there, holding no file."""
+    import asyncio
+
+    if isinstance(store, MemoryStore):
+        pytest.skip("the in-memory store takes no locks")
+    t = await store.create_tenant("Dealer")
+    at = datetime.now(UTC)
+
+    async def held(begin, file_id):
+        """Start `begin` while the runs table is held as the schema run holds it; it has to wait, holding no file."""
+        async with store.pool.acquire() as starting, starting.transaction():
+            await starting.execute("LOCK TABLE reconciliation_runs IN SHARE MODE")
+            waiting = asyncio.ensure_future(begin(file_id))
+            await asyncio.sleep(0.3)
+            assert not waiting.done()
+            # Nothing of the file is held by the one that waits: another may still take its row.
+            async with store.pool.acquire() as other, other.transaction():
+                assert await other.fetchval("SELECT id FROM import_files WHERE id = $1 FOR UPDATE NOWAIT", file_id) == file_id
+        return await waiting
+
+    async def keep(file_id):
+        return await store.add_run(t.id, kind="pair", name="batches_deposits", surface="rest", status="ok", started_at=at,
+                                   finished_at=at, summary={}, rows=[], error=None, reads_files=True, files={file_id})
+
+    first = await _save(store, t.id)
+    assert (await held(keep, first.id)).id.startswith("run_")
+    assert await held(lambda file_id: store.delete_import(t.id, file_id), first.id) is True
+    assert await store.list_runs(t.id) == []
 
 
 async def test_the_mark_is_added_to_a_database_from_before_it_and_starts_at_once_all_come_up(store):

@@ -257,16 +257,15 @@ def build_router() -> APIRouter:
         await _guard(actor, tenant_id)
         if not await get_store().delete_import(tenant_id, file_id):
             raise HTTPException(404, f"no such import: {file_id}")
-        _forget_reused(tenant_id)
 
     return router
 
 
 def _forget_reused(tenant_id: str) -> None:
-    """A tenant's files changed: forget the results kept for SQL to reuse
-    (recon_reuse.py), so the next query reads the files as they are. A
-    reuse also asks the store whether its files are still there, which
-    holds on an instance this request did not reach."""
+    """A file was added: forget the results kept for SQL to reuse
+    (recon_reuse.py), so the next query reads the new file too. A delete
+    needs no such call: every reuse asks the store whether the files it
+    read are still there, which holds on every instance."""
     from .recon_reuse import cache
 
     cache.forget(tenant_id)
