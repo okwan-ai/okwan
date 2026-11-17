@@ -38,7 +38,14 @@ from okwan_files import (
 from okwan_files import parse as parse_mod
 from okwan_files.guard import holds_card_number, is_card_column, is_card_number, luhn
 from okwan_files.mapping import parse_date, parse_money
-from okwan_vault import DuplicateImport, EnvMasterKey, MemoryStore, PostgresStore, new_key
+from okwan_vault import (
+    DuplicateImport,
+    EnvMasterKey,
+    FilesGone,
+    MemoryStore,
+    PostgresStore,
+    new_key,
+)
 from okwan_vault.models import add_months
 
 DSN = os.environ.get("OKWAN_VAULT_DATABASE_URL", "")
@@ -501,6 +508,254 @@ async def test_the_sweep_deletes_every_tenants_expired_files(store):
     assert await store.list_imports(a.id, now=long_ago + timedelta(days=1)) == []
 
 
+async def _ran(store, tenant_id, name, *, reads_files, at=None):
+    """A stored result of a check, as the API records one."""
+    at = at or datetime.now(UTC)
+    return await store.add_run(
+        tenant_id, kind="pair", name=name, surface="dashboard", status="ok",
+        started_at=at, finished_at=at, summary={"matched": 1},
+        rows=[{"status": "unmatched_left", "left_ref": "B-1001",
+               "evidence": {"record": {"amount_minor": 178_664, "currency": "USD", "when": "2026-11-02"}}}],
+        error=None, reads_files=reads_files)
+
+
+async def _stored(store, tenant_id) -> list[str]:
+    return sorted(r.name for r in await store.list_runs(tenant_id))
+
+
+async def test_a_result_read_from_files_goes_with_a_deleted_file(store):
+    """A stored result of a file check names the file's batches by their
+    ids, amounts and days. Deleting the file left all of it on the Files
+    tab and in the table, under a promise that a deleted file is gone at
+    once. It goes in the same step; a result that read no file stays, and
+    so does everything of another account."""
+    a, b = await store.create_tenant("A"), await store.create_tenant("B")
+    batches = await _save(store, a.id)
+    await _save(store, a.id, BANK_CSV, BANK_MAPPING)
+    await _save(store, b.id)
+    for t in (a, b):
+        await _ran(store, t.id, "batches_deposits", reads_files=True)
+        await _ran(store, t.id, "delivery_payout_lines", reads_files=True)
+        await _ran(store, t.id, "shopify_stripe", reads_files=False)
+    kept = await store.latest_runs([a.id], "pair", "batches_deposits")
+    assert kept[a.id].reads_files is True and kept[a.id].rows[0]["left_ref"] == "B-1001"
+
+    assert await store.delete_import(b.id, batches.id) is False      # not B's file: nothing goes
+    assert await _stored(store, a.id) == ["batches_deposits", "delivery_payout_lines", "shopify_stripe"]
+
+    assert await store.delete_import(a.id, batches.id) is True
+    assert await _stored(store, a.id) == ["shopify_stripe"]
+    assert await store.latest_runs([a.id], "pair", "batches_deposits") == {}
+    assert await _stored(store, b.id) == ["batches_deposits", "delivery_payout_lines", "shopify_stripe"]
+
+
+async def test_a_result_read_from_files_goes_when_a_file_expires(store):
+    """Thirteen months, then gone: the result that quotes the file cannot
+    outlast it. Both ways a file expires are covered, the hourly sweep and
+    the next upload, which clears the account's expired files itself."""
+    swept, uploads, other = [await store.create_tenant(n) for n in ("Swept", "Uploads", "Other")]
+    long_ago = datetime.now(UTC) - timedelta(days=400)
+    for t in (swept, uploads):
+        await _save(store, t.id, now=long_ago)
+    await _save(store, other.id)
+    for t in (swept, uploads, other):
+        await _ran(store, t.id, "batches_deposits", reads_files=True)
+        await _ran(store, t.id, "shopify_stripe", reads_files=False)
+
+    await _save(store, uploads.id, BANK_CSV, BANK_MAPPING)            # an upload clears the expired one
+    assert await _stored(store, uploads.id) == ["shopify_stripe"]
+    assert await _stored(store, swept.id) == ["batches_deposits", "shopify_stripe"]
+
+    assert await store.sweep_imports() >= 1
+    assert await _stored(store, swept.id) == ["shopify_stripe"]
+    assert await _stored(store, other.id) == ["batches_deposits", "shopify_stripe"]   # its file is live
+
+
+async def test_a_run_says_whether_it_read_files_and_by_default_it_did_not(store):
+    t = await store.create_tenant("Dealer")
+    now = datetime.now(UTC)
+    plain = await store.add_run(t.id, kind="across", name="rails", surface="rest", status="failed",
+                                started_at=now, finished_at=now, summary=None, rows=None, error="x")
+    assert plain.reads_files is False and (await store.get_run(t.id, plain.id)).reads_files is False
+    read = await _ran(store, t.id, "batches_deposits", reads_files=True)
+    assert (await store.get_run(t.id, read.id)).reads_files is True
+    assert [r.reads_files for r in await store.list_runs(t.id, name="batches_deposits")] == [True]
+
+
+async def test_a_result_stored_without_the_mark_goes_with_its_file_by_the_name_of_its_check(store):
+    """The mark came after the table, and a release from before it can
+    still be storing runs beside this one during a deploy. Such a run says
+    nothing about files. Attacker's pass: it outlived its file for good.
+    The store is told the names of the checks that read files (the API
+    tells it from its registry) and takes such a run by its name."""
+    told, untold = await store.create_tenant("Told"), await store.create_tenant("Untold")
+    files = {t.id: await _save(store, t.id) for t in (told, untold)}
+    for t in (told, untold):
+        for name in ("batches_deposits", "avatax_collected_filed", "shopify_stripe"):
+            await _ran(store, t.id, name, reads_files=False)
+
+    # A store that was told nothing (the vault's own command line) takes the file and no unmarked run.
+    assert tuple(store.file_checks()) == ()
+    assert await store.delete_import(untold.id, files[untold.id].id) is True
+    assert await _stored(store, untold.id) == ["avatax_collected_filed", "batches_deposits", "shopify_stripe"]
+
+    store.file_checks = lambda: ["batches_deposits", "avatax_collected_filed"]
+    assert await store.delete_import(told.id, files[told.id].id) is True
+    assert await _stored(store, told.id) == ["shopify_stripe"]
+    # The sweep and an upload's own clearing of expired files know the names as well.
+    long_ago = datetime.now(UTC) - timedelta(days=400)
+    await _save(store, untold.id, now=long_ago)
+    assert await store.sweep_imports() >= 1
+    assert await _stored(store, untold.id) == ["shopify_stripe"]
+    await _ran(store, told.id, "batches_deposits", reads_files=False)
+    await _save(store, told.id, now=long_ago)
+    await _save(store, told.id, BANK_CSV, BANK_MAPPING)
+    assert await _stored(store, told.id) == ["shopify_stripe"]
+
+
+async def test_the_api_tells_the_store_which_checks_read_files_from_its_registry():
+    """No list of names to fall behind: the store asks, when a file is
+    removed, and the answer is read off each registered check's two sides."""
+    import okwan_api.main  # noqa: F401  (registers the declarations)
+    from okwan_api.auth import set_store
+    from okwan_recon.registry import all_reconciliations
+
+    store = MemoryStore(EnvMasterKey(new_key()))
+    set_store(store)
+    reading = {spec.name for spec in all_reconciliations() if "files" in (spec.left.connector, spec.right.connector)}
+    assert set(store.file_checks()) == reading and len(reading) >= 6
+    assert "shopify_stripe" not in reading
+
+
+async def test_a_run_whose_file_is_gone_is_not_stored(store):
+    """Attacker's pass: a check already reading when its statement was
+    deleted stored its result after the delete, and nothing ever removed
+    it: the tab said "every batch was deposited" from a file that was no
+    longer there. A run names the files its rows came from and is stored
+    only while each is still there, expired ones included."""
+    t, other = await store.create_tenant("Dealer"), await store.create_tenant("Other")
+    batches = await _save(store, t.id)
+    statement = await _save(store, t.id, BANK_CSV, BANK_MAPPING)
+    theirs = await _save(store, other.id)
+
+    async def ran(files, at=None):
+        at = at or datetime.now(UTC)
+        return await store.add_run(t.id, kind="pair", name="batches_deposits", surface="dashboard", status="ok",
+                                   started_at=at, finished_at=at, summary={"matched": 1}, rows=[], error=None,
+                                   reads_files=True, files=files, now=at)
+
+    kept = await ran({batches.id, statement.id})
+    assert (await store.get_run(t.id, kept.id)).reads_files is True
+    assert await store.imports_live(t.id, {batches.id, statement.id}) is True
+    assert await store.imports_live(t.id, [theirs.id]) is False          # another account's file is not this one's
+    with pytest.raises(FilesGone):
+        await ran({batches.id, theirs.id})
+
+    assert await store.delete_import(t.id, statement.id) is True
+    assert await _stored(store, t.id) == []
+    with pytest.raises(FilesGone):                                        # the run that was reading it
+        await ran({batches.id, statement.id})
+    assert await _stored(store, t.id) == []
+    assert (await ran({batches.id})).id.startswith("run_")               # one that read only what is left
+    assert (await ran(set())).id.startswith("run_")                      # one that read no row at all
+    # A file past its thirteen months is gone to a run even before the sweep has taken it.
+    later = datetime.now(UTC) + timedelta(days=400)
+    assert await store.imports_live(t.id, [batches.id], now=later) is False
+    with pytest.raises(FilesGone):
+        await ran({batches.id}, at=later)
+
+
+async def test_a_delete_and_a_run_being_stored_never_leave_the_run_behind(store):
+    """The same thing as it happens: the delete and the store of the run
+    at the same moment, many times over. Whichever comes first, no run
+    that quotes the file is left once the file is gone."""
+    import asyncio
+
+    t = await store.create_tenant("Dealer")
+    left_behind = 0
+    for _round in range(25):
+        f = await _save(store, t.id)
+
+        async def keep(file_id=f.id):
+            try:
+                at = datetime.now(UTC)
+                await store.add_run(t.id, kind="pair", name="batches_deposits", surface="rest", status="ok",
+                                    started_at=at, finished_at=at, summary={}, rows=[], error=None,
+                                    reads_files=True, files={file_id})
+            except FilesGone:
+                pass
+
+        # ... and an instance starting at that moment, which runs the schema
+        # against the same tables: taken in different orders, the three
+        # waited on each other in a ring and Postgres ended one of them.
+        starting = [store._migrate()] if hasattr(store, "_migrate") and _round % 5 == 0 else []
+        await asyncio.gather(keep(), store.delete_import(t.id, f.id), keep(), keep(), *starting)
+        left_behind += len(await store.list_runs(t.id))
+    assert left_behind == 0
+
+
+async def test_a_delete_and_a_run_being_stored_take_the_runs_table_before_the_files(store):
+    """An instance starting runs the schema, which takes stored runs and
+    then imported files. A delete took them the other way round, and so did
+    a run being stored: with a start at that moment the three waited on
+    each other in a ring, and Postgres ended one of them (eight runs in ten
+    of the test above, with another process starting instances beside it).
+    Held here without luck: while something holds the runs table as a start
+    does, a delete and a run being stored wait there, holding no file."""
+    import asyncio
+
+    if isinstance(store, MemoryStore):
+        pytest.skip("the in-memory store takes no locks")
+    t = await store.create_tenant("Dealer")
+    at = datetime.now(UTC)
+
+    async def held(begin, file_id):
+        """Start `begin` while the runs table is held as the schema run holds it; it has to wait, holding no file."""
+        async with store.pool.acquire() as starting, starting.transaction():
+            await starting.execute("LOCK TABLE reconciliation_runs IN SHARE MODE")
+            waiting = asyncio.ensure_future(begin(file_id))
+            await asyncio.sleep(0.3)
+            assert not waiting.done()
+            # Nothing of the file is held by the one that waits: another may still take its row.
+            async with store.pool.acquire() as other, other.transaction():
+                assert await other.fetchval("SELECT id FROM import_files WHERE id = $1 FOR UPDATE NOWAIT", file_id) == file_id
+        return await waiting
+
+    async def keep(file_id):
+        return await store.add_run(t.id, kind="pair", name="batches_deposits", surface="rest", status="ok", started_at=at,
+                                   finished_at=at, summary={}, rows=[], error=None, reads_files=True, files={file_id})
+
+    first = await _save(store, t.id)
+    assert (await held(keep, first.id)).id.startswith("run_")
+    assert await held(lambda file_id: store.delete_import(t.id, file_id), first.id) is True
+    assert await store.list_runs(t.id) == []
+
+
+async def test_the_mark_is_added_to_a_database_from_before_it_and_starts_at_once_all_come_up(store):
+    """The column came after the table. A database from before it gets it
+    on the next start; stored runs are kept and stay unmarked (they go by
+    name, above). Attacker's pass: two instances starting at once both
+    tried to add it, and the one that came second did not start."""
+    import asyncio
+
+    import asyncpg
+    from okwan_vault.postgres import _raced
+
+    assert _raced(asyncpg.DuplicateColumnError("column already exists")) is True
+    if isinstance(store, MemoryStore):
+        pytest.skip("the in-memory store has no earlier shape")
+    t = await store.create_tenant("Dealer")
+    await _ran(store, t.id, "batches_deposits", reads_files=False)
+    await store.pool.execute("ALTER TABLE reconciliation_runs DROP COLUMN reads_files")
+    try:
+        await asyncio.gather(store._migrate(), store._migrate(), store._migrate())
+    finally:
+        await store.pool.execute(
+            "ALTER TABLE reconciliation_runs ADD COLUMN IF NOT EXISTS reads_files boolean NOT NULL DEFAULT false")
+    await store._migrate()                                            # a later start changes nothing
+    assert [(r.name, r.reads_files) for r in await store.list_runs(t.id)] == [("batches_deposits", False)]
+
+
 async def test_deleting_a_tenant_deletes_its_imports(store):
     root = await store.create_tenant("Leaving")
     shop = await store.create_tenant("Leaving shop", parent_id=root.id)
@@ -556,6 +811,35 @@ async def test_upload_list_read_and_delete_over_rest(api):
     assert (await client.delete(f"/v1/tenants/{shop.id}/imports/{f['id']}")).status_code == 204
     assert (await client.get(f"/v1/tenants/{shop.id}/imports/{f['id']}")).status_code == 404
     assert await store.import_rows(shop.id, "settlement_batches") == []
+
+
+async def test_a_mapping_or_a_file_name_that_could_read_as_the_pages_words_is_refused(api):
+    """Second attacker's pass: a mapping's name sent with an upload was any
+    60 characters, though the same name was refused for a saved mapping.
+    The Files tab then read "Mapping bank-csv · verified by Okwan · every
+    deposit confirmed · imported …" in its own voice, and a name ending in
+    a right-to-left override drew the page's own words backwards. One rule
+    now, on the mapping itself; a file's name is one line of visible text."""
+    client, store, shop = api
+    said = "bank-csv \u00b7 verified by Okwan \u00b7 every deposit confirmed"
+    for name in (said, "bank-csv\u202e", "bank\ncsv", " leading", "x" * 61, ""):
+        body = _body(mapping=BATCH_MAPPING.model_copy(update={"name": "placeholder"}))
+        body["mapping"]["name"] = name
+        r = await client.post(f"/v1/tenants/{shop.id}/imports", json=body)
+        assert r.status_code == 422, (name, r.status_code)
+        assert "verified by Okwan" not in r.text or name == said
+    assert (await client.put(f"/v1/tenants/{shop.id}/import-layouts/bank-csv%E2%80%AE",
+                             json=BATCH_MAPPING.model_dump(mode="json"))).status_code == 400
+    for filename in ("statement\u202e.csv", "batches\u200b.csv", "two\nlines.csv", "bell\u0007.csv", "  "):
+        r = await client.post(f"/v1/tenants/{shop.id}/imports", json=_body(name=filename))
+        assert r.status_code == 422, (filename, r.status_code)
+    assert await store.list_imports(shop.id) == []
+    # Ordinary names are kept as they are.
+    body = _body(name="Relev\u00e9 de compte \u2013 novembre 2026 (1).csv")
+    body["mapping"]["name"] = "Bank statement v2.1_final-3"
+    kept = await client.post(f"/v1/tenants/{shop.id}/imports", json=body)
+    assert kept.status_code == 201, kept.text
+    assert (kept.json()["filename"], kept.json()["layout"]) == ("Relev\u00e9 de compte \u2013 novembre 2026 (1).csv", "Bank statement v2.1_final-3")
 
 
 async def test_a_file_with_a_card_number_is_refused_and_nothing_is_kept(api, caplog):

@@ -132,6 +132,37 @@ def test_every_dashboard_handler_that_changes_data_checks_the_origin():
     assert not unchecked, f"route handlers that change data without checking the Origin: {unchecked}"
 
 
+def test_every_handler_acts_on_the_origin_checks_refusal_before_anything_else():
+    """Naming the check is not checking. An attacker's pass let a handler
+    ignore what `readBody` answered, and the test above still passed: it
+    looks for the call. Every handler that changes data has to make the
+    check the first thing it waits on, and return its refusal as it is."""
+    faults: list[str] = []
+    seen = 0
+    for path in _route_handlers():
+        text = path.read_text()
+        where = str(path.relative_to(DASHBOARD))
+        for found in re.finditer(r"export async function (POST|PUT|PATCH|DELETE)\b", text):
+            rest = text[found.end():]
+            body = rest[:m.start()] if (m := re.search(r"\nexport ", rest)) else rest
+            lines = [line.strip() for line in body.splitlines()]
+            at = next((n for n, line in enumerate(lines) if re.search(r"\b(readBody|sameOrigin)\s*[<(]", line)), None)
+            if at is None:
+                faults.append(f"{where} {found[1]}: no Origin check")
+                continue
+            seen += 1
+            if any("await" in line for line in lines[:at]):
+                faults.append(f"{where} {found[1]}: something is awaited before the Origin check")
+            taken = re.fullmatch(r"const (\w+) = await readBody(?:<.+>)?\(req\);", lines[at])
+            if taken:
+                if lines[at + 1] != f"if ({taken[1]} instanceof Response) return {taken[1]};":
+                    faults.append(f"{where} {found[1]}: the refusal `readBody` answered is not returned")
+            elif lines[at] != 'if (!sameOrigin(req)) return fail("cross-origin request refused", 403);':
+                faults.append(f"{where} {found[1]}: the Origin check is not acted on: {lines[at]}")
+    assert not faults, faults
+    assert seen >= 20, "found too few handlers for the check to mean anything"
+
+
 def test_the_origin_check_refuses_a_request_with_no_origin():
     body = (DASHBOARD / "lib" / "api.ts").read_text()
     fn = body[body.index("export function sameOrigin"):]

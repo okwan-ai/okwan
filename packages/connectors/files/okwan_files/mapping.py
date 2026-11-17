@@ -39,6 +39,15 @@ TEXT_LIMIT = 200
 MAX_MINOR = 10**15
 
 
+#: A mapping's name is recorded on every row it produces and drawn on the
+#: dashboard beside the file, so it is plain: a letter or digit, then
+#: letters, digits, spaces, dots, underscores and hyphens, 60 at most.
+#: The same for one sent with an upload as for one that is saved; a name
+#: sent with an upload used to be any 60 characters, and a merchant's
+#: sentence, or a character that turns text around, was drawn as the page's.
+LAYOUT_NAME = r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$"
+
+
 class Mapping(BaseModel):
     kind: KindName = Field(description="What the file holds")
     columns: dict[str, str] = Field(
@@ -55,8 +64,9 @@ class Mapping(BaseModel):
     skip_invalid_rows: bool = Field(
         False, description="Skip rows whose required fields cannot be read, and list them, "
         "instead of refusing the file")
-    name: str = Field("custom", min_length=1, max_length=60,
-                      description="The layout's name, recorded on every row it produces")
+    name: str = Field("custom", min_length=1, max_length=60, pattern=LAYOUT_NAME,
+                      description="The layout's name, recorded on every row it produces: "
+                      "1 to 60 letters, digits, spaces, . _ or -")
 
     @field_validator("currency")
     @classmethod

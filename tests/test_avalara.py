@@ -314,7 +314,11 @@ async def tenant(monkeypatch):
         yield c, key, seen
 
 
-async def test_sales_tax_is_queryable_for_a_provisioned_tenant_on_every_surface(tenant):
+async def test_sales_tax_is_queryable_for_a_provisioned_tenant_on_every_surface(tenant, as_of):
+    # The returns are for August to October 2026 and the check reads 400
+    # days back from the day it runs: read them in November 2026, whatever
+    # today is, or this starts failing in October 2027 with nothing changed.
+    as_of(2026, 11, 14)
     client, key, seen = tenant
     listed = await client.post("/v1/avalara/transactions/list", json={"status": "Committed"})
     assert listed.status_code == 200, listed.text

@@ -37,7 +37,15 @@ async def api(monkeypatch):
 
 # ── the week, through the real fold ────────────────────────────────────
 
-async def test_the_sample_week_is_judged_by_the_real_fold():
+@pytest.fixture
+def week_of_now(as_of):
+    """The sample week is dated from NOW, and the fold reads 90 days back
+    from the day it runs: read it the day after NOW, whatever today is, or
+    these tests start failing in February 2027 with nothing changed."""
+    return as_of(2026, 11, 12)
+
+
+async def test_the_sample_week_is_judged_by_the_real_fold(week_of_now):
     result = await sample.run(NOW)
     s = result.summary
     assert (s["orders"], s["collected"], s["collected_twice"], s["split_tender"], s["uncollected"]) == (8, 4, 2, 1, 1)

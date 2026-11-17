@@ -10,6 +10,7 @@
 //
 //   BASE=http://localhost:3000 UI_CHECK_EMAIL=… UI_CHECK_PASSWORD=… node scripts/layout-check.mjs
 import { mkdirSync } from "node:fs";
+import http from "node:http";
 import { createRequire } from "node:module";
 
 // Through require, so a Playwright installed globally (NODE_PATH) resolves too.
@@ -82,6 +83,9 @@ function inspect() {
 }
 
 const problems = [];
+/** Pages other than the Files tab that threw while the browser took them over: printed, not failed (G22). */
+const threw = [];
+let slow = 0;
 const note = async (page, where, what) => {
   problems.push(`${where}: ${what}`);
   await page.screenshot({ path: `${OUT}/${where.replace(/[^a-z0-9]+/gi, "_")}.png`, fullPage: true }).catch(() => {});
@@ -169,6 +173,146 @@ async function checkImport(page, w, h, merchant) {
   for (const hit of res.hits) await note(page, where, hit);
 }
 
+// The Files tab's check, on the seeded merchant: what the stored run holds
+// is what the page says (one batch never paid, with its amount; two deposits
+// matched, one of them to two batches), a click runs it again through the
+// dashboard's own route and the page reads the new run back, and that route
+// runs nothing but the checks the tab offers.
+async function checkFileCheck(page, w, h, merchant) {
+  const path = `${merchant}?tab=files`;
+  const where = `${w}x${h} ${path} the batches-against-deposits check`;
+  await page.goto(BASE + path, { waitUntil: "networkidle" });
+  const section = page.locator("section", { has: page.locator("h2", { hasText: "Batches against deposits" }) }).first();
+  if (!(await section.count())) return note(page, where, "the check is not on the Files tab");
+  const read = async () => (await section.innerText()).replace(/\s+/g, " ").trim();
+  // The words the wording check holds, read here in a browser: the headline,
+  // what the run read, what is on file and was not read (the seed has a batch
+  // and a deposit from before the days the check reads), and the note under
+  // the lines. Second attacker's pass: each could be taken out of the page
+  // and this check stayed green.
+  const expected = ["1 batch was not deposited", "2 deposits matched to their batches · 1 batch not deposited",
+    "Not deposited Batch B-2004 $1,238.27", "No deposit on the statement pays it.",
+    "The check read 4 batches and 2 deposits dated", "The batch report on file goes back to", "Batches before",
+    "The bank statement on file goes back to", "were not checked.", "Anything in the files outside those days is not in this result.",
+    "The newest statement on file runs to", "Checked "];
+  const before = await read();
+  for (const words of expected) if (!before.includes(words)) await note(page, where, `it does not say "${words}"`);
+  // An unpaid batch is drawn in the colour of a fault, never in the green of a clean result.
+  const colours = (await section.locator("p.text-lg").first().getAttribute("class")) ?? "";
+  if (!/\btext-danger\b/.test(colours) || /\btext-ok\b/.test(colours)) await note(page, where, `the headline's colour is "${colours}"`);
+  await section.locator("details summary").click();
+  const open = await read();
+  for (const words of ["$1,786.64", "Paid 1 batch:", "B-2001", "$1,291.92", "Paid 2 batches:", "B-2002", "$893.81", "B-2003", "$398.11"]) {
+    if (!open.includes(words)) await note(page, where, `opened, it does not say "${words}"`);
+  }
+  // A batch id is a merchant's own text. Each is drawn in an element of its
+  // own, in its own direction, and in no sentence the page writes.
+  const refs = await section.locator("bdi[data-file-ref]").evaluateAll((all) => all.map((el) => [el.textContent, el.dir]));
+  const drawn = refs.map(([text]) => text).sort().join(" ");
+  if (drawn !== "B-2001 B-2002 B-2003 B-2004" || refs.some(([, dir]) => dir !== "ltr")) {
+    await note(page, where, `the batch ids are not each in an element of their own: ${JSON.stringify(refs)}`);
+  }
+  const sentences = await section.locator("li > p.text-sm").evaluateAll((all) => all.map((el) => el.textContent ?? ""));
+  for (const said of sentences) if (/B-20\d\d/.test(said)) await note(page, where, `a batch id is inside the page's own sentence: "${said}"`);
+  // Measured from the top, like every other page: scrolled, the phone's
+  // header sits over whatever passes beneath it, as it is meant to.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const res = await page.evaluate(inspect);
+  if (res.sideways) await note(page, `${where} (opened)`, "the page scrolls sideways");
+  for (const hit of res.hits) await note(page, `${where} (opened)`, hit);
+
+  // Run it again: one request to the dashboard's route, then the stored run read back.
+  const ran = page.waitForResponse((r) => r.url().includes("/checks/batches_deposits") && r.request().method() === "POST", { timeout: 30000 });
+  await section.getByRole("button", { name: "Check again" }).click();
+  const response = await ran.catch(() => null);
+  if (!response || response.status() !== 200) return note(page, where, `running it answered ${response ? response.status() : "nothing"}`);
+  // The browser is told which stored run to read, and nothing of the result.
+  const answer = await response.json().catch(() => null);
+  const keys = answer ? Object.keys(answer).sort().join(",") : "nothing readable";
+  if (keys !== "at,run_id" || !/^run_[0-9a-f]{16}$/.test(answer.run_id)) await note(page, where, `running it answered with ${keys}`);
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(400);
+  const after = await read();
+  for (const words of expected) if (!after.includes(words)) await note(page, where, `after running again it does not say "${words}"`);
+  if (await section.locator('[role="alert"]').count()) await note(page, where, `running it showed "${await section.locator('[role="alert"]').innerText()}"`);
+
+  // The route runs only the checks the tab offers: not the cross-rail fold, not another check.
+  const id = merchant.split("/").pop();
+  const refused = await page.evaluate(async (tenant) => {
+    const out = {};
+    for (const name of ["rails", "across%2Frails", "shopify_stripe", "batches_deposits%2F..%2Frails"]) {
+      const r = await fetch(`/api/merchants/${tenant}/checks/${name}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      out[name] = r.status;
+    }
+    return out;
+  }, id);
+  for (const [name, status] of Object.entries(refused)) {
+    if (status !== 404) await note(page, where, `the route ran "${name}" (answered ${status})`);
+  }
+  // And only for a request this site's own page made: one sent by another
+  // site's page, with the signed-in browser's cookie, is refused.
+  for (const origin of ["https://okwan.example", "null"]) {
+    const other = await page.request.post(`${BASE}/api/merchants/${id}/checks/batches_deposits`, {
+      headers: { "Content-Type": "application/json", Origin: origin }, data: "{}", failOnStatusCode: false });
+    if (other.status() !== 403) await note(page, where, `a request from ${origin} ran the check (answered ${other.status()})`);
+  }
+}
+
+// A page reaches the browser in pieces. On a slow link the browser starts to
+// take the page over before the last of them is there, and a page built so
+// that it then takes an element over twice is thrown away by React and drawn
+// again ("hydration failed"). A fast local link never shows it (second
+// attacker's pass: one load in seven of the Files tab at 400 kbit/s, none
+// here). So the Files tab is also loaded through a proxy that hands its
+// document on 2 KB at a time, 40 ms apart, scripts at full speed; built as it
+// was, 13 loads in 60 failed this way, and as it is, none in 300.
+function slowDocuments(target) {
+  const to = new URL(target);
+  const server = http.createServer((req, res) => {
+    const up = http.request({ host: to.hostname, port: to.port, path: req.url, method: req.method,
+      headers: { ...req.headers, "accept-encoding": "identity" } }, (ur) => {
+      const headers = { ...ur.headers };
+      if (!String(headers["content-type"] ?? "").startsWith("text/html")) { res.writeHead(ur.statusCode, headers); return ur.pipe(res); }
+      delete headers["content-length"];
+      res.writeHead(ur.statusCode, headers);
+      const pieces = [];
+      let ended = false;
+      let timer = null;
+      const pump = () => {
+        if (pieces.length) { res.write(pieces.shift()); timer = setTimeout(pump, 40); } else if (ended) res.end(); else timer = null;
+      };
+      ur.on("data", (buf) => { for (let i = 0; i < buf.length; i += 2048) pieces.push(buf.subarray(i, i + 2048)); if (!timer) pump(); });
+      ur.on("end", () => { ended = true; if (!timer) pump(); });
+    });
+    up.on("error", () => { res.statusCode = 502; res.end(); });
+    req.pipe(up);
+  });
+  return new Promise((resolve) => server.listen(0, to.hostname, () => resolve(server)));
+}
+
+async function checkSlowly(browser, session, merchant, loads = 15) {
+  const proxy = await slowDocuments(BASE);
+  const through = `${new URL(BASE).protocol}//${new URL(BASE).hostname}:${proxy.address().port}`;
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce", storageState: session });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e).split("\n")[0].slice(0, 200)));
+  let failed = 0;
+  for (let n = 0; n < loads; n++) {
+    errors.length = 0;
+    await page.goto(`${through}${merchant}?tab=files`, { waitUntil: "networkidle", timeout: 120000 });
+    await page.waitForTimeout(250);
+    if (errors.length) failed += 1;
+  }
+  const said = await page.locator("section p.text-lg").first().innerText().catch(() => "");
+  if (!said.includes("1 batch was not deposited")) problems.push(`390x844 ${merchant}?tab=files, arriving slowly: the result is not on the page ("${said}")`);
+  if (failed) problems.push(`390x844 ${merchant}?tab=files, arriving slowly: ${failed} of ${loads} loads threw while the browser took the page over`);
+  await ctx.close();
+  await new Promise((done) => proxy.close(done));
+  return loads;
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -217,19 +361,33 @@ try {
 
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, reducedMotion: "reduce", storageState: session });
     const page = await ctx.newPage();
+    // A page that throws while the browser takes it over (React's "hydration
+    // failed", or anything else) is a broken page, whatever it then draws.
+    // It fails this check on the Files tab, which is built so that it cannot
+    // (see checkSlowly). Other pages are still drawn on the server in parts
+    // and can do it now and then (known gap G22): those are printed, so they
+    // are seen, and do not fail a job that would then fail at random.
+    page.on("pageerror", (e) => {
+      const at = new URL(page.url());
+      const said = `${w}x${h} ${at.pathname}${at.search}: the page threw: ${String(e).split("\n")[0].slice(0, 200)}`;
+      (at.search.includes("tab=files") ? problems : threw).push(said);
+    });
     for (const path of [...SIGNED_IN, ...detail]) await checkPage(page, w, h, path);
     await checkPlanNotice(page, w, h);
+    if (merchant) await checkFileCheck(page, w, h, merchant);
     if (merchant) await checkImport(page, w, h, merchant);
     if (w >= 900) await checkMenu(page, w, h);
     await ctx.close();
   }
+  if (merchant) slow = await checkSlowly(browser, session, merchant);
 } finally {
   await browser.close();
 }
 
 const pages = SIZES.length * (SIGNED_OUT.length + SIGNED_IN.length + 7);
+if (threw.length) console.log(`Noted, not failed (G22): ${threw.length} page view(s) threw while the browser took them over:\n- ${threw.join("\n- ")}`);
 if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);

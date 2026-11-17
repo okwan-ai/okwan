@@ -195,12 +195,228 @@ def test_a_grouped_deposit_lists_its_batches_by_reference_and_amount():
     result = match(spec, [batch("B1", 100, 0), batch("B2", 250, 0)], [deposit("D1", 350)])
     (row,) = result.rows()
     ev = row["evidence"]
-    assert ev["members"] == [{"ref": "B1", "amount_minor": 100}, {"ref": "B2", "amount_minor": 250}]
+    assert ev["members"] == [{"ref": "B1", "amount_minor": 100, "when": "2026-11-02"},
+                             {"ref": "B2", "amount_minor": 250, "when": "2026-11-02"}]
+    # The deposit has one date; the group has none of its own, its members do.
+    assert ev["dated"] == {"left": None, "right": "2026-11-03"}
     assert ev["share"] == {"mid": "MID-1"}
     assert row["left"]["batch_id"] == "B1+B2"
     # The stored row names both sides by reference.
     (stored,) = result.trimmed_rows("batch_id", "fitid")
     assert stored["left_ref"] == "B1+B2" and stored["right_ref"] == "D1" and stored["members"] == 2
+
+
+def _batches_deposits() -> Reconciliation:
+    return Reconciliation(
+        name="unpaired_figures_fixture",
+        left=ResourceRef(connector="processor", resource="batches"),
+        right=ResourceRef(connector="bank", resource="deposits"),
+        keys=[GroupSum(many="left", amount="gross_minor", amount_one="amount_minor",
+                       timestamp_many="closed_on", timestamp_one="posted_on", share=("mid",),
+                       ref_many="batch_id", ref_one="fitid", lag=SettlementLag(max_days=2))],
+    )
+
+
+def test_a_record_with_no_counterpart_is_reported_with_its_amount_and_date():
+    """A stored row named a batch that was never paid by its reference and
+    nothing else, and a deposit from a statement with no reference column
+    by nothing at all: not something a person can act on. Each now carries
+    the amount, the currency and the date the check read it by."""
+    unreferenced = {"posted_on": "2026-11-06", "amount_minor": 31_240, "currency": "usd"}
+    result = match(_batches_deposits(), [batch("B1", 100, 0), batch("B9", 94_406, 0)],
+                   [deposit("D1", 100), unreferenced])
+    rows = {r["status"]: r for r in result.trimmed_rows("batch_id", "fitid")}
+    assert (rows["unmatched_left"]["left_ref"], rows["unmatched_left"]["evidence"]) == (
+        "B9", {"record": {"amount_minor": 94_406, "currency": "USD", "when": "2026-11-02"}})
+    assert (rows["unmatched_right"]["right_ref"], rows["unmatched_right"]["evidence"]) == (
+        None, {"record": {"amount_minor": 31_240, "currency": "USD", "when": "2026-11-06"}})
+    # Figures and a date, never the record: nothing else of either one travels.
+    unpaired = json.dumps([rows["unmatched_left"], rows["unmatched_right"]])
+    assert all(word not in unpaired for word in ("posted_on", "closed_on", "gross_minor", "fees_minor", "MID-1"))
+    # What the other side read is still said beside it.
+    covered = match(_batches_deposits(), [batch("B9", 94_406, 0)], [], cov("processor.batches.list"),
+                    cov("bank.deposits.list"))
+    (row,) = covered.rows()
+    assert row["evidence"]["counterpart"]["source"] == "bank.deposits.list"
+    assert row["evidence"]["record"] == {"amount_minor": 94_406, "currency": "USD", "when": "2026-11-02"}
+
+
+def test_a_pair_says_when_each_side_happened():
+    result = match(_batches_deposits(), [batch("B1", 100, 0)], [deposit("D1", 100, day="2026-11-04")])
+    (row,) = result.rows()
+    assert row["members"] is None and row["evidence"]["dated"] == {"left": "2026-11-02", "right": "2026-11-04"}
+
+
+def test_a_date_is_kept_as_the_day_or_the_instant_and_nothing_else():
+    from datetime import UTC, date, datetime
+
+    from okwan_recon.engine import _when
+
+    assert _when("2026-10-13") == _when(date(2026, 10, 13)) == "2026-10-13"       # a file's day stays a day
+    assert _when("2026-10-13T14:03:22-04:00") == "2026-10-13T18:03:22+00:00"      # an instant, in UTC
+    assert _when(datetime(2026, 10, 13, 9, 30, tzinfo=UTC)) == "2026-10-13T09:30:00+00:00"
+    assert _when(1_791_900_000) == "2026-10-13T14:00:00+00:00"                    # a rail's epoch seconds
+    for odd in (None, True, "", "next Tuesday", "9999-99-99", 10**20, float("nan"), {"at": 1}):
+        assert _when(odd) is None, odd
+
+
+@pytest.mark.parametrize("stamp", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"])
+def test_a_date_at_the_edge_of_the_calendar_does_not_take_the_check_down(stamp):
+    """Attacker's pass: such a timestamp parses and compares, and cannot be
+    moved to UTC. Dating a record did that outside its guard, so one row,
+    in a customer's own table, made the whole check a 500 on every
+    surface and left no stored run. It is now kept as no date."""
+    spec = Reconciliation(
+        name="edge_of_the_calendar_fixture",
+        left=ResourceRef(connector="shop", resource="payments"),
+        right=ResourceRef(connector="rail", resource="charges"),
+        keys=[ExactRef(left="reference", right="order_ref"),
+              Fuzzy(amount="amount", currency="currency", timestamp_left="created_at", timestamp_right="created_at",
+                    window="3d")],
+    )
+    paid = {"reference": "#1", "amount": 5_000, "currency": "USD", "created_at": stamp}
+    alone = {"reference": "#2", "amount": 700, "currency": "USD", "created_at": stamp}
+    result = match(spec, [paid, alone], [{"order_ref": "#1", "amount": 5_000, "currency": "USD",
+                                          "created_at": "2026-11-02T10:00:00+00:00"}])
+    rows = {r["status"]: r for r in result.trimmed_rows("reference", "order_ref")}
+    assert rows["matched"]["evidence"]["dated"] == {"left": None, "right": "2026-11-02T10:00:00+00:00"}
+    assert rows["unmatched_left"]["evidence"]["record"] == {"amount_minor": 700, "currency": "USD", "when": None}
+    assert len(result.rows()) == 2
+
+
+def test_only_a_code_a_whole_amount_and_a_date_are_kept_of_a_record():
+    """Attacker's pass: the currency of a record with no counterpart was
+    kept as whatever its field held, any type, any length. Where that
+    field is a customer's own column it carried a name, an email and card
+    digits into the stored run, REST, the SQL view and MCP. Before this
+    change such a row kept the record's reference and nothing else."""
+    from okwan_recon.engine import _code, _figure
+
+    note = "refund to Jane Doe <jane.doe@example.com>, card 4242 4242 4242 4242"
+    for odd in (note, {"code": "USD", "payer": "Jane Doe"}, ["USD", "jane.doe@example.com"], "x" * 100_000,
+                "US", "USDT", "U$D", 840, None, True, ""):
+        assert _code(odd) is None, odd
+    assert (_code("usd"), _code(" GHS ")) == ("USD", "GHS")
+    for odd in (12.5, "1200", True, None, [1200], 10**15, -(10**15), 10**400):
+        assert _figure(odd) is None, odd
+    assert (_figure(0), _figure(-455), _figure(10**15 - 1)) == (0, -455, 10**15 - 1)
+    # And on every check there is, on either side: nothing of the note is kept.
+    from okwan_recon import registry
+
+    seen = 0
+    for spec in registry.all_reconciliations():
+        amount = spec.resolved_amount
+        if amount is None:
+            continue
+        left_when, right_when = spec.timestamp_paths
+        for side, cur, amt, when in (("left", amount.currency, amount.left, left_when),
+                                     ("right", amount.right_currency, amount.right_path, right_when)):
+            record = {}
+            for path, value in ((cur, note), (amt, note), (when, note)):
+                if path and "." not in path:
+                    record[path] = value
+            result = match(spec, [record] if side == "left" else [], [record] if side == "right" else [])
+            kept = json.dumps(result.trimmed_rows("reference", "reference"))
+            assert "JANE" not in kept.upper() and "4242" not in kept, (spec.name, side)
+            seen += 1
+    assert seen >= 16
+
+
+def test_a_pair_and_a_groups_members_keep_a_code_a_whole_amount_and_a_date_and_nothing_else():
+    """Attacker's pass: the same guard on a group's members and on a
+    pair's two dates could be taken out and every test still passed; and a
+    pair's compared currency was kept as whatever its field held. Each is
+    held here with the values a customer's own column can carry."""
+    from okwan_recon.engine import (
+        MatchedPair,
+        ReconResult,
+        _date_pairs,
+        _describe_groups,
+        _score_discrepancies,
+    )
+
+    note = "refund to Jane Doe <jane.doe@example.com>, card 4242 4242 4242 4242"
+    spec = _batches_deposits()
+    odd = [{"batch_id": "B1", "gross_minor": note, "closed_on": note, "currency": note, "mid": "MID-1"},
+           {"batch_id": "B2", "gross_minor": 10**400, "closed_on": {"day": note}, "currency": note, "mid": "MID-1"},
+           {"batch_id": "B3", "gross_minor": 12.5, "closed_on": 10**30, "currency": note, "mid": "MID-1"},
+           {"batch_id": "B4", "gross_minor": 60, "closed_on": "2026-11-02", "currency": note, "mid": "MID-1"}]
+    group = MatchedPair(left={"members": odd}, right={"fitid": "D1", "posted_on": note, "amount_minor": 60, "currency": note},
+                        rule="group_sum", confidence=1.0, members=odd, grouped="left")
+    single = MatchedPair(left={"batch_id": "B9", "gross_minor": 70, "closed_on": note, "currency": note},
+                         right={"fitid": "D2", "posted_on": "2026-11-03", "amount_minor": 60, "currency": note},
+                         rule="group_sum", confidence=1.0)
+    plain = MatchedPair(left={"batch_id": "B8", "gross_minor": 70, "closed_on": "2026-11-02T09:30:00+02:00", "currency": "usd"},
+                        right={"fitid": "D3", "posted_on": 1_791_900_000, "amount_minor": 60, "currency": "usd"},
+                        rule="group_sum", confidence=1.0)
+    result = ReconResult(name=spec.name, matched=[group, single, plain])
+    _score_discrepancies(spec, result)
+    _describe_groups(spec, result)
+    _date_pairs(spec, result)
+
+    assert group.evidence["members"] == [
+        {"ref": "B1", "amount_minor": None, "when": None}, {"ref": "B2", "amount_minor": None, "when": None},
+        {"ref": "B3", "amount_minor": None, "when": None}, {"ref": "B4", "amount_minor": 60, "when": "2026-11-02"}]
+    assert "dated" not in group.evidence                      # neither side has a date that reads as one
+    assert single.evidence["dated"] == {"left": None, "right": "2026-11-03"}
+    assert single.evidence["compared"]["currency"] is None    # the same words on both sides are still not a code
+    assert (single.discrepancy_minor, plain.discrepancy_minor) == (10, 10)
+    assert plain.evidence["compared"]["currency"] == "USD"
+    assert plain.evidence["dated"] == {"left": "2026-11-02T07:30:00+00:00", "right": "2026-10-13T14:00:00+00:00"}
+    kept = json.dumps(result.trimmed_rows("batch_id", "fitid"))
+    assert "JANE" not in kept.upper() and "4242" not in kept and "e+" not in kept and "12.5" not in kept
+
+
+def test_what_grouped_records_share_is_kept_only_when_it_is_a_short_identifier():
+    """Second attacker's pass: the field a group must share (a batch
+    report's merchant id, a tax return's state) was copied whole onto every
+    paired row, and into the reason of one still waiting: a name and an
+    address typed into that column were in the stored run, REST, the SQL
+    view and MCP. It is kept when it is an identifier and dropped when it
+    is a sentence."""
+    from okwan_recon import registry
+    from okwan_recon.engine import PeriodGroup, _token, ref_paths
+
+    note = "refund owed to Jane Doe <jane.doe@example.com> 12 Elm St"
+    for kept in ("MID-1", "4445012345678", "CA", "CO-1", "us/ny", 8841, "Z\u00fcrich"):
+        assert _token(kept) == str(kept), kept
+    for odd in (note, "New York", "a b", "", "x" * 33, None, True, 1.5, ["CA"], {"state": "CA"}, "tab\tbed", "line\nbreak"):
+        assert _token(odd) is None, odd
+
+    # A group of batches paid by one deposit, on the check as it is declared.
+    spec = registry.get("batches_deposits")
+    batches = [{"batch_id": f"B-{n}", "closed_on": f"2026-11-0{n}", "net_minor": 100 * n, "currency": "USD", "mid": note}
+               for n in (1, 2)]
+    paid = {"fitid": "D-1", "posted_on": "2026-11-03", "amount_minor": 300, "currency": "USD"}
+    (row,) = match(spec, batches, [paid]).trimmed_rows(*ref_paths(spec))
+    assert row["status"] == "matched" and row["evidence"]["share"] == {"mid": None}
+    assert "Jane" not in json.dumps(row)
+    for b in batches:
+        b["mid"] = "MID-7"
+    (row,) = match(spec, batches, [paid]).trimmed_rows(*ref_paths(spec))
+    assert row["evidence"]["share"] == {"mid": "MID-7"}
+
+    # A period rule: the tax check, a return and a sale after it for the same "state".
+    spec = registry.get("avatax_collected_filed")
+    rule = next(k for k in spec.keys if isinstance(k, PeriodGroup))
+    filing = {rule.start: "2026-08-01", rule.end: "2026-08-31", **{one: note for one, _ in rule.share}}
+    sale = {rule.timestamp_many: "2026-10-05T10:00:00+00:00", **{many: note for _, many in rule.share}}
+    left, right = ([filing], [sale]) if rule.one == "left" else ([sale], [filing])
+    rows = match(spec, left, right).trimmed_rows(*ref_paths(spec))
+    assert "jane" not in json.dumps(rows).lower() and "elm st" not in json.dumps(rows).lower()
+    waiting = next(r for r in rows if r["status"].startswith("unverifiable"))
+    assert waiting["reason"] == "after the latest period imported for this record (to 2026-08-31): waiting for the next"
+
+
+def test_a_check_that_names_no_amount_or_date_reports_a_miss_as_it_did():
+    spec = Reconciliation(
+        name="reference_only_fixture",
+        left=ResourceRef(connector="shop", resource="orders"),
+        right=ResourceRef(connector="rail", resource="charges"),
+        keys=[ExactRef(left="name", right="order_ref")],
+    )
+    (row,) = match(spec, [{"name": "#1", "total": 5}], []).rows()
+    assert row["status"] == "unmatched_left" and row["evidence"] is None
 
 
 def test_a_miss_shows_the_other_side_looked():

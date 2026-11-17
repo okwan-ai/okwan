@@ -66,9 +66,12 @@ const parts: Part[] = [
           <li>
             <strong>Records from connected services.</strong> Okwan reads them when you run a check or call the API
             or MCP server, and once a day for the daily check described below, and holds them in memory only for
-            that read. What we store is the result of a
-            reconciliation: a summary, and for each order its reference, currency, totals, the amount each service
-            reported, and the outcome and reason. A short error message is kept if a check failed. We keep the
+            that read. One exception: a check run through SQL is held in memory for up to five minutes, so that
+            the next query reads it again without asking your services twice; if it read a file you imported, it
+            is dropped the moment that file is deleted. What we store is the result of a
+            reconciliation: a summary, and for each order or record its reference, date, currency, totals, the
+            amount each service reported, where records are matched as a group the short identifier they share
+            (a merchant id, a state), and the outcome and reason. A short error message is kept if a check failed. We keep the
             newest 50 results of each check. We do not store the raw records, card numbers, or your customers&rsquo;
             names or email addresses from those services, and we do not store SQL queries or their results.
           </li>
@@ -268,7 +271,7 @@ const parts: Part[] = [
             ["Sign-in sessions", "30 minutes without activity, 12 hours at most, or until you sign out"],
             ["Your Stripe subscription's id and state, and what each payment page you opened showed (the refund policy's version, the time, the IP address)", "As long as your account exists; for a payment page you opened and did not pay on, about a week. Stripe keeps its own payment records as the law requires"],
             ["Payments Stripe took for Pro, and any dispute of one (Stripe's ids for the payment and for you as its customer, amounts, dates, the bank's reason and decision)", "Kept after your account is deleted, without your account's id: a dispute still has to be answered, a payment Stripe takes afterwards has to be recognised as one for Okwan, and the count of payments is what a dispute rate is measured against"],
-            ["Reconciliation results", "The newest 50 of each check, until your account is deleted"],
+            ["Reconciliation results", "The newest 50 of each check, until your account is deleted. A result of a check that read files you imported is deleted sooner: with any of that merchant's files, when you delete one and when one expires"],
             ["Files you import: their mapped rows and the file's record", "13 months from the upload, then deleted within the hour; at once if you delete the file"],
             ["Column mappings you save", "Until you delete them or your account"],
             ["Usage counts", "As long as your account exists"],
@@ -374,7 +377,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 13, 2026"
+      updated="November 17, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

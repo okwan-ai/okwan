@@ -17,6 +17,7 @@ says a source is ready when it has no files.
 from __future__ import annotations
 
 import base64
+import json
 from datetime import date
 from types import SimpleNamespace
 
@@ -54,6 +55,14 @@ BANK_MAPPING = Mapping(
     columns={"posted_on": "Date", "description": "Description", "amount_minor": "Amount",
              "fitid": "Ref"},
 )
+
+
+@pytest.fixture(autouse=True)
+def _read_in_september_2026(as_of):
+    """The files here are dated the first days of September 2026, and the
+    check reads 120 days back: read from today, these tests would start
+    failing in the first days of January 2027."""
+    as_of(2026, 9, 20)
 
 
 def _body(data: bytes, mapping: Mapping | None = None, name: str = "f.csv", **extra) -> dict:
@@ -214,6 +223,194 @@ async def test_batches_against_deposits_over_rest(api):
     assert [x["left"]["batch_id"] for x in rows["unmatched_left"]] == ["B-5"]
     # The monthly fee is money out, not a deposit; the stray credit is unexplained.
     assert [x["right"]["fitid"] for x in rows["unmatched_right"]] == ["D-4"]
+
+
+async def test_the_stored_run_says_what_each_batch_and_deposit_were(api):
+    """What the dashboard's Files tab reads back. A stored row named an
+    unpaid batch by its id alone, and a deposit with no batch by a
+    reference a statement may not even have: nothing to act on. Each now
+    carries the amount and the day, a deposit's batches carry theirs, and
+    still no row carries a record."""
+    client, _, shop, _ = api
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    ran = await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")
+    assert ran.status_code == 200, ran.text
+    latest = (await client.get(f"/v1/tenants/{shop.id}/runs/latest?kind=pair&name=batches_deposits")).json()
+    stored = latest["data"][shop.id]
+    assert (stored["id"], stored["status"], stored["has_more"]) == (ran.json()["run_id"], "ok", False)
+    rows = _verdicts(stored["rows"])
+    (unpaid,) = rows["unmatched_left"]
+    assert (unpaid["left_ref"], unpaid["evidence"]["record"]) == (
+        "B-5", {"amount_minor": 3_884, "currency": "USD", "when": "2026-09-08"})
+    (stray,) = rows["unmatched_right"]
+    assert (stray["right_ref"], stray["evidence"]["record"]) == (
+        "D-4", {"amount_minor": 1_200, "currency": "USD", "when": "2026-09-10"})
+    paid = {m["right_ref"]: m["evidence"] for m in rows["matched"]}
+    assert paid["D-1"]["members"] == [
+        {"ref": "B-1", "amount_minor": 9_710, "when": "2026-09-04"},
+        {"ref": "B-2", "amount_minor": 19_420, "when": "2026-09-05"},
+        {"ref": "B-3", "amount_minor": 4_855, "when": "2026-09-06"}]
+    assert paid["D-1"]["dated"] == {"left": None, "right": "2026-09-08"}      # the Tuesday after Labor Day
+    assert paid["D-2"]["dated"] == {"left": "2026-09-08", "right": "2026-09-09"}
+    kept = json.dumps(stored["rows"])
+    assert all(words not in kept for words in ("MERCHANT DEPOSIT", "UNKNOWN CREDIT", "description", "gross_minor"))
+
+
+async def test_deleting_a_file_takes_the_stored_result_with_it(api):
+    """The Files tab drew a result for as long as it was the newest one,
+    whatever had become of the files: delete the statement, and the tab
+    still said which deposits paid which batches, from a file no longer
+    there. The result is deleted with the file, on every surface that
+    reads it, and the next run is of what is left."""
+    client, store, shop, _ = api
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    statement = await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    ran = (await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")).json()
+    latest = f"/v1/tenants/{shop.id}/runs/latest?kind=pair&name=batches_deposits"
+    assert (await client.get(latest)).json()["data"][shop.id]["id"] == ran["run_id"]
+    assert (await store.get_run(shop.id, ran["run_id"])).reads_files is True
+
+    assert (await client.delete(f"/v1/tenants/{shop.id}/imports/{statement['id']}")).status_code == 204
+    assert (await client.get(latest)).json()["data"] == {}
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs/{ran['run_id']}")).status_code == 404
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs")).json()["data"] == []
+    listed = {x["name"]: x for x in (await client.get("/v1/reconciliations")).json()["data"]}
+    assert listed["batches_deposits"]["status"]["last_run"] is None
+
+    again = (await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")).json()
+    rows = (await client.get(latest)).json()["data"][shop.id]["rows"]
+    assert again["run_id"] != ran["run_id"] and {r["status"] for r in rows} == {"unmatched_left"}
+
+
+async def test_a_check_already_reading_when_its_file_is_deleted_stores_nothing(api, monkeypatch):
+    """Attacker's pass, the one high finding: start the check, delete the
+    statement while it reads, and the result was stored after the delete
+    and stayed for good, "every batch was deposited" from a file no longer
+    there. The delete is made to land between the two reads here, which is
+    where it landed there; the run's answer says no result was stored."""
+    client, store, shop, _ = api
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    statement = await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    read = store.import_rows
+    deleted = []
+
+    async def read_then_delete(tenant_id, kind, **kw):
+        rows = await read(tenant_id, kind, **kw)
+        if kind == "bank_deposits" and rows and not deleted:
+            deleted.append(await store.delete_import(shop.id, statement["id"]))
+        return rows
+
+    monkeypatch.setattr(store, "import_rows", read_then_delete)
+    ran = await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")
+    assert ran.status_code == 200 and deleted == [True]
+    assert ran.json()["run_id"] is None                                  # read, answered once, and not kept
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs")).json()["data"] == []
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs/latest?kind=pair&name=batches_deposits")).json()["data"] == {}
+    # The next run reads what is left and is kept.
+    again = (await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")).json()
+    assert again["run_id"].startswith("run_")
+
+
+async def test_a_deleted_files_rows_are_never_answered_from_the_reuse_window(api):
+    """Attacker's pass: a SQL query over the check keeps its whole result
+    in memory for five minutes, rows and all, and went on answering from
+    it after both files were deleted. A reuse now asks the store whether
+    the files it read are still there, so it holds on an instance the
+    delete did not reach (the store is told directly here, as another
+    instance's delete would), and for a file that expired."""
+    client, store, shop, _ = api
+    sql = {"sql": "SELECT status, count(*) AS n FROM recon.batches_deposits GROUP BY status"}
+
+    async def ask():
+        r = await client.post("/v1/query", json=sql)
+        assert r.status_code == 200, r.text
+        return r.json()["runs"]["recon.batches_deposits"], {row["status"]: row["n"] for row in r.json()["rows"]}
+
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    statement = await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    first, lines = await ask()
+    again, _ = await ask()
+    assert (first["reused"], again["reused"], again["run_id"]) == (False, True, first["run_id"])
+
+    assert await store.delete_import(shop.id, statement["id"]) is True   # not through this instance's route
+    after, left = await ask()
+    assert after["reused"] is False and after["run_id"] != first["run_id"]
+    assert left == {"unmatched_left": 5}                                 # no deposit is in the answer any more
+
+    # Through the route, the tenant's kept results are forgotten at once, and so they are on an upload.
+    kept, _ = await ask()
+    assert kept["reused"] is True
+    await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    fresh, whole = await ask()
+    assert fresh["reused"] is False and whole == lines
+    # A delete through the route needs no forgetting: the reuse asks, as above.
+    files = (await client.get(f"/v1/tenants/{shop.id}/imports")).json()["imports"]
+    assert (await ask())[0]["reused"] is True
+    assert (await client.delete(f"/v1/tenants/{shop.id}/imports/{files[0]['id']}")).status_code == 204
+    assert (await ask())[0]["reused"] is False
+
+
+def test_a_result_names_every_file_its_rows_came_from():
+    """What the store checks before it keeps a run: the files behind every
+    row, wherever the row ended up. A group's members count each (a file
+    read only into groups was once not counted), and so do an unpaired
+    record, the candidates of an ambiguous one and one that could not be
+    checked; a side that is not imported files counts for nothing."""
+    from okwan_api.runs import files_read
+    from okwan_recon import registry
+    from okwan_recon.engine import Ambiguity, MatchedPair, ReconResult, Unverifiable
+
+    spec = registry.get("batches_deposits")
+    def row(file_id):
+        return {"file_id": file_id}
+
+    result = ReconResult(name=spec.name)
+    result.matched = [
+        MatchedPair(left={"members": 2}, right=row("imp_statement_1"), rule="group_sum", confidence=1.0,
+                    members=[row("imp_grouped_a"), row("imp_grouped_b")], grouped="left"),
+        MatchedPair(left=row("imp_batches"), right=row("imp_statement_1"), rule="group_sum", confidence=1.0),
+    ]
+    result.unmatched_left = [row("imp_unpaid")]
+    result.unmatched_right = [row("imp_stray")]
+    result.ambiguous = [Ambiguity(left=row("imp_unsure"), candidates=[row("imp_candidate")], rule="group_sum", side="right")]
+    result.unverifiable_left = [Unverifiable(row("imp_unread"), "the other file does not reach this date")]
+    result.waiting["right"].append(Unverifiable(row("imp_waiting"), "waiting"))
+    assert files_read(spec, result) == {
+        "imp_grouped_a", "imp_grouped_b", "imp_statement_1", "imp_batches", "imp_unpaid", "imp_stray",
+        "imp_unsure", "imp_candidate", "imp_unread", "imp_waiting"}
+    assert files_read(spec, None) == frozenset()
+    # A check with a rail on one side: only the side read from files is asked.
+    mixed = registry.get("square_payouts_deposits")
+    files_side = "left" if mixed.left.connector == "files" else "right"
+    one = ReconResult(name=mixed.name)
+    one.unmatched_left, one.unmatched_right = [row("left_side")], [row("right_side")]
+    assert files_read(mixed, one) == {f"{files_side}_side"}
+    assert files_read(registry.get("shopify_stripe"), one) == frozenset()
+
+
+def test_the_checks_that_read_files_are_known_from_their_declarations():
+    """Which stored results go with a file is read off each check's two
+    sides, never from a list someone has to remember to extend."""
+    from okwan_api.runs import reads_files
+    from okwan_recon.registry import all_across, all_reconciliations
+
+    reading = {spec.name for spec in all_reconciliations() if reads_files(spec)}
+    assert reading == {"batches_deposits", "square_payouts_deposits", "clover_payments_settlements",
+                       "delivery_payout_lines", "delivery_payouts_deposits", "avatax_collected_filed"}
+    assert all(spec.name in reading or "files" not in (spec.left.connector, spec.right.connector)
+               for spec in all_reconciliations())
+    assert [reads_files(spec) for spec in all_across()] == [False] * len(all_across())
+    # A fold over several checks reads files when any of them does (attacker's
+    # pass: this could answer False for every fold and no test noticed).
+    from okwan_recon.across import AcrossRails, Rail
+
+    def fold(*names):
+        return AcrossRails(name="fixture_fold", rails=[Rail(reconciliation=n, collected="amount_minor") for n in names],
+                           ledger_total="total_minor")
+
+    assert reads_files(fold("shopify_stripe", "square_payouts_deposits")) is True
+    assert reads_files(fold("shopify_stripe", "shopify_paypal")) is False
 
 
 async def test_batches_against_deposits_as_a_sql_table(api):

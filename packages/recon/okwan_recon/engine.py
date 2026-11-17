@@ -6,6 +6,7 @@ records it already paired.
 """
 from __future__ import annotations
 
+import re
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -190,6 +191,27 @@ class ReconResult:
     #: which case nothing can be classed unverifiable.
     left_coverage: Coverage | None = None
     right_coverage: Coverage | None = None
+    #: Where each side states the figures a person finds a record by (its
+    #: amount, its currency, its date), from the declaration: set by
+    #: `match`. A record with no counterpart is reported with them, since
+    #: a reference alone ("B-1013", or none at all on a bank statement
+    #: with no reference column) is not something to act on.
+    figures: dict[str, dict[str, str | None]] = field(default_factory=dict)
+
+    def _found_by(self, side: str, record: Row | None, looked: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """The evidence of a record that has no pair: what the other side
+        read, and the record's own amount, currency and date. Figures and
+        a date, never the record."""
+        paths = self.figures.get(side) or {}
+
+        def at(name: str) -> Any:
+            return dig(record, paths[name]) if record is not None and paths.get(name) else None
+
+        # Each held to what it is: a field in a record is whatever its
+        # source put there, and only a figure, a code and a date are kept.
+        stated = {"amount_minor": _figure(at("amount")), "currency": _code(at("currency")), "when": _when(at("when"))}
+        out = {**(looked or {}), **({"record": stated} if any(v is not None for v in stated.values()) else {})}
+        return out or None
 
     @property
     def summary(self) -> dict[str, Any]:
@@ -242,6 +264,26 @@ class ReconResult:
                 }
             ),
         }
+
+    def records(self, side: str):
+        """Every record of one side this result holds, wherever it ended
+        up: a pair's, a group's members each, the unpaired, the ambiguous
+        with their candidates, and the ones that could not be checked."""
+        for p in self.matched:
+            if p.members is not None and p.grouped == side:
+                yield from p.members
+            else:
+                yield p.left if side == "left" else p.right
+        yield from (self.unmatched_left if side == "left" else self.unmatched_right)
+        for a in self.ambiguous:
+            if a.side == side:
+                yield a.left
+            else:
+                yield from a.candidates
+        for u in (self.unverifiable_left if side == "left" else self.unverifiable_right):
+            yield u.record
+        for u in self.waiting.get(side, ()):
+            yield u.record
 
     def trimmed_rows(
         self, left_ref: str | None = None, right_ref: str | None = None,
@@ -306,13 +348,13 @@ class ReconResult:
         out += [
             {"status": "unmatched_left", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": None, "left": r, "right": None,
-             "evidence": looked_right}
+             "evidence": self._found_by("left", r, looked_right)}
             for r in self.unmatched_left
         ]
         out += [
             {"status": "unmatched_right", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": None, "left": None, "right": r,
-             "evidence": looked_left}
+             "evidence": self._found_by("right", r, looked_left)}
             for r in self.unmatched_right
         ]
         out += [
@@ -321,23 +363,23 @@ class ReconResult:
              "left": a.left if a.side == "left" else None,
              "right": a.left if a.side == "right" else None,
              "candidates": a.candidates,
-             "evidence": {
+             "evidence": self._found_by(a.side, a.left, {
                  "candidates": len(a.candidates),
                  **({"more": True} if a.more else {}),
                  **({"groupings": [len(g) for g in a.alternatives]} if a.alternatives else {}),
-             }}
+             })}
             for a in self.ambiguous
         ]
         out += [
             {"status": "unverifiable_left", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": u.reason, "left": u.record, "right": None,
-             "evidence": looked_right}
+             "evidence": self._found_by("left", u.record, looked_right)}
             for u in self.unverifiable_left
         ]
         out += [
             {"status": "unverifiable_right", "rule": None, "confidence": 0.0,
              "discrepancy": None, "reason": u.reason, "left": None, "right": u.record,
-             "evidence": looked_left}
+             "evidence": self._found_by("right", u.record, looked_left)}
             for u in self.unverifiable_right
         ]
         return out
@@ -355,6 +397,62 @@ def _as_dt(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+_CODE = re.compile(r"[A-Za-z]{3}")
+#: Beyond any amount of money in minor units; a larger whole number is not one.
+_MOST_MINOR = 10**15
+
+
+def _when(value: Any) -> str | None:
+    """A record's date as a result keeps it: the day, when the source
+    states a day (a batch's close date, a statement line), otherwise the
+    instant in UTC to the second. None for what does not read as either,
+    and for what reads as one and cannot be moved to UTC (the first and
+    last hours of the calendar, with an offset). Never raises: it runs on
+    every row of every check, and one record must not take a check down."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, str) and _DAY.fullmatch(value.strip()):
+            return date.fromisoformat(value.strip()).isoformat()
+        at = _as_dt(value)
+        return at.astimezone(UTC).isoformat(timespec="seconds") if at else None
+    except (OverflowError, OSError, ValueError, TypeError):
+        return None
+
+
+def _code(value: Any) -> str | None:
+    """A currency as a result keeps it: a three-letter code, or nothing.
+    The field is whatever its source put there (a customer's own column,
+    a file's cell), so anything else, of any type or length, is dropped."""
+    if not isinstance(value, str) or not _CODE.fullmatch(value.strip()):
+        return None
+    return value.strip().upper()
+
+
+_TOKEN = re.compile(r"[\w.\-/:#]{1,32}")
+
+
+def _token(value: Any) -> str | None:
+    """What grouped records share (a merchant id, a state code), kept only
+    when it is one: a short run of letters, digits and . - / : # _ with no
+    space in it. The field is a customer's own column, and a sentence in
+    it (a name, an address) is not kept in a stored row or in its reason."""
+    if isinstance(value, bool) or not isinstance(value, str | int):
+        return None
+    text = str(value).strip()
+    return text if _TOKEN.fullmatch(text) else None
+
+
+def _figure(value: Any) -> int | None:
+    """An amount as a result keeps it: a whole number of minor units."""
+    if isinstance(value, bool) or not isinstance(value, int) or abs(value) >= _MOST_MINOR:
+        return None
+    return value
 
 
 def _ref_key(value: Any, case_sensitive: bool) -> str | None:
@@ -823,7 +921,7 @@ def _apply_period_group(
         consumed.update(id(m) for m in members)
         pair = _pair(o, members, one_side, rule.kind, 1.0)
         pair.evidence = {"rule": rule.kind, "period": {"start": first.isoformat(), "end": last.isoformat()},
-                         "share": {o_path: str(dig(o, o_path)) for o_path in one_paths},
+                         "share": {o_path: _token(dig(o, o_path)) for o_path in one_paths},
                          "members": len(members)}
         out.matched.append(pair)
 
@@ -840,7 +938,7 @@ def _apply_period_group(
             waiting.append(Unverifiable(m, STOPPED_OTHER))
             continue
         spans = periods.get(k)
-        named = ", ".join(str(x) for x in k) or "this record"
+        named = ", ".join(t for x in k if (t := _token(x))) or "this record"
         if day is None or not spans:
             rest.append(m)
         elif day > max(e for _, e in spans):
@@ -1004,7 +1102,7 @@ def _apply_group_sum(
                 **({"lag": {"min_days": lag.min_days, "max_days": lag.max_days,
                             "calendar": lag.calendar, "timezone": lag.timezone}}
                    if lag else {"window": rule.window}),
-                "share": {f: dig(fits[0][0], f) for f in rule.share},
+                "share": {f: _token(dig(fits[0][0], f)) for f in rule.share},
                 "amount_tolerance_minor": rule.amount_tolerance_minor,
             }
             out.matched.append(pair)
@@ -1099,7 +1197,9 @@ def _score_discrepancies(spec: Reconciliation, result: ReconResult) -> None:
         pair.evidence["compared"] = {
             "left_path": ref.left, "right_path": ref.right_path,
             "left_minor": int(l_amt), "right_minor": int(r_amt),
-            "currency": l_cur or r_cur or None,
+            # A code or nothing, as for a record with no pair: a currency
+            # column is a merchant's free text, and this is stored and drawn.
+            "currency": _code(l_cur) or _code(r_cur),
         }
         parts = _explanation(spec, pair)
         if parts:
@@ -1177,9 +1277,31 @@ def match(
     )
     result.unverifiable_left += result.waiting["left"]
     result.unverifiable_right += result.waiting["right"]
+    amount = spec.resolved_amount
+    result.figures = {
+        "left": {"amount": amount.left if amount else None, "currency": amount.currency if amount else None,
+                 "when": left_ts},
+        "right": {"amount": amount.right_path if amount else None,
+                  "currency": amount.right_currency if amount else None, "when": right_ts},
+    }
     _score_discrepancies(spec, result)
     _describe_groups(spec, result)
+    _date_pairs(spec, result)
     return result
+
+
+def _date_pairs(spec: Reconciliation, result: ReconResult) -> None:
+    """Say when each side of a pair happened (E4): "paid the next business
+    day" is only something a person can check with both dates in front of
+    them. A group's side has no one date; its members carry their own."""
+    left_ts, right_ts = spec.timestamp_paths
+    for pair in result.matched:
+        dated = {
+            "left": None if pair.grouped == "left" or not left_ts else _when(dig(pair.left, left_ts)),
+            "right": None if pair.grouped == "right" or not right_ts else _when(dig(pair.right, right_ts)),
+        }
+        if any(dated.values()):
+            pair.evidence["dated"] = dated
 
 
 def _describe_groups(spec: Reconciliation, result: ReconResult) -> None:
@@ -1204,11 +1326,13 @@ def _describe_groups(spec: Reconciliation, result: ReconResult) -> None:
             put(summary, path, pair.value(side, path))
         ref = refs[0] if side == "left" else refs[1]
         amount_path = None if amount is None else (amount.left if side == "left" else amount.right_path)
-        # A reference and an amount per member, the figures the privacy
-        # policy says a stored result holds; never a member's record.
+        when_path = spec.timestamp_paths[0 if side == "left" else 1]
+        # A reference, an amount and a date per member, the figures the
+        # privacy policy says a stored result holds; never a member's record.
         pair.evidence["members"] = [
             {"ref": None if not ref else dig(m, ref),
-             "amount_minor": None if not amount_path else dig(m, amount_path)}
+             "amount_minor": None if not amount_path else _figure(dig(m, amount_path)),
+             "when": None if not when_path else _when(dig(m, when_path))}
             for m in pair.members
         ]
         if ref:

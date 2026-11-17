@@ -318,7 +318,19 @@ only means the other kind has not been uploaded yet.
 **Retention.** Each file and its rows expire 13 months after upload. Reads
 skip an expired file at once; the API deletes every tenant's expired
 files hourly (a warning "import sweep failed" in the logs means it will
-retry next hour). To delete them now:
+retry next hour). A stored result of a check that read a merchant's files
+quotes them (references, amounts, dates), so it goes with them: deleting
+a file, or a file expiring, deletes that merchant's stored results of
+every file-based check in the same step, and the Files tab goes back to
+"run the check". Results of checks that read no file stay. A check that
+was still reading when its file was deleted stores nothing: its answer
+carries `run_id: null`, the log says "run of … not kept … a file it read
+is gone" at info level, and the tab tells the person to run it again. A
+result kept in memory for SQL to reuse is dropped the same way. The API
+tells the store which checks read files; the command below does not know
+them, so it takes results that carry the mark and leaves any stored by a
+release from before the mark to the API's own hourly sweep. To delete
+expired files now:
 
 ```bash
 python -m okwan_vault imports sweep
@@ -853,13 +865,39 @@ Part of `web (dashboard)`, so required. The owner's rule (§9 2026-11-06):
 nothing on a page may overlap. The job builds the dashboard, starts the
 API with an in-memory workspace (`scripts/ui_server.py`: *Acme ISV* with
 *Kofi's Store*, every rail connected, one real check over fixture rows,
-and two imported files with their mappings saved, and *Accra Coffee Co.*
-with only Stripe), and runs `apps/dashboard/scripts/layout-check.mjs`. It
+two imported files with their mappings saved, one batch in them from
+before the days the check reads, and the batches-against-deposits check
+run on them, and *Accra Coffee Co.* with only Stripe), and
+runs `apps/dashboard/scripts/layout-check.mjs`. It
 opens the sign-in pages and every signed-in page, a merchant's three tabs,
 its import page (also with a file chosen, so the column-matching form is
 checked) and a connector included, at 1670, 1366, 1024 and 390px, and
 fails if any visible text overlaps other text, a page scrolls sideways, or
-anything covers an item of the open account menu.
+anything covers an item of the open account menu. On the Files tab it also
+reads the check's result as a person would (the batch that was not
+deposited, with its amount and in the colour of a fault; the deposits and
+the batches each paid, each batch id in an element of its own and in none
+of the page's sentences; the note that the files reach back before the
+days read: the seed has a batch from before them), runs the check again
+through the dashboard's own route and holds its answer to a run's id and a
+time, asks that route for checks the tab does not offer, which it must
+refuse, and sends it a request as another site's page would, which it must
+refuse too. Last, it loads the Files tab fifteen times through a proxy
+that hands the document on 2 KB at a time, 40 ms apart: a page built so
+that a part can arrive after the element that holds it is thrown away by
+React on a slow link and drawn again ("hydration failed"), which a fast
+local link never shows. The Files tab failing that, or throwing on any
+load, fails the job. Another page that throws is printed as "Noted, not
+failed (G22)": the other server-drawn pages can still do it now and then,
+and a required job must not fail at random. The job's
+`node scripts/check-file-checks.mjs` step holds the words of that result
+to the stored run: a batch not deposited is said to be; "every batch was
+deposited" only of a run that read both files to the end and paired every
+batch, over every combination of counts, and never while the files hold
+something the run did not read (a file imported after it began, a skipped
+row, a batch dated after the days read); only a clean match is shown as
+paid; a reference from a file is drawn apart, with what cannot be seen in
+it spelled out; and the tab is drawn from data and handed every word.
 
 **When it fails:** the job's summary has a `layout-check` artifact with a
 full-page screenshot of each failing page, named by width and path, and

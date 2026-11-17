@@ -98,6 +98,19 @@ def test_shipped_rail_declarations_state_a_span():
 
 # --- resolution --------------------------------------------------------
 
+def test_a_test_can_fix_the_day_a_check_reads_from(as_of):
+    """Tests whose records are dated to a fixed week ran the check from
+    today: one with October's delivery reports would have begun failing in
+    early December 2026, and September's batch report in January 2027,
+    with nothing changed. `as_of` gives such a test its own day. A day a
+    caller passes itself still wins."""
+    from okwan_recon import runner
+
+    at = as_of(2026, 9, 20)
+    assert runner.resolve_window(spec("120d")) == {"start_date": at - timedelta(days=120), "end_date": at}
+    assert runner.resolve_window(spec("90d"), NOW)["end_date"] == NOW
+
+
 def test_window_resolves_to_concrete_bounds_ending_now():
     window = resolve_window(spec("90d"), NOW)
     assert window == {"start_date": NOW - timedelta(days=90), "end_date": NOW}

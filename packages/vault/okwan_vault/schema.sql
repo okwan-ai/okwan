@@ -130,7 +130,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- reference, currency, totals, per-rail amounts, reasons); a raw rail
 -- record is never written. `error` is scrubbed of stored values and cut
 -- to 300 characters. The newest 50 per (tenant, kind, name) are kept;
--- the insert prunes the rest in the same transaction.
+-- the insert prunes the rest in the same transaction. A run of a check
+-- that reads imported files (`reads_files`) holds references, amounts and
+-- dates taken from them, so it is deleted with any file of its tenant:
+-- when one is deleted and when one expires.
 CREATE TABLE IF NOT EXISTS reconciliation_runs (
     id           text PRIMARY KEY,
     tenant_id    text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -142,8 +145,25 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
     finished_at  timestamptz NOT NULL,
     summary      jsonb,
     rows         jsonb,
-    error        text
+    error        text,
+    reads_files  boolean NOT NULL DEFAULT false
 );
+
+-- `reads_files` came after the table. A run stored before it, or by a
+-- release from before it that is still running beside this one, is not
+-- marked: the store deletes such a run by the name of its check, which the
+-- API tells it from its registry (PostgresStore.file_checks). No list of
+-- names is kept here to fall behind that registry.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'reconciliation_runs'
+          AND column_name = 'reads_files'
+    ) THEN
+        ALTER TABLE reconciliation_runs ADD COLUMN reads_files boolean NOT NULL DEFAULT false;
+    END IF;
+END $$;
 
 -- The newest run per tenant and name is what every page asks for.
 CREATE INDEX IF NOT EXISTS reconciliation_runs_latest_idx

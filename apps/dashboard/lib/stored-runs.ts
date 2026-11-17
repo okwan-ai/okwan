@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { api, session, tenantTree } from "./api";
+import type { PairRun } from "./file-checks";
 import type { ApiRow, Summary } from "./finding";
 
 /**
@@ -63,4 +64,15 @@ export const storedRun = cache(async (tenantId: string, runId: string): Promise<
     { session: await session() },
   );
   return r.ok ? r.data : null;
+});
+
+/** The newest stored run of a two-sided check for one tenant, with its
+ *  rows; null when there is none or the API doesn't answer. Unmetered:
+ *  reading a result never runs anything. */
+export const latestPairRun = cache(async (tenantId: string, name: string): Promise<PairRun | null> => {
+  const r = await api<{ data: Record<string, PairRun> }>(
+    `/v1/tenants/${encodeURIComponent(tenantId)}/runs/latest?kind=pair&name=${encodeURIComponent(name)}`,
+    { session: await session() },
+  );
+  return r.ok ? (r.data.data[tenantId] ?? null) : null;
 });

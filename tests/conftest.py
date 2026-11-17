@@ -19,6 +19,29 @@ def _fresh_rate_limits():
 
 
 @pytest.fixture
+def as_of(monkeypatch):
+    """Fix the day a check counts its lookback from: `as_of(2026, 9, 20)`.
+
+    A check reads a fixed number of days back from now. A test whose
+    records are dated to a fixed week passes only while that week is
+    inside the window, and then starts failing on a date, with nothing
+    changed. Such a test says the day its records are read on.
+    """
+    from datetime import UTC, datetime
+
+    from okwan_recon import runner
+
+    real = runner.resolve_window
+
+    def pin(year: int, month: int, day: int) -> datetime:
+        at = datetime(year, month, day, 12, tzinfo=UTC)
+        monkeypatch.setattr(runner, "resolve_window", lambda spec, now=None: real(spec, now or at))
+        return at
+
+    return pin
+
+
+@pytest.fixture
 def api_key():
     """Headers carrying a real key for a fresh tenant in an in-memory vault.
 

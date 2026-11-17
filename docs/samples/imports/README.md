@@ -78,6 +78,12 @@ deposits** (`batches_deposits`) reports:
   money in that the processor does not explain.
 - The 35.00 monthly fee is money out, so it is not read as a deposit.
 
+In the dashboard this is the merchant's **Files** tab, under **Batches
+against deposits**: once both files are imported, **Check these files**
+runs it and the result stays there, the batch that was not deposited
+first, with its amount and the day it closed, then each deposit and the
+batches it paid.
+
 The card transactions are the shape **Clover card payments vs processor
 settlement** (`clover_payments_settlements`) reads. It matches each card
 sale by amount and day, and uses the last four digits and the
