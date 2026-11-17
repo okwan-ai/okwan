@@ -11,6 +11,7 @@ credentials exist only inside a single function's stack frame.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable, Collection
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
@@ -32,6 +33,7 @@ from .models import (
     ApiKey,
     DailyCheck,
     DuplicateImport,
+    FilesGone,
     ImportFile,
     RunRecord,
     SealedCredential,
@@ -58,6 +60,10 @@ from .usage import (
 
 
 class Store(Protocol):
+    #: The names of the checks that read imported files, asked for when a
+    #: file is removed. Set by the API from its registry.
+    file_checks: Callable[[], Collection[str]]
+
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
     async def get_tenant(self, tenant_id: str) -> Tenant | None: ...
     async def children_of(self, tenant_id: str) -> list[Tenant]: ...
@@ -137,6 +143,7 @@ class Store(Protocol):
         self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
         started_at: datetime, finished_at: datetime, summary: dict | None,
         rows: list | None, error: str | None, reads_files: bool = False,
+        files: Collection[str] | None = None, now: datetime | None = None,
     ) -> RunRecord: ...
     async def list_runs(
         self, tenant_id: str, name: str | None = None, limit: int = 20
@@ -186,6 +193,9 @@ class Store(Protocol):
         self, tenant_id: str, file_id: str, now: datetime | None = None
     ) -> ImportFile | None: ...
     async def delete_import(self, tenant_id: str, file_id: str) -> bool: ...
+    async def imports_live(
+        self, tenant_id: str, file_ids: Collection[str], now: datetime | None = None
+    ) -> bool: ...
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,
         until: date | None = None, after: tuple[date, str, int] | None = None,
@@ -232,6 +242,11 @@ class MemoryStore:
 
     def __init__(self, master: MasterKeyProvider) -> None:
         self._master = master
+        #: The names of the checks that read imported files, asked for when
+        #: a file is removed (the API sets it from its registry). A run of
+        #: one goes with the tenant's files even when it was stored without
+        #: the mark, by a release from before the mark existed.
+        self.file_checks: Callable[[], Collection[str]] = tuple
         self._tenants: dict[str, Tenant] = {}
         self._keys: dict[str, ApiKey] = {}
         self._creds: dict[tuple[str, str, str], SealedCredential] = {}
@@ -648,9 +663,16 @@ class MemoryStore:
         self, tenant_id: str, *, kind: str, name: str, surface: str, status: str,
         started_at: datetime, finished_at: datetime, summary: dict | None,
         rows: list | None, error: str | None, reads_files: bool = False,
+        files: Collection[str] | None = None, now: datetime | None = None,
     ) -> RunRecord:
+        """`files`: the imports whose rows the run holds. It is stored only
+        while every one of them is still there (FilesGone otherwise): a
+        check already reading when its file was deleted must not store,
+        after the delete, a result that quotes it."""
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
+        if files and not await self.imports_live(tenant_id, files, now):
+            raise FilesGone("a file this run read is no longer there")
         rec = RunRecord(
             id=f"run_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id, kind=kind, name=name,
             surface=surface, status=status, started_at=started_at, finished_at=finished_at,
@@ -983,11 +1005,21 @@ class MemoryStore:
         self._drop_file_runs({tenant_id})
         return True
 
+    async def imports_live(
+        self, tenant_id: str, file_ids: Collection[str], now: datetime | None = None
+    ) -> bool:
+        """Whether every one of these is an import of the tenant's that is
+        still there and not expired."""
+        return set(file_ids) <= {f.id for f in self._live_imports(tenant_id, now)}
+
     def _drop_file_runs(self, tenant_ids: set[str]) -> None:
         """A stored run that read imported files holds references, amounts
-        and dates from them: it goes when any file of its account does."""
+        and dates from them: it goes when any file of its account does.
+        One stored without the mark (by a release from before it) goes by
+        the name of its check, where the store has been told the names."""
+        named = set(self.file_checks())
         for run_id in [k for k, r in self._runs.items()
-                       if r.reads_files and r.tenant_id in tenant_ids]:
+                       if (r.reads_files or r.name in named) and r.tenant_id in tenant_ids]:
             del self._runs[run_id]
 
     async def import_rows(

@@ -265,6 +265,26 @@ class ReconResult:
             ),
         }
 
+    def records(self, side: str):
+        """Every record of one side this result holds, wherever it ended
+        up: a pair's, a group's members each, the unpaired, the ambiguous
+        with their candidates, and the ones that could not be checked."""
+        for p in self.matched:
+            if p.members is not None and p.grouped == side:
+                yield from p.members
+            else:
+                yield p.left if side == "left" else p.right
+        yield from (self.unmatched_left if side == "left" else self.unmatched_right)
+        for a in self.ambiguous:
+            if a.side == side:
+                yield a.left
+            else:
+                yield from a.candidates
+        for u in (self.unverifiable_left if side == "left" else self.unverifiable_right):
+            yield u.record
+        for u in self.waiting.get(side, ()):
+            yield u.record
+
     def trimmed_rows(
         self, left_ref: str | None = None, right_ref: str | None = None,
         limit: int | None = None,

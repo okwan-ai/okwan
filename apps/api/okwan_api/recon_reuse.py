@@ -16,6 +16,14 @@ and age, and stores nothing new.
 Per process and per tenant: one tenant never sees another's entry, and a
 credential saved for the tenant forgets its entries, so a fixed key is
 read at once rather than after the window.
+
+A result that read imported files holds their rows whole. It is kept only
+when its run was stored (which the store refuses once a file it read is
+gone), it names the files it read, and every reuse first asks the store
+whether each is still there: a deleted or expired file's rows are never
+answered from here, on this instance or another. An upload or a delete
+forgets the tenant's entries as well, so the next query reads the files
+as they are.
 """
 from __future__ import annotations
 
@@ -37,6 +45,8 @@ class Reused:
     result: Any
     run_id: str | None
     at: float
+    #: The imported files whose rows the result holds, by id.
+    files: frozenset[str] = frozenset()
 
     def age(self, now: float) -> int:
         return int(now - self.at)
@@ -64,12 +74,16 @@ class RunCache:
             return None
         return entry
 
-    def put(self, tenant_id: str, spec, result: Any, run_id: str | None) -> None:
+    def put(self, tenant_id: str, spec, result: Any, run_id: str | None,
+            files: frozenset[str] = frozenset()) -> None:
         key = self._key(tenant_id, spec)
-        self._entries[key] = Reused(result=result, run_id=run_id, at=self._clock())
+        self._entries[key] = Reused(result=result, run_id=run_id, at=self._clock(), files=files)
         self._entries.move_to_end(key)
         while len(self._entries) > MAX_ENTRIES:
             self._entries.popitem(last=False)
+
+    def drop(self, tenant_id: str, spec) -> None:
+        self._entries.pop(self._key(tenant_id, spec), None)
 
     def forget(self, tenant_id: str) -> None:
         for key in [k for k in self._entries if k[0] == tenant_id]:

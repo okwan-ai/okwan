@@ -80,8 +80,15 @@ async def close_store() -> None:
 
 
 def set_store(store: Store) -> None:
-    """Injection point for tests and for a durable implementation."""
+    """Injection point for tests and for a durable implementation.
+
+    The store is told which checks read imported files, from the registry
+    as it is when a file is removed, so that a stored result of one goes
+    with the files even when it was stored without the mark."""
+    from .runs import file_check_names
+
     global _store
+    store.file_checks = file_check_names
     _store = store
 
 

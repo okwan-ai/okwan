@@ -114,6 +114,11 @@ def add_months(at: datetime, months: int) -> datetime:
     return at.replace(year=year, month=month, day=day)
 
 
+class FilesGone(Exception):
+    """A run read rows of an imported file that is no longer there. It is
+    not stored: a stored result quotes its files and never outlives one."""
+
+
 class DuplicateImport(Exception):
     """The same file, for the same kind, is already imported."""
 

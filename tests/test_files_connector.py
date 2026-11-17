@@ -283,6 +283,72 @@ async def test_deleting_a_file_takes_the_stored_result_with_it(api):
     assert again["run_id"] != ran["run_id"] and {r["status"] for r in rows} == {"unmatched_left"}
 
 
+async def test_a_check_already_reading_when_its_file_is_deleted_stores_nothing(api, monkeypatch):
+    """Attacker's pass, the one high finding: start the check, delete the
+    statement while it reads, and the result was stored after the delete
+    and stayed for good, "every batch was deposited" from a file no longer
+    there. The delete is made to land between the two reads here, which is
+    where it landed there; the run's answer says no result was stored."""
+    client, store, shop, _ = api
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    statement = await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    read = store.import_rows
+    deleted = []
+
+    async def read_then_delete(tenant_id, kind, **kw):
+        rows = await read(tenant_id, kind, **kw)
+        if kind == "bank_deposits" and rows and not deleted:
+            deleted.append(await store.delete_import(shop.id, statement["id"]))
+        return rows
+
+    monkeypatch.setattr(store, "import_rows", read_then_delete)
+    ran = await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")
+    assert ran.status_code == 200 and deleted == [True]
+    assert ran.json()["run_id"] is None                                  # read, answered once, and not kept
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs")).json()["data"] == []
+    assert (await client.get(f"/v1/tenants/{shop.id}/runs/latest?kind=pair&name=batches_deposits")).json()["data"] == {}
+    # The next run reads what is left and is kept.
+    again = (await client.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")).json()
+    assert again["run_id"].startswith("run_")
+
+
+async def test_a_deleted_files_rows_are_never_answered_from_the_reuse_window(api):
+    """Attacker's pass: a SQL query over the check keeps its whole result
+    in memory for five minutes, rows and all, and went on answering from
+    it after both files were deleted. A reuse now asks the store whether
+    the files it read are still there, so it holds on an instance the
+    delete did not reach (the store is told directly here, as another
+    instance's delete would), and for a file that expired."""
+    client, store, shop, _ = api
+    sql = {"sql": "SELECT status, count(*) AS n FROM recon.batches_deposits GROUP BY status"}
+
+    async def ask():
+        r = await client.post("/v1/query", json=sql)
+        assert r.status_code == 200, r.text
+        return r.json()["runs"]["recon.batches_deposits"], {row["status"]: row["n"] for row in r.json()["rows"]}
+
+    await _upload(client, shop, BATCHES, BATCH_MAPPING)
+    statement = await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    first, lines = await ask()
+    again, _ = await ask()
+    assert (first["reused"], again["reused"], again["run_id"]) == (False, True, first["run_id"])
+
+    assert await store.delete_import(shop.id, statement["id"]) is True   # not through this instance's route
+    after, left = await ask()
+    assert after["reused"] is False and after["run_id"] != first["run_id"]
+    assert left == {"unmatched_left": 5}                                 # no deposit is in the answer any more
+
+    # Through the route, the tenant's kept results are forgotten at once, and so they are on an upload.
+    kept, _ = await ask()
+    assert kept["reused"] is True
+    await _upload(client, shop, STATEMENT, BANK_MAPPING, "statement.csv")
+    fresh, whole = await ask()
+    assert fresh["reused"] is False and whole == lines
+    files = (await client.get(f"/v1/tenants/{shop.id}/imports")).json()["imports"]
+    assert (await client.delete(f"/v1/tenants/{shop.id}/imports/{files[0]['id']}")).status_code == 204
+    assert (await ask())[0]["reused"] is False
+
+
 def test_the_checks_that_read_files_are_known_from_their_declarations():
     """Which stored results go with a file is read off each check's two
     sides, never from a list someone has to remember to extend."""
@@ -295,6 +361,16 @@ def test_the_checks_that_read_files_are_known_from_their_declarations():
     assert all(spec.name in reading or "files" not in (spec.left.connector, spec.right.connector)
                for spec in all_reconciliations())
     assert [reads_files(spec) for spec in all_across()] == [False] * len(all_across())
+    # A fold over several checks reads files when any of them does (attacker's
+    # pass: this could answer False for every fold and no test noticed).
+    from okwan_recon.across import AcrossRails, Rail
+
+    def fold(*names):
+        return AcrossRails(name="fixture_fold", rails=[Rail(reconciliation=n, collected="amount_minor") for n in names],
+                           ledger_total="total_minor")
+
+    assert reads_files(fold("shopify_stripe", "square_payouts_deposits")) is True
+    assert reads_files(fold("shopify_stripe", "shopify_paypal")) is False
 
 
 async def test_batches_against_deposits_as_a_sql_table(api):

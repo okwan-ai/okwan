@@ -38,7 +38,14 @@ from okwan_files import (
 from okwan_files import parse as parse_mod
 from okwan_files.guard import holds_card_number, is_card_column, is_card_number, luhn
 from okwan_files.mapping import parse_date, parse_money
-from okwan_vault import DuplicateImport, EnvMasterKey, MemoryStore, PostgresStore, new_key
+from okwan_vault import (
+    DuplicateImport,
+    EnvMasterKey,
+    FilesGone,
+    MemoryStore,
+    PostgresStore,
+    new_key,
+)
 from okwan_vault.models import add_months
 
 DSN = os.environ.get("OKWAN_VAULT_DATABASE_URL", "")
@@ -575,28 +582,137 @@ async def test_a_run_says_whether_it_read_files_and_by_default_it_did_not(store)
     assert [r.reads_files for r in await store.list_runs(t.id, name="batches_deposits")] == [True]
 
 
-async def test_runs_stored_before_the_mark_are_marked_by_the_checks_that_read_files(store):
+async def test_a_result_stored_without_the_mark_goes_with_its_file_by_the_name_of_its_check(store):
+    """The mark came after the table, and a release from before it can
+    still be storing runs beside this one during a deploy. Such a run says
+    nothing about files. Attacker's pass: it outlived its file for good.
+    The store is told the names of the checks that read files (the API
+    tells it from its registry) and takes such a run by its name."""
+    told, untold = await store.create_tenant("Told"), await store.create_tenant("Untold")
+    files = {t.id: await _save(store, t.id) for t in (told, untold)}
+    for t in (told, untold):
+        for name in ("batches_deposits", "avatax_collected_filed", "shopify_stripe"):
+            await _ran(store, t.id, name, reads_files=False)
+
+    # A store that was told nothing (the vault's own command line) takes the file and no unmarked run.
+    assert tuple(store.file_checks()) == ()
+    assert await store.delete_import(untold.id, files[untold.id].id) is True
+    assert await _stored(store, untold.id) == ["avatax_collected_filed", "batches_deposits", "shopify_stripe"]
+
+    store.file_checks = lambda: ["batches_deposits", "avatax_collected_filed"]
+    assert await store.delete_import(told.id, files[told.id].id) is True
+    assert await _stored(store, told.id) == ["shopify_stripe"]
+    # The sweep and an upload's own clearing of expired files know the names as well.
+    long_ago = datetime.now(UTC) - timedelta(days=400)
+    await _save(store, untold.id, now=long_ago)
+    assert await store.sweep_imports() >= 1
+    assert await _stored(store, untold.id) == ["shopify_stripe"]
+    await _ran(store, told.id, "batches_deposits", reads_files=False)
+    await _save(store, told.id, now=long_ago)
+    await _save(store, told.id, BANK_CSV, BANK_MAPPING)
+    assert await _stored(store, told.id) == ["shopify_stripe"]
+
+
+async def test_the_api_tells_the_store_which_checks_read_files_from_its_registry():
+    """No list of names to fall behind: the store asks, when a file is
+    removed, and the answer is read off each registered check's two sides."""
+    import okwan_api.main  # noqa: F401  (registers the declarations)
+    from okwan_api.auth import set_store
+    from okwan_recon.registry import all_reconciliations
+
+    store = MemoryStore(EnvMasterKey(new_key()))
+    set_store(store)
+    reading = {spec.name for spec in all_reconciliations() if "files" in (spec.left.connector, spec.right.connector)}
+    assert set(store.file_checks()) == reading and len(reading) >= 6
+    assert "shopify_stripe" not in reading
+
+
+async def test_a_run_whose_file_is_gone_is_not_stored(store):
+    """Attacker's pass: a check already reading when its statement was
+    deleted stored its result after the delete, and nothing ever removed
+    it: the tab said "every batch was deposited" from a file that was no
+    longer there. A run names the files its rows came from and is stored
+    only while each is still there, expired ones included."""
+    t, other = await store.create_tenant("Dealer"), await store.create_tenant("Other")
+    batches = await _save(store, t.id)
+    statement = await _save(store, t.id, BANK_CSV, BANK_MAPPING)
+    theirs = await _save(store, other.id)
+
+    async def ran(files, at=None):
+        at = at or datetime.now(UTC)
+        return await store.add_run(t.id, kind="pair", name="batches_deposits", surface="dashboard", status="ok",
+                                   started_at=at, finished_at=at, summary={"matched": 1}, rows=[], error=None,
+                                   reads_files=True, files=files, now=at)
+
+    kept = await ran({batches.id, statement.id})
+    assert (await store.get_run(t.id, kept.id)).reads_files is True
+    assert await store.imports_live(t.id, {batches.id, statement.id}) is True
+    assert await store.imports_live(t.id, [theirs.id]) is False          # another account's file is not this one's
+    with pytest.raises(FilesGone):
+        await ran({batches.id, theirs.id})
+
+    assert await store.delete_import(t.id, statement.id) is True
+    assert await _stored(store, t.id) == []
+    with pytest.raises(FilesGone):                                        # the run that was reading it
+        await ran({batches.id, statement.id})
+    assert await _stored(store, t.id) == []
+    assert (await ran({batches.id})).id.startswith("run_")               # one that read only what is left
+    assert (await ran(set())).id.startswith("run_")                      # one that read no row at all
+    # A file past its thirteen months is gone to a run even before the sweep has taken it.
+    later = datetime.now(UTC) + timedelta(days=400)
+    assert await store.imports_live(t.id, [batches.id], now=later) is False
+    with pytest.raises(FilesGone):
+        await ran({batches.id}, at=later)
+
+
+async def test_a_delete_and_a_run_being_stored_never_leave_the_run_behind(store):
+    """The same thing as it happens: the delete and the store of the run
+    at the same moment, many times over. Whichever comes first, no run
+    that quotes the file is left once the file is gone."""
+    import asyncio
+
+    t = await store.create_tenant("Dealer")
+    left_behind = 0
+    for _round in range(25):
+        f = await _save(store, t.id)
+
+        async def keep(file_id=f.id):
+            try:
+                at = datetime.now(UTC)
+                await store.add_run(t.id, kind="pair", name="batches_deposits", surface="rest", status="ok",
+                                    started_at=at, finished_at=at, summary={}, rows=[], error=None,
+                                    reads_files=True, files={file_id})
+            except FilesGone:
+                pass
+
+        await asyncio.gather(keep(), store.delete_import(t.id, f.id), keep(), keep())
+        left_behind += len(await store.list_runs(t.id))
+    assert left_behind == 0
+
+
+async def test_the_mark_is_added_to_a_database_from_before_it_and_starts_at_once_all_come_up(store):
     """The column came after the table. A database from before it gets it
-    on the next start, and the results already stored for the file checks
-    are marked, so they too go with their files."""
+    on the next start; stored runs are kept and stay unmarked (they go by
+    name, above). Attacker's pass: two instances starting at once both
+    tried to add it, and the one that came second did not start."""
+    import asyncio
+
+    import asyncpg
+    from okwan_vault.postgres import _raced
+
+    assert _raced(asyncpg.DuplicateColumnError("column already exists")) is True
     if isinstance(store, MemoryStore):
         pytest.skip("the in-memory store has no earlier shape")
     t = await store.create_tenant("Dealer")
-    file = await _save(store, t.id)
-    for name in ("batches_deposits", "avatax_collected_filed", "shopify_stripe"):
-        await _ran(store, t.id, name, reads_files=False)
+    await _ran(store, t.id, "batches_deposits", reads_files=False)
     await store.pool.execute("ALTER TABLE reconciliation_runs DROP COLUMN reads_files")
     try:
-        await store._migrate()
+        await asyncio.gather(store._migrate(), store._migrate(), store._migrate())
     finally:
         await store.pool.execute(
             "ALTER TABLE reconciliation_runs ADD COLUMN IF NOT EXISTS reads_files boolean NOT NULL DEFAULT false")
-    marked = {r.name: r.reads_files for r in await store.list_runs(t.id)}
-    assert marked == {"batches_deposits": True, "avatax_collected_filed": True, "shopify_stripe": False}
-    await store._migrate()                                            # a second start changes nothing
-    assert {r.name: r.reads_files for r in await store.list_runs(t.id)} == marked
-    assert await store.delete_import(t.id, file.id) is True
-    assert await _stored(store, t.id) == ["shopify_stripe"]
+    await store._migrate()                                            # a later start changes nothing
+    assert [(r.name, r.reads_files) for r in await store.list_runs(t.id)] == [("batches_deposits", False)]
 
 
 async def test_deleting_a_tenant_deletes_its_imports(store):

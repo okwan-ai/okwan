@@ -149,8 +149,11 @@ CREATE TABLE IF NOT EXISTS reconciliation_runs (
     reads_files  boolean NOT NULL DEFAULT false
 );
 
--- `reads_files` came after the table. The runs stored before it are
--- marked by the names of the checks that read files at that moment, once.
+-- `reads_files` came after the table. A run stored before it, or by a
+-- release from before it that is still running beside this one, is not
+-- marked: the store deletes such a run by the name of its check, which the
+-- API tells it from its registry (PostgresStore.file_checks). No list of
+-- names is kept here to fall behind that registry.
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -159,10 +162,6 @@ BEGIN
           AND column_name = 'reads_files'
     ) THEN
         ALTER TABLE reconciliation_runs ADD COLUMN reads_files boolean NOT NULL DEFAULT false;
-        UPDATE reconciliation_runs SET reads_files = true
-        WHERE name IN ('batches_deposits', 'square_payouts_deposits',
-                       'clover_payments_settlements', 'delivery_payout_lines',
-                       'delivery_payouts_deposits', 'avatax_collected_filed');
     END IF;
 END $$;
 

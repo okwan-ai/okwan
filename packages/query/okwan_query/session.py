@@ -13,6 +13,7 @@ next query sees the upstream as it is then.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -76,7 +77,7 @@ class QuerySession:
         resolver: CredentialResolver = env_credentials,
         max_records: int = DEFAULT_LIMIT,
         on_run: Callable[..., Awaitable[Any]] | None = None,
-        reuse: Callable[[Any], ReusedRun | None] | None = None,
+        reuse: Callable[[Any], ReusedRun | None | Awaitable[ReusedRun | None]] | None = None,
         admit: Callable[[int], None] | None = None,
         fresh: bool = False,
     ) -> None:
@@ -214,7 +215,7 @@ class QuerySession:
         self.runs[table.qualified] = {"run_id": run_id, "reused": False}
         return len(result.rows())
 
-    def _plan_runs(self, tables: list[Table]) -> None:
+    async def _plan_runs(self, tables: list[Table]) -> None:
         """Before anything is fetched: which `recon.*` tables read a recent
         run, and whether the caller may start the rest. A table missing a
         connection fails here as it would in `load`, before it can count
@@ -224,6 +225,8 @@ class QuerySession:
             if table.connector != RECON or table.qualified in self._loaded:
                 continue
             reused = self._reuse(recon_spec(table)) if self._reuse is not None else None
+            if inspect.isawaitable(reused):
+                reused = await reused
             if reused is not None:
                 self._planned[table.qualified] = reused
                 continue
@@ -245,7 +248,7 @@ class QuerySession:
         """
         sql = check_statement(sql)
         tables = self.referenced_tables(sql)
-        self._plan_runs(tables)
+        await self._plan_runs(tables)
         loaded: dict[str, int] = {}
         for table in tables:
             count = await self.load(table)

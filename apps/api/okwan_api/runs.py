@@ -22,8 +22,9 @@ from typing import Any
 from okwan_recon.across import AcrossRails
 from okwan_recon.engine import ref_paths
 from okwan_recon.paging import MAX_ROWS
+from okwan_recon.registry import all_reconciliations
 from okwan_recon.registry import get as get_reconciliation
-from okwan_vault import RunRecord
+from okwan_vault import FilesGone, RunRecord
 
 from .auth import get_store
 from .scrub import scrub, secrets_of
@@ -59,9 +60,15 @@ async def record_run(
         rec = await get_store().add_run(
             tenant.id, kind=kind, name=spec.name, surface=surface, status=status,
             started_at=started, finished_at=run_clock(), summary=summary, rows=rows,
-            error=err, reads_files=reads_files(spec),
+            error=err, reads_files=reads_files(spec), files=files_read(spec, result),
         )
         return rec.id
+    except FilesGone:
+        # Not a fault: a file the run read was deleted, or expired, while it
+        # ran. Its result quotes that file, so it is not kept; the caller
+        # is told there is no stored run, and the next run reads what is left.
+        logger.info("run of %s not kept for %s: a file it read is gone", spec.name, getattr(tenant, "id", tenant))
+        return None
     except Exception:  # a lost record must not fail the run
         logger.warning("run not recorded for %s", getattr(tenant, "id", tenant), exc_info=True)
         return None
@@ -74,6 +81,31 @@ def reads_files(spec) -> bool:
     if isinstance(spec, AcrossRails):
         return any(reads_files(get_reconciliation(rail.reconciliation)) for rail in spec.rails)
     return FILES in (spec.left.connector, spec.right.connector)
+
+
+def file_check_names() -> list[str]:
+    """The checks that read imported files, from the registry as it is
+    now. The store asks for these when a file is removed (`file_checks`):
+    a run of one goes with the tenant's files even when it was stored
+    without the mark, by a release from before the mark existed."""
+    return sorted(spec.name for spec in all_reconciliations() if reads_files(spec))
+
+
+def files_read(spec, result) -> frozenset[str]:
+    """The imported files whose rows a result holds, by id: every record
+    of a side the files connector served says which import it came from.
+    The store keeps the run only while each of them is still there."""
+    if result is None or isinstance(spec, AcrossRails):
+        return frozenset()
+    found: set[str] = set()
+    for side, source in (("left", spec.left), ("right", spec.right)):
+        if source.connector != FILES:
+            continue
+        for record in result.records(side):
+            file_id = record.get("file_id") if isinstance(record, dict) else None
+            if isinstance(file_id, str):
+                found.add(file_id)
+    return frozenset(found)
 
 
 def run_total(rec: RunRecord) -> int | None:
