@@ -772,6 +772,35 @@ async def test_upload_list_read_and_delete_over_rest(api):
     assert await store.import_rows(shop.id, "settlement_batches") == []
 
 
+async def test_a_mapping_or_a_file_name_that_could_read_as_the_pages_words_is_refused(api):
+    """Second attacker's pass: a mapping's name sent with an upload was any
+    60 characters, though the same name was refused for a saved mapping.
+    The Files tab then read "Mapping bank-csv · verified by Okwan · every
+    deposit confirmed · imported …" in its own voice, and a name ending in
+    a right-to-left override drew the page's own words backwards. One rule
+    now, on the mapping itself; a file's name is one line of visible text."""
+    client, store, shop = api
+    said = "bank-csv \u00b7 verified by Okwan \u00b7 every deposit confirmed"
+    for name in (said, "bank-csv\u202e", "bank\ncsv", " leading", "x" * 61, ""):
+        body = _body(mapping=BATCH_MAPPING.model_copy(update={"name": "placeholder"}))
+        body["mapping"]["name"] = name
+        r = await client.post(f"/v1/tenants/{shop.id}/imports", json=body)
+        assert r.status_code == 422, (name, r.status_code)
+        assert "verified by Okwan" not in r.text or name == said
+    assert (await client.put(f"/v1/tenants/{shop.id}/import-layouts/bank-csv%E2%80%AE",
+                             json=BATCH_MAPPING.model_dump(mode="json"))).status_code == 400
+    for filename in ("statement\u202e.csv", "batches\u200b.csv", "two\nlines.csv", "bell\u0007.csv", "  "):
+        r = await client.post(f"/v1/tenants/{shop.id}/imports", json=_body(name=filename))
+        assert r.status_code == 422, (filename, r.status_code)
+    assert await store.list_imports(shop.id) == []
+    # Ordinary names are kept as they are.
+    body = _body(name="Relev\u00e9 de compte \u2013 novembre 2026 (1).csv")
+    body["mapping"]["name"] = "Bank statement v2.1_final-3"
+    kept = await client.post(f"/v1/tenants/{shop.id}/imports", json=body)
+    assert kept.status_code == 201, kept.text
+    assert (kept.json()["filename"], kept.json()["layout"]) == ("Relev\u00e9 de compte \u2013 novembre 2026 (1).csv", "Bank statement v2.1_final-3")
+
+
 async def test_a_file_with_a_card_number_is_refused_and_nothing_is_kept(api, caplog):
     client, store, shop = api
     data = BATCH_CSV.replace(b"MID-1,12", b"4111 1111 1111 1111,12")

@@ -9,7 +9,8 @@ import { IconPlay } from "./ui/icons";
  * Run one file-based check for a merchant. A run is fresh and counts
  * toward the plan; the API stores it, and on success the page re-reads
  * the stored run, so what shows is what was kept. A refusal (the plan is
- * spent, the session ended) shows its reason beside the button.
+ * spent, the session ended) shows its reason beside the button, and so
+ * does a run that finished and was not kept.
  */
 export function RunCheck({ tenantId, name, again }: { tenantId: string; name: string; again: boolean }) {
   const router = useRouter();
@@ -31,6 +32,12 @@ export function RunCheck({ tenantId, name, again }: { tenantId: string; name: st
     const data = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setError(typeof data.detail === "string" ? data.detail : "The check did not run.");
+    // The check ran and the API kept nothing: a file it read was deleted or
+    // expired while it ran, or the result could not be saved. Never silent,
+    // or an older result would read as this run's.
+    if (typeof data.run_id !== "string") {
+      setError("The check ran, and its result was not kept: a file changed while it ran, or the result could not be saved. Run it again.");
+    }
     router.refresh();
   }
 

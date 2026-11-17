@@ -1,4 +1,6 @@
-import type { PairRun } from "@/lib/file-checks";
+"use client";
+
+import { asWritten, type Shown } from "@/lib/file-checks";
 import { day, kindLabel, type ImportFile, type Layout, span } from "@/lib/imports";
 import { DeleteButton } from "./delete-button";
 import { FileCheck } from "./file-check";
@@ -13,12 +15,32 @@ import { Section } from "./ui/page-header";
 const FORMAT: Record<string, string> = { csv: "CSV", xlsx: "Excel", ofx: "OFX" };
 
 /**
+ * A file's name, or a mapping's, as the merchant gave it. The API holds
+ * both to plain visible text now; names stored before it did are drawn
+ * the same way as a reference from a file: in an element and a direction
+ * of their own, with any character that cannot be seen spelled out, so
+ * none of them can turn the page's own words around or pass for them.
+ */
+function Named({ value }: { value: string }) {
+  return <bdi dir="ltr" data-merchant-name>{asWritten(value)}</bdi>;
+}
+
+/**
  * A merchant's Files tab: what its files show (each batch against the
  * deposit that paid it), the files imported for it, and the column
  * mappings saved for the next one. A file holds only the columns its
  * mapping named, and goes 13 months after upload; deleting it deletes its
  * rows at once, and with them every stored result of a check that read
  * this merchant's files.
+ *
+ * A client component, drawn from data, like the Findings and Connections
+ * tabs, and for a reason two attacker's passes found between them. A page
+ * reaches the browser in pieces. Drawn on the server, the tab's later parts
+ * were sent in later pieces than the elements that hold them, and on a slow
+ * link the browser took such an element over before its inside had
+ * arrived, took it again when it had, and React threw the whole page away
+ * and drew it again (one load in seven at 400 kbit/s). Handed its data,
+ * the tab is one piece: nothing in it can arrive after what holds it.
  */
 export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
   tenantId: string;
@@ -26,8 +48,8 @@ export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
   layouts: Layout[];
   /** The listings didn't load: say so instead of claiming none. */
   unavailable: boolean;
-  /** The newest stored run of the batches-against-deposits check, if any. */
-  check: PairRun | null;
+  /** The newest stored run of the batches-against-deposits check, put into words on the server. */
+  check: Shown;
 }) {
   const id = encodeURIComponent(tenantId);
   const importHref = `/merchants/${id}/import`;
@@ -36,7 +58,7 @@ export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
   const checkable = !unavailable && files.length > 0;
   return (
     <div>
-      {checkable && <FileCheck tenantId={tenantId} files={files} run={check} />}
+      {checkable && <FileCheck tenantId={tenantId} files={files} shown={check} />}
       <Section
         className={checkable ? undefined : "mt-0"}
         title="Imported files"
@@ -64,7 +86,7 @@ export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
               {files.map((f) => (
                 <li key={f.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5">
                   <div className="min-w-0 flex-1 basis-64">
-                    <p className="truncate font-semibold" title={f.filename}>{f.filename}</p>
+                    <p className="truncate font-semibold" title={asWritten(f.filename)}><Named value={f.filename} /></p>
                     <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft">
                       <Badge>{kindLabel(f.kind)}</Badge>
                       <span>{f.rows.toLocaleString("en-US")} {f.rows === 1 ? "row" : "rows"}</span>
@@ -72,11 +94,11 @@ export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
                       <span>{FORMAT[f.format] ?? f.format}</span>
                     </p>
                     <p className="mt-1 text-xs text-ink-soft">
-                      Mapping <span className="font-medium text-ink">{f.layout}</span> · imported {day(f.created_at)} · kept until {day(f.expires_at)}
+                      Mapping <span className="font-medium text-ink"><Named value={f.layout} /></span> · imported {day(f.created_at)} · kept until {day(f.expires_at)}
                       {f.skipped > 0 && <> · {f.skipped} {f.skipped === 1 ? "row" : "rows"} skipped</>}
                     </p>
                   </div>
-                  <DeleteButton url={`/api/merchants/${id}/imports/${encodeURIComponent(f.id)}`} what={f.filename} confirmLabel="Delete file and rows" />
+                  <DeleteButton url={`/api/merchants/${id}/imports/${encodeURIComponent(f.id)}`} what={asWritten(f.filename)} confirmLabel="Delete file and rows" />
                 </li>
               ))}
             </CardBody>
@@ -95,14 +117,14 @@ export function FilesPanel({ tenantId, files, layouts, unavailable, check }: {
               {layouts.map((l) => (
                 <li key={l.name} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3">
                   <div className="min-w-0 flex-1 basis-56">
-                    <p className="truncate font-semibold">{l.name}</p>
+                    <p className="truncate font-semibold"><Named value={l.name} /></p>
                     <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-soft">
                       <Badge>{kindLabel(l.kind)}</Badge>
                       <span>{Object.keys(l.mapping.columns ?? {}).length} columns mapped</span>
                       <span>saved {day(l.updated_at)}</span>
                     </p>
                   </div>
-                  <DeleteButton url={`/api/merchants/${id}/import-layouts/${encodeURIComponent(l.name)}`} what={`the mapping ${l.name}`} />
+                  <DeleteButton url={`/api/merchants/${id}/import-layouts/${encodeURIComponent(l.name)}`} what={`the mapping ${asWritten(l.name)}`} />
                 </li>
               ))}
             </CardBody>

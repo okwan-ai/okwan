@@ -66,9 +66,12 @@ const parts: Part[] = [
           <li>
             <strong>Records from connected services.</strong> Okwan reads them when you run a check or call the API
             or MCP server, and once a day for the daily check described below, and holds them in memory only for
-            that read. What we store is the result of a
+            that read. One exception: a check run through SQL is held in memory for up to five minutes, so that
+            the next query reads it again without asking your services twice; if it read a file you imported, it
+            is dropped the moment that file is deleted. What we store is the result of a
             reconciliation: a summary, and for each order or record its reference, date, currency, totals, the
-            amount each service reported, and the outcome and reason. A short error message is kept if a check failed. We keep the
+            amount each service reported, where records are matched as a group the short identifier they share
+            (a merchant id, a state), and the outcome and reason. A short error message is kept if a check failed. We keep the
             newest 50 results of each check. We do not store the raw records, card numbers, or your customers&rsquo;
             names or email addresses from those services, and we do not store SQL queries or their results.
           </li>
@@ -374,7 +377,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 16, 2026"
+      updated="November 17, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

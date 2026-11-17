@@ -30,7 +30,7 @@ for (const name of ["money", "file-checks"]) {
   writeFileSync(join(out, `${name}.js`), js.outputText);
 }
 const {
-  asWritten, batchLines, dayOf, drawn, FILE_CHECKS, LINES_SHOWN, paidClean, reach, REF_SHOWN, unread, verdict,
+  asWritten, batchLines, dayOf, drawn, FILE_CHECKS, instant, LINES_SHOWN, notRead, paidClean, reach, REF_SHOWN, resultOf, shownOf, verdict,
 } = require(join(out, "file-checks.js"));
 
 const STATUSES = ["matched", "matched_explained", "matched_discrepant", "unmatched_left", "unmatched_right",
@@ -189,6 +189,10 @@ check("whatever the counts, the clean line and its green are said only of a run 
         const at = `${how}: ${JSON.stringify({ ...s, coverage: undefined })} -> "${said.headline}" (${said.tone})`;
         assert.equal(EVERY.test(said.headline), earned, at);
         assert.equal(said.tone === "ok", earned && unmatched_right === 0, at);
+        // And with something on file the run did not read, never, whatever the counts.
+        const short = verdict(s, true);
+        assert.ok(!EVERY.test(short.headline) && short.tone !== "ok", `not everything read, ${at} -> "${short.headline}"`);
+        assert.equal(short.tone === "danger", said.tone === "danger", at);
         // A batch with no deposit is the alarm, unless no deposit was read at all:
         // said by the run, or, where it says nothing, by there being none in any row.
         const deposits = how === "no deposit read" ? 0
@@ -212,12 +216,99 @@ check("every batch means every batch the run read: the days it read are said, ne
   // With nothing said about what was read, the line still claims no more than the run.
   assert.equal(verdict(summary({ matched: 2, coverage: null })).headline, "Every batch the check read was deposited");
   // And a file that starts before the first day read is said to hold lines that were not checked.
-  assert.equal(unread("batch report", "2026-07-07", reach(s).from),
-    "The batch report on file goes back to 7 Jul 2026. Batches before 17 Jul 2026 were not checked.");
-  assert.equal(unread("bank statement", "2026-06-30", reach(s).from),
-    "The bank statement on file goes back to 30 Jun 2026. Deposits before 17 Jul 2026 were not checked.");
-  assert.equal(unread("batch report", "2026-07-17", reach(s).from), "", "a file inside the days read needs no such line");
-  assert.equal(unread("batch report", null, reach(s).from), "");
+  const file = (kind, over = {}) => ({ kind, created_at: "2026-11-10T09:00:00+00:00", first_date: "2026-08-01", last_date: "2026-11-10", skipped: 0, ...over });
+  const run = { started_at: "2026-11-14T12:53:00+00:00" };
+  const span = reach(s);
+  assert.deepEqual([span.from, span.to], ["2026-07-17", "2026-11-14"]);
+  assert.deepEqual(notRead([file("settlement_batches", { first_date: "2026-07-07" }), file("bank_deposits", { first_date: "2026-06-30" })], run, span), {
+    notes: ["The batch report on file goes back to 7 Jul 2026. Batches before 17 Jul 2026 were not checked.",
+      "The bank statement on file goes back to 30 Jun 2026. Deposits before 17 Jul 2026 were not checked."],
+    missed: false });
+  assert.deepEqual(notRead([file("settlement_batches", { first_date: "2026-07-17" }), file("bank_deposits", { first_date: null })], run, span),
+    { notes: [], missed: false }, "files inside the days read need no such line");
+});
+
+check("what is on file that the run did not read is said, and takes the clean line away", () => {
+  // Second attacker's pass. Each of these sat under "Every batch … was
+  // deposited", in green, with an unpaid batch on file: a batch report
+  // imported while the check ran (the page compared the file's time with
+  // the run's end, not its start); a batch in a row the importer skipped;
+  // a batch dated after the days the check reads.
+  const file = (kind, over = {}) => ({ kind, created_at: "2026-11-10T09:00:00+00:00", first_date: "2026-08-01", last_date: "2026-11-10", skipped: 0, ...over });
+  const s = summary({ matched: 3 });
+  const span = reach(s);
+  const run = { started_at: "2026-11-14T12:53:00.349+00:00", finished_at: "2026-11-14T12:53:01.553+00:00" };
+  const both = [file("settlement_batches"), file("bank_deposits")];
+  assert.deepEqual(notRead(both, run, span), { notes: [], missed: false });
+
+  const during = notRead([...both, file("settlement_batches", { created_at: "2026-11-14T12:53:00.507+00:00" })], run, span);
+  assert.deepEqual(during, { notes: ["A file was imported after this check began. Run it again to include it."], missed: true });
+  assert.equal(notRead([...both, file("bank_deposits", { created_at: "2026-11-15T08:00:00+00:00" })], run, span).missed, true);
+  assert.equal(notRead([...both, file("bank_deposits", { created_at: "not a time" })], run, span).missed, true, "a time that cannot be read is not known to be before the run");
+  assert.equal(notRead([file("settlement_batches", { created_at: run.started_at })], run, span).missed, false);
+
+  assert.deepEqual(notRead([file("settlement_batches", { skipped: 1 }), file("bank_deposits")], run, span), {
+    notes: ["1 row of the batch report on file could not be read when it was imported, and is in no line here."], missed: true });
+  assert.deepEqual(notRead([file("settlement_batches", { skipped: 2 }), file("settlement_batches", { skipped: 3 }), file("bank_deposits", { skipped: 4 })], run, span), {
+    notes: ["5 rows of the batch report on file could not be read when it was imported, and are in no line here.",
+      "4 rows of the bank statement on file could not be read when it was imported, and are in no line here."], missed: true });
+  // A skipped line of the statement can only be a deposit: a batch is not left unseen by it.
+  assert.equal(notRead([file("settlement_batches"), file("bank_deposits", { skipped: 4 })], run, span).missed, false);
+
+  assert.deepEqual(notRead([file("settlement_batches", { last_date: "2026-11-19" }), file("bank_deposits", { last_date: "2026-11-16" })], run, span), {
+    notes: ["The batch report on file runs to 19 Nov 2026. Batches after 14 Nov 2026 were not checked.",
+      "The bank statement on file runs to 16 Nov 2026. Deposits after 14 Nov 2026 were not checked."], missed: true });
+  assert.equal(notRead([file("settlement_batches", { last_date: "2026-11-14" })], run, span).missed, false);
+
+  // The clean line is not said then, and an unpaid batch is still the headline.
+  assert.deepEqual([verdict(s).headline, verdict(s).tone], ["Every batch since 17 Jul 2026 was deposited", "ok"]);
+  assert.deepEqual([verdict(s, true).headline, verdict(s, true).tone],
+    ["No missing deposit among what was read, and not everything was read", "warn"]);
+  assert.equal(verdict(summary({ matched: 3, unmatched_right: 1 }), true).headline, "No missing deposit among what was read, and not everything was read");
+  assert.equal(verdict(summary({ matched: 3, unmatched_left: 1 }), true).headline, "1 batch was not deposited");
+});
+
+check("the result card is given every word: what was read, what was not, and the notes under the lines", () => {
+  // Second attacker's pass: the line for a run that stopped at its cap, the
+  // lines for what is on file and was not read, the footnotes and the
+  // colours of the headline could each be taken out of the page with every
+  // check green. They are written here, where this check reads them, and
+  // the card's part is held below to drawing each one.
+  const file = (kind, over = {}) => ({ kind, created_at: "2026-11-10T09:00:00+00:00", first_date: "2026-08-01", last_date: "2026-11-04", skipped: 0, ...over });
+  const run = (over = {}) => ({ id: "run_1", status: "ok", started_at: "2026-11-14T12:53:00+00:00", finished_at: "2026-11-14T12:53:01+00:00",
+    error: null, rows_total: 3, rows: [
+      row("unmatched_left", { left_ref: "B-2004", evidence: { record: { amount_minor: 123827, currency: "USD", when: "2026-11-02" } } }),
+      row("matched", { left_ref: "B-2001", right_ref: "D-1", evidence: { compared: { left_minor: 178664, right_minor: 178664, currency: "USD" }, dated: { left: "2026-10-30", right: "2026-11-02" } } }),
+      row("matched", { left_ref: "B-2002", right_ref: "D-2", evidence: { compared: { left_minor: 1, right_minor: 1, currency: "USD" } } }),
+    ], ...over });
+  const s = summary({ matched: 2, unmatched_left: 1 });
+  const got = resultOf(run(), s, [file("settlement_batches", { first_date: "2026-07-07" }), file("bank_deposits")]);
+  assert.deepEqual({ ...got, attention: got.attention.length, paid: got.paid.length }, {
+    headline: "1 batch was not deposited", tone: "danger",
+    counts: "2 deposits matched to their batches · 1 batch not deposited",
+    checked: "Checked 14 Nov 2026, 12:53 UTC", cut: "",
+    notes: ["The batch report on file goes back to 7 Jul 2026. Batches before 17 Jul 2026 were not checked."],
+    read: "The check read 4 batches and 2 deposits dated 17 Jul 2026 to 14 Nov 2026. Anything in the files outside those days is not in this result.",
+    attention: 1, paid: 2, paidCount: "2 deposits matched to their batches", paidShown: "",
+    footnotes: ["The newest statement on file runs to 4 Nov 2026. A batch closed in the last few days before that may simply not be deposited yet."],
+  });
+  // A run that stopped at its cap, with more lines than the page draws.
+  const cut = summary({ matched: 5000, coverage: { left: side(5000, { truncated: true }), right: side(5000) } });
+  const long = resultOf(run({ rows_total: 5000, rows: Array.from({ length: 1000 }, (_, n) => run().rows[1 + (n % 2)]) }), cut, [file("settlement_batches"), file("bank_deposits")]);
+  assert.deepEqual([long.headline, long.tone, long.cut, long.paidCount, long.paidShown, long.footnotes, long.paid.length], [
+    "No missing deposit among what was read, and not everything was read", "warn",
+    "It stopped at 5,000 batches, oldest first: the files hold more in those days, and what was not read is in no line here.",
+    "5,000 deposits matched to their batches", " · the first 100 listed",
+    ["Showing 100 of 5,000 lines, the ones that need a look first. The API and MCP return the stored result."], 100]);
+  // A clean run with a file imported after it began is not clean on the page.
+  const clean = summary({ matched: 2 });
+  const stale = resultOf(run({ rows: run().rows.slice(1), rows_total: 2 }), clean, [file("settlement_batches"), file("bank_deposits", { created_at: "2026-11-14T12:53:00.500+00:00" })]);
+  assert.deepEqual([stale.headline, stale.tone, stale.notes], ["No missing deposit among what was read, and not everything was read", "warn",
+    ["A file was imported after this check began. Run it again to include it."]]);
+  const fresh = resultOf(run({ rows: run().rows.slice(1), rows_total: 2 }), clean, [file("settlement_batches"), file("bank_deposits")]);
+  assert.deepEqual([fresh.headline, fresh.tone, fresh.notes, fresh.footnotes, fresh.paidCount], ["Every batch since 17 Jul 2026 was deposited", "ok", [], [], "2 deposits matched to their batches"]);
+  assert.equal(instant("2026-11-14T23:59:59+00:00"), "14 Nov 2026, 23:59 UTC");
+  assert.equal(instant("soon"), "");
 });
 
 check("a run that stopped at its cap never says every batch was deposited", () => {
@@ -299,30 +390,42 @@ check("a word from a merchant's file is never inside a sentence the page writes"
   assert.deepEqual([plus.detail, plus.parts.map((p) => p.ref)], ["Paid 1 batch:", ["A+B"]]);
 });
 
-check("a reference is drawn so that what cannot be seen is spelled out, and a long one is cut with its length", () => {
+check("a reference is drawn so that what cannot be seen is spelled out, and a file's reference is drawn whole", () => {
   // Attacker's pass: "B-2004" not deposited and "B-2004" + a zero-width
   // space paid, two lines apart and identical to the eye; and an id with a
   // right-to-left override that drew the words after it backwards.
+  const at = (code) => String.fromCodePoint(code);
+  const spelled = (code) => `[U+${code.toString(16).toUpperCase().padStart(4, "0")}]`;
   assert.equal(asWritten("B-2004"), "B-2004");
-  assert.equal(asWritten("B-2004​"), "B-2004[U+200B]");
-  assert.notEqual(asWritten("B-2004​"), asWritten("B-2004"));
-  assert.equal(asWritten("B-7‮diap ton saw"), "B-7[U+202E]diap ton saw");
-  const unseen = ["\u0000", "\u0007", "\n", "\r", "\t", "\u007f", "\u0085", " ", "­", "؜", "᠎", " ",
-    "​", "‌", "‍", "‎", "‏", " ", " ", "‪", "‫", "‬", "‭", "‮",
-    " ", "⁠", "⁦", "⁧", "⁨", "⁩", "　", "﻿", "￹", "\u{e0001}", "\u{e0041}", "", "\ud800"];
-  for (const c of unseen) {
-    const code = c.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
-    assert.equal(asWritten(`A${c}B`), `A[U+${code}]B`, `U+${code} is drawn as the file has it`);
+  assert.equal(asWritten(`B-2004${at(0x200b)}`), "B-2004[U+200B]");
+  assert.equal(asWritten(`B-7${at(0x202e)}diap ton saw`), "B-7[U+202E]diap ton saw");
+  const unseen = [0x0, 0x7, 0xa, 0xd, 0x9, 0x7f, 0x85, 0xa0, 0xad, 0x61c, 0x180e, 0x2000, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f,
+    0x2028, 0x2029, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x202f, 0x2060, 0x2066, 0x2067, 0x2068, 0x2069, 0x3000, 0xfeff, 0xfff9,
+    0xe0001, 0xe0041, 0xe000, 0xd800,
+    // Second attacker's pass: thirteen more that drew as nothing, or as a
+    // blank, and were not spelled out. Nine of them left "B-2004" looking
+    // exactly like "B-2004". Variation selectors, the combining grapheme
+    // joiner, the Hangul and Khmer fillers, and the blank Braille pattern.
+    0xfe00, 0x34f, 0x115f, 0x3164, 0x17b4, 0x17b5, 0x180b, 0xe0100, 0xe01ef, 0xfe0f, 0x1160, 0xffa0, 0x2800];
+  assert.equal(new Set(unseen).size, 50);
+  for (const code of unseen) {
+    assert.equal(asWritten(`A${at(code)}B`), `A${spelled(code)}B`, `${spelled(code)} is drawn as the file has it`);
+    assert.notEqual(asWritten(`B-2004${at(code)}`), asWritten("B-2004"));
   }
-  for (const kept of ["Batch 12", "Lot #4/A_b-c.d", "Café-Ünïcode-批次-٣", "A+B", "💳7"]) assert.equal(asWritten(kept), kept);
-  const long = "X".repeat(200);
-  assert.equal(asWritten(long), `${"X".repeat(REF_SHOWN)}… (200 characters)`);
-  assert.equal(asWritten("X".repeat(REF_SHOWN)), "X".repeat(REF_SHOWN));
-  assert.ok(asWritten("‮".repeat(200)).length < 800, "a reference of nothing but hidden characters stays short");
+  for (const kept of ["Batch 12", "Lot #4/A_b-c.d", "Café-Ünïcode-批次-٣", "A+B", "\u{1f4b3}7"]) assert.equal(asWritten(kept), kept);
+  // The importer keeps at most 200 characters of a reference, and all of them are drawn: cut at 64, two ids alike
+  // to that point, one paid and one not, were drawn as the same text (second attacker's pass).
+  assert.equal(REF_SHOWN, 200);
+  const alike = "LOT-2026-11-" + "0".repeat(52);
+  assert.equal(alike.length, 64);
+  assert.notEqual(asWritten(`${alike}A`), asWritten(`${alike}B`));
+  assert.equal(asWritten("X".repeat(200)), "X".repeat(200));
+  assert.equal(asWritten("X".repeat(201)), `${"X".repeat(200)}… (201 characters)`);
+  assert.ok(asWritten(at(0x202e).repeat(200)).length <= 200 * 8, "a reference of nothing but hidden characters is bounded");
   // Every reference on a line has been through it.
-  const [line] = batchLines([row("matched", { left_ref: "a​+b", right_ref: "d‮", evidence: {
+  const [line] = batchLines([row("matched", { left_ref: `a${at(0x200b)}+b`, right_ref: `d${at(0x202e)}`, evidence: {
     compared: { left_minor: 2, right_minor: 2, currency: "USD" },
-    members: [{ ref: "a​", amount_minor: 1, when: null }, { ref: null, amount_minor: 1, when: null }] } })]).paid;
+    members: [{ ref: `a${at(0x200b)}`, amount_minor: 1, when: null }, { ref: null, amount_minor: 1, when: null }] } })]).paid;
   assert.deepEqual([line.refs, line.parts.map((p) => p.ref)], [["d[U+202E]"], ["a[U+200B]", "(no batch id)"]]);
   // And the card draws each in its own element, in its own direction, and nowhere else.
   const card = readFileSync(new URL("../app/_components/check-result.tsx", import.meta.url), "utf8");
@@ -348,23 +451,71 @@ check("the page draws the first lines of a long run and counts the rest from the
   const small = drawn({ rows: [unpaid(1), paid(1), paid(2)], rows_total: 3 }, summary({ matched: 2, unmatched_left: 1 }));
   assert.deepEqual([small.attention.length, small.paid.length, small.shown, small.total, small.clean], [1, 2, 3, 3, 2]);
   assert.deepEqual(drawn({ rows_total: null }, summary()), { attention: [], paid: [], clean: 0, shown: 0, total: 0 });
-  const page = readFileSync(new URL("../app/_components/file-check.tsx", import.meta.url), "utf8");
-  assert.match(page, /drawn\(run, summary\)/);
-  assert.ok(!/batchLines|paid\.length === 1|\.rows\b/.test(page), "the page counts or cuts lines itself");
-  // The card is handed the result as data and draws it in the browser's own
-  // pass, as the findings list is. As server markup, a long result arrived in
-  // pieces and the page took it over before the last one: React then threw
-  // the server's page away (2 loads in 60 of a 1,000-line result; none in 450
-  // drawn from data). So the card is a client component, it is given words
-  // and works nothing out, and nothing else draws a line.
-  const card = readFileSync(new URL("../app/_components/check-result.tsx", import.meta.url), "utf8");
-  assert.ok(card.startsWith('"use client";'), "the result card is not a client component");
-  assert.deepEqual(card.match(/^import .*$/gm), [
-    'import type { CheckLine, Tone } from "@/lib/file-checks";', 'import { Badge } from "./ui/badge";', 'import { Card } from "./ui/card";',
-  ], "the card imports something that could work a result out");
+});
+
+check("the tab is handed its words by the server and drawn from data, and works nothing out", () => {
+  const read = (path) => readFileSync(new URL(`../app/${path}`, import.meta.url), "utf8");
+  const [page, panel, section, card] = [read("merchants/[id]/page.tsx"), read("_components/files-panel.tsx"),
+    read("_components/file-check.tsx"), read("_components/check-result.tsx")];
+  // What the tab shows of a check is decided on the server, by the library this check holds.
+  const run = { id: "run_1", status: "ok", started_at: "2026-11-14T12:53:00+00:00", finished_at: "2026-11-14T12:53:01+00:00",
+    error: null, rows_total: 0, rows: [], summary: summary() };
+  assert.deepEqual(shownOf(null, []), { state: "never" });
+  assert.deepEqual(shownOf({ ...run, status: "failed", summary: null, error: "stripe answered 401" }, []),
+    { state: "failed", error: "stripe answered 401", at: "14 Nov 2026, 12:53 UTC" });
+  assert.deepEqual(shownOf({ ...run, summary: null }, []), { state: "failed", error: "No reason was recorded.", at: "14 Nov 2026, 12:53 UTC" });
+  const ok = shownOf(run, []);
+  assert.deepEqual([ok.state, ok.result.headline, ok.result], ["ok", "Nothing to check", resultOf(run, run.summary, [])]);
+  assert.match(page, /check=\{shownOf\(check, files\.ok \? files\.data\.imports : \[\]\)\}/);
+
+  // The tab is a client component drawn from data, as the Findings and Connections tabs are. A page reaches the
+  // browser in pieces. Drawn on the server, parts of this tab were sent in later pieces than the elements that
+  // hold them; on a slow link the browser took such an element over before its inside had arrived, took it again
+  // when it had, and React threw the page away and drew it again. First attacker's pass: a long result, one load
+  // in four. Second: any result on a slow link, one load in seven. Handed its data, nothing in the tab can arrive
+  // after what holds it (the layout check loads it through a slowed document to hold that in a browser).
+  assert.ok(panel.startsWith('"use client";'), "the Files tab is drawn on the server again");
+  assert.ok(card.startsWith('"use client";'));
+  assert.ok(!/Suspense|server-only|await /.test(panel + section + card), "something in the tab waits on the server");
+  assert.match(panel, /\{checkable && <FileCheck tenantId=\{tenantId\} files=\{files\} shown=\{check\} \/>\}/);
+  // ... and none of it works a result out: the only things taken from the library are its list of checks and the drawing of a name.
+  const taken = (source) => [...source.matchAll(/^import (.*) from "@\/lib\/file-checks";$/gm)].map((m) => m[1]);
+  assert.deepEqual(taken(panel), ["{ asWritten, type Shown }"]);
+  assert.deepEqual(taken(section), ["{ BATCHES_DEPOSITS, FILE_CHECKS, type Shown }"]);
+  assert.deepEqual(taken(card), ["type { CheckLine, Result, Tone }"]);
+  assert.deepEqual(card.match(/^import .*$/gm).slice(1), ['import { Badge } from "./ui/badge";', 'import { Card } from "./ui/card";']);
   assert.ok(!/toLocale|new Date|Date\.|Math\.|\.slice\(|\.filter\(|\.sort\(/.test(card), "the card works something out itself");
-  assert.match(page, /<CheckResult result=\{result\} \/>/);
-  assert.ok(!/<li\b|<ul\b|<details\b|<bdi\b/.test(page), "a line is drawn outside the card");
+  assert.ok(!/resultOf|shownOf|verdict\(|notRead\(|drawn\(|batchLines|reach\(|instant\(|PairRun|\.summary\b/.test(panel + section + card),
+    "the tab writes a word of the result itself");
+  assert.ok(!/<li\b|<ul\b|<details\b|<bdi\b/.test(section), "a line is drawn outside the card");
+  for (const drawn of ["<CheckResult result={shown.result} />", "{shown.error}", "{shown.at}",
+    'again={shown.state !== "never"}']) assert.ok(section.includes(drawn), `the section no longer draws ${drawn}`);
+
+  // Second attacker's pass: each of these could be taken out of the page with
+  // every check green. The words are held above; here, that the card draws them.
+  assert.ok(card.includes('const HEADLINE: Record<Tone, string> = { danger: "text-danger", warn: "text-ink", ok: "text-ok", neutral: "text-ink-soft" };'),
+    "the headline's colours changed: an unpaid batch is drawn in the colour of a fault, and only a clean result in green");
+  for (const drawn of [
+    "<p className={`text-lg font-bold ${HEADLINE[r.tone]}`}>{r.headline}</p>",
+    '{r.counts && <p className="mt-1 text-sm text-ink-soft">{r.counts}</p>}',
+    '<p className="mt-1 text-xs text-ink-soft">{r.checked}</p>',
+    '{r.cut && <p className="mt-2 text-sm font-semibold text-danger">{r.cut}</p>}',
+    '{r.notes.map((note) => <p key={note} className="mt-2 text-sm font-semibold">{note}</p>)}',
+    '{r.read && <p className="mt-1 text-xs text-ink-soft">{r.read}</p>}',
+    "{r.attention.map((l) => <Line key={l.key} line={l} />)}",
+    "{r.paid.map((l) => <Line key={l.key} line={l} />)}",
+    "{r.paidCount}",
+    '{r.paidShown && <span className="font-normal text-ink-soft">{r.paidShown}</span>}',
+    "{r.footnotes.map((note) => <p key={note}>{note}</p>)}",
+    "<Badge tone={line.tone} symbol={line.symbol}>{line.label}</Badge>",
+    "{line.title}", "{line.amount}", "{line.detail}",
+  ]) assert.ok(card.includes(drawn), `the card no longer draws ${drawn}`);
+
+  // And a name a merchant chose (a file's, a mapping's) is drawn in an element and a direction of its own.
+  assert.match(panel, /return <bdi dir="ltr" data-merchant-name>\{asWritten\(value\)\}<\/bdi>;/);
+  assert.ok(!/>\{f\.filename\}<|>\{f\.layout\}<|>\{l\.name\}<|mapping \$\{l\.name\}|what=\{f\.filename\}|title=\{f\.filename\}/.test(panel),
+    "a merchant's name is drawn as the page's own text");
+  assert.equal(panel.match(/<Named value=\{(?:f\.filename|f\.layout|l\.name)\} \/>/g)?.length, 3);
 });
 
 check("a day reads as a day, an instant as its day in UTC, and anything else as nothing", () => {

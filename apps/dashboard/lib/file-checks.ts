@@ -9,7 +9,7 @@
  * nothing is recomputed: a line says what the row says. The words for a
  * status are the dashboard's own.
  */
-import type { Kind } from "./imports";
+import type { ImportFile, Kind } from "./imports";
 import { formatMinor } from "./money";
 
 export const BATCHES_DEPOSITS = "batches_deposits";
@@ -68,6 +68,8 @@ export type Coverage = {
 export type PairRun = {
   id: string;
   status: "ok" | "failed";
+  /** When the run began to read. A file imported after this is not in it. */
+  started_at: string;
   finished_at: string;
   summary: PairSummary | null;
   error: string | null;
@@ -98,23 +100,27 @@ export type CheckLine = {
   parts: { ref: string; amount: string; when: string }[];
 };
 
-/** How much of a reference is drawn; a file may hold 200 characters. */
-export const REF_SHOWN = 64;
+/** How much of a reference is drawn. The importer keeps at most 200
+ *  characters of one, so a file's reference is drawn whole: cut short, two
+ *  ids alike to that point would be drawn as one. */
+export const REF_SHOWN = 200;
 
-// A character that draws nothing, moves the cursor, or changes the direction
-// of the text around it: controls, format characters (zero-width, bidi
-// overrides and isolates, soft hyphen), unassigned and private-use code
-// points, lone surrogates, line and paragraph separators, and every space
-// that is not the plain one.
-const UNSEEN = /^(?:[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}]|(?! )\p{Zs})$/u;
+// A character a reader cannot see, or that changes the text around it:
+// controls, format characters (zero-width, bidi overrides and isolates,
+// soft hyphen), everything Unicode says to ignore when drawing (variation
+// selectors, the combining grapheme joiner, the Hangul and Khmer fillers),
+// unassigned and private-use code points, lone surrogates, line and
+// paragraph separators, every space that is not the plain one, and the
+// blank Braille pattern, which is a letter that draws as a space.
+const UNSEEN = /^(?:[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800]|(?! )\p{Zs})$/u;
 
 /**
  * A reference from a file, made safe to read beside the page's own words.
  * The file's characters are kept, except that one a reader cannot see is
  * spelled out ("B-2004[U+200B]"), so two ids that differ never look the
- * same and no id redraws the text around it; a long one is cut, with its
- * length said. The page draws the result in its own element, never inside
- * a sentence.
+ * same and no id redraws the text around it. One longer than a file can
+ * hold is cut, with its length said. The page draws the result in its own
+ * element, never inside a sentence.
  */
 export function asWritten(ref: string): string {
   const chars = Array.from(ref);
@@ -235,11 +241,12 @@ function count(n: number, one: string, many: string): string {
  * every batch it read and nothing wider. `cut` when either side stopped
  * at its cap: records past it are in no row, so nothing is known of them.
  */
-export function reach(s: PairSummary): { read: string; since: string; from: string; cut: string } {
+export function reach(s: PairSummary): { read: string; since: string; from: string; to: string; cut: string } {
   const left = s.coverage?.left ?? null;
   const right = s.coverage?.right ?? null;
-  if (!left && !right) return { read: "", since: "", from: "", cut: "" };
+  if (!left && !right) return { read: "", since: "", from: "", to: "", cut: "" };
   const from = (left?.span_start ?? right?.span_start ?? "").slice(0, 10);
+  const to = (left?.span_end ?? right?.span_end ?? "").slice(0, 10);
   const since = dayOf(left?.span_start ?? right?.span_start);
   const until = dayOf(left?.span_end ?? right?.span_end);
   const dated = since && until ? ` dated ${since} to ${until}` : since ? ` dated from ${since}` : "";
@@ -251,18 +258,49 @@ export function reach(s: PairSummary): { read: string; since: string; from: stri
     ? `It stopped at ${cap ? cap.toLocaleString("en-US") : "its limit of"} ${stopped.join(" and ")}, oldest first: `
       + "the files hold more in those days, and what was not read is in no line here."
     : "";
-  return { read, since, from, cut };
+  return { read, since, from, to, cut };
 }
 
+/** What the page needs to know of a file on record to say what a run did not read of it. */
+export type OnFile = Pick<ImportFile, "kind" | "created_at" | "first_date" | "last_date" | "skipped">;
+
 /**
- * Said when a file on record starts before the first day the check read:
- * its earlier lines were not checked, and the page says so in as many
- * words. `first` is the earliest day of the merchant's files of that kind.
+ * What the files on record hold that the run did not read, each said in
+ * words: a file imported after the run began, lines older or newer than
+ * the days it read, and rows the importer could not read and skipped.
+ * `missed` when any of it could be a batch the run never saw: then the
+ * clean line is not said, whatever the run's own counts are.
  */
-export function unread(what: "batch report" | "bank statement", first: string | null | undefined, from: string): string {
-  if (!first || !from || first >= from) return "";
-  const lines = what === "batch report" ? "Batches" : "Deposits";
-  return `The ${what} on file goes back to ${dayOf(first)}. ${lines} before ${dayOf(from)} were not checked.`;
+export function notRead(
+  files: readonly OnFile[], run: { started_at: string }, read: { from: string; to: string },
+): { notes: string[]; missed: boolean } {
+  const notes: string[] = [];
+  const began = Date.parse(run.started_at);
+  // An unreadable time on either side is not known to be before the run.
+  const later = files.some((f) => !(Date.parse(f.created_at) <= began));
+  if (later) notes.push("A file was imported after this check began. Run it again to include it.");
+  let missed = later;
+  for (const [kind, what, lines] of [
+    ["settlement_batches", "batch report", "Batches"], ["bank_deposits", "bank statement", "Deposits"],
+  ] as const) {
+    const mine = files.filter((f) => f.kind === kind);
+    const first = mine.map((f) => f.first_date).filter((d): d is string => Boolean(d)).sort()[0];
+    const last = mine.map((f) => f.last_date).filter((d): d is string => Boolean(d)).sort().at(-1);
+    const skipped = mine.reduce((n, f) => n + (f.skipped > 0 ? f.skipped : 0), 0);
+    if (first && read.from && first < read.from) {
+      notes.push(`The ${what} on file goes back to ${dayOf(first)}. ${lines} before ${dayOf(read.from)} were not checked.`);
+    }
+    if (last && read.to && last > read.to) {
+      notes.push(`The ${what} on file runs to ${dayOf(last)}. ${lines} after ${dayOf(read.to)} were not checked.`);
+      missed ||= kind === "settlement_batches";
+    }
+    if (skipped) {
+      notes.push(`${count(skipped, "row", "rows")} of the ${what} on file could not be read when it was imported, `
+        + `and ${skipped === 1 ? "is" : "are"} in no line here.`);
+      missed ||= kind === "settlement_batches";
+    }
+  }
+  return { notes, missed };
 }
 
 /** Deposits whose batches add up to them exactly: a match that needs no look. */
@@ -271,7 +309,7 @@ export function paidClean(s: PairSummary): number {
 }
 
 /** The run in one sentence, and whether anything in it needs a look. */
-export function verdict(s: PairSummary): { headline: string; tone: Tone; counts: string[] } {
+export function verdict(s: PairSummary, missed = false): { headline: string; tone: Tone; counts: string[] } {
   const left = s.coverage?.left ?? null;
   const right = s.coverage?.right ?? null;
   const { since, cut } = reach(s);
@@ -327,8 +365,9 @@ export function verdict(s: PairSummary): { headline: string; tone: Tone; counts:
       tone: "warn", counts,
     };
   }
-  // A run that stopped at its cap did not read every batch: never the clean line.
-  if (cut) return { headline: "No missing deposit among what was read, and not everything was read", tone: "warn", counts };
+  // A run that stopped at its cap did not read every batch, and neither did
+  // one whose files hold a batch it never saw (`notRead`): never the clean line.
+  if (cut || missed) return { headline: "No missing deposit among what was read, and not everything was read", tone: "warn", counts };
   // Nor is it said of a run in which no batch was paired with anything.
   if (s.matched === 0) return { headline: "No batch was matched to a deposit", tone: "warn", counts };
   if (s.unmatched_right) {
@@ -355,4 +394,86 @@ export function drawn(run: { rows?: PairRow[]; rows_total: number | null }, s: P
     attention, paid, clean: paidClean(s), shown: attention.length + paid.length,
     total: Math.max(run.rows_total ?? 0, lines.attention.length + lines.paid.length),
   };
+}
+
+/** A stored run as the Files tab draws it: every word of the result card. */
+export type Result = {
+  headline: string;
+  tone: Tone;
+  counts: string;
+  /** "Checked 14 Nov 2026, 12:53 UTC". */
+  checked: string;
+  /** Said in the colour of a fault: the run stopped before it had read everything. */
+  cut: string;
+  /** Said in bold: what is on file that the run did not read. */
+  notes: string[];
+  read: string;
+  attention: CheckLine[];
+  paid: CheckLine[];
+  /** "5,000 deposits matched to their batches", from the run's summary. */
+  paidCount: string;
+  /** " · the first 100 listed", when the page draws fewer than that. */
+  paidShown: string;
+  footnotes: string[];
+};
+
+/** "14 Nov 2026, 12:53 UTC" from an instant; "" when it is not one. */
+export function instant(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const time = at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+  return `${dayOf(iso)}, ${time} UTC`;
+}
+
+/**
+ * Everything the result card says, as words: the headline, what the run
+ * read and did not, the first lines of each list, and the notes under
+ * them. Written from the stored run and the files on record, on the
+ * server; the card draws it and works nothing out.
+ */
+export function resultOf(run: PairRun, summary: PairSummary, files: readonly OnFile[]): Result {
+  const read = reach(summary);
+  const { notes, missed } = notRead(files, run, read);
+  const said = verdict(summary, missed);
+  const { attention, paid, clean, shown, total } = drawn(run, summary);
+  const n = (some: number) => some.toLocaleString("en-US");
+  const statementEnd = files.filter((f) => f.kind === "bank_deposits" && f.last_date).map((f) => f.last_date!).sort().at(-1);
+  return {
+    headline: said.headline,
+    tone: said.tone,
+    counts: said.counts.join(" · "),
+    checked: `Checked ${instant(run.finished_at)}`,
+    cut: read.cut,
+    notes,
+    read: read.read,
+    attention,
+    paid,
+    paidCount: clean === 1 ? "1 deposit matched to its batches" : `${n(clean)} deposits matched to their batches`,
+    paidShown: paid.length < clean ? ` · the first ${n(paid.length)} listed` : "",
+    footnotes: [
+      shown < total
+        ? `Showing ${n(shown)} of ${n(total)} lines, the ones that need a look first. The API and MCP return the stored result.` : "",
+      summary.unmatched_left > 0 && statementEnd
+        ? `The newest statement on file runs to ${dayOf(statementEnd)}. A batch closed in the last few days before that may simply not be deposited yet.` : "",
+    ].filter(Boolean),
+  };
+}
+
+/** What the tab shows of a check: nothing yet, a run that did not finish, or a result in words. */
+export type Shown =
+  | { state: "never" }
+  | { state: "failed"; error: string; at: string }
+  | { state: "ok"; result: Result };
+
+/**
+ * The newest stored run of a check as the tab shows it. Called on the
+ * server: the tab is handed this, and draws it. A run that is not "ok",
+ * or has no summary, is one that did not finish.
+ */
+export function shownOf(run: PairRun | null, files: readonly OnFile[]): Shown {
+  if (!run) return { state: "never" };
+  if (run.status !== "ok" || !run.summary) {
+    return { state: "failed", error: run.error ?? "No reason was recorded.", at: instant(run.finished_at) };
+  }
+  return { state: "ok", result: resultOf(run, run.summary, files) };
 }

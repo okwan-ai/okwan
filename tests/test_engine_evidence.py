@@ -367,6 +367,47 @@ def test_a_pair_and_a_groups_members_keep_a_code_a_whole_amount_and_a_date_and_n
     assert "JANE" not in kept.upper() and "4242" not in kept and "e+" not in kept and "12.5" not in kept
 
 
+def test_what_grouped_records_share_is_kept_only_when_it_is_a_short_identifier():
+    """Second attacker's pass: the field a group must share (a batch
+    report's merchant id, a tax return's state) was copied whole onto every
+    paired row, and into the reason of one still waiting: a name and an
+    address typed into that column were in the stored run, REST, the SQL
+    view and MCP. It is kept when it is an identifier and dropped when it
+    is a sentence."""
+    from okwan_recon import registry
+    from okwan_recon.engine import PeriodGroup, _token, ref_paths
+
+    note = "refund owed to Jane Doe <jane.doe@example.com> 12 Elm St"
+    for kept in ("MID-1", "4445012345678", "CA", "CO-1", "us/ny", 8841, "Z\u00fcrich"):
+        assert _token(kept) == str(kept), kept
+    for odd in (note, "New York", "a b", "", "x" * 33, None, True, 1.5, ["CA"], {"state": "CA"}, "tab\tbed", "line\nbreak"):
+        assert _token(odd) is None, odd
+
+    # A group of batches paid by one deposit, on the check as it is declared.
+    spec = registry.get("batches_deposits")
+    batches = [{"batch_id": f"B-{n}", "closed_on": f"2026-11-0{n}", "net_minor": 100 * n, "currency": "USD", "mid": note}
+               for n in (1, 2)]
+    paid = {"fitid": "D-1", "posted_on": "2026-11-03", "amount_minor": 300, "currency": "USD"}
+    (row,) = match(spec, batches, [paid]).trimmed_rows(*ref_paths(spec))
+    assert row["status"] == "matched" and row["evidence"]["share"] == {"mid": None}
+    assert "Jane" not in json.dumps(row)
+    for b in batches:
+        b["mid"] = "MID-7"
+    (row,) = match(spec, batches, [paid]).trimmed_rows(*ref_paths(spec))
+    assert row["evidence"]["share"] == {"mid": "MID-7"}
+
+    # A period rule: the tax check, a return and a sale after it for the same "state".
+    spec = registry.get("avatax_collected_filed")
+    rule = next(k for k in spec.keys if isinstance(k, PeriodGroup))
+    filing = {rule.start: "2026-08-01", rule.end: "2026-08-31", **{one: note for one, _ in rule.share}}
+    sale = {rule.timestamp_many: "2026-10-05T10:00:00+00:00", **{many: note for _, many in rule.share}}
+    left, right = ([filing], [sale]) if rule.one == "left" else ([sale], [filing])
+    rows = match(spec, left, right).trimmed_rows(*ref_paths(spec))
+    assert "jane" not in json.dumps(rows).lower() and "elm st" not in json.dumps(rows).lower()
+    waiting = next(r for r in rows if r["status"].startswith("unverifiable"))
+    assert waiting["reason"] == "after the latest period imported for this record (to 2026-08-31): waiting for the next"
+
+
 def test_a_check_that_names_no_amount_or_date_reports_a_miss_as_it_did():
     spec = Reconciliation(
         name="reference_only_fixture",

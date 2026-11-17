@@ -81,17 +81,21 @@ def _week() -> list[str]:
 
 
 FRI, SAT, SUN, MON, TUE, WED = _week()
+#: A batch and its deposit from before the 120 days the check reads: on
+#: file, in no line of the result, and said so on the tab.
+OLD, OLD_PAID = (f"{datetime.now(UTC).date() - timedelta(days=n):%m/%d/%Y}" for n in (150, 149))
 
 IMPORTS = [
     ("Processor batches.csv",
      ("Batch ID,Close Date,Gross,Fees,MID\n"
+      f"B-1900,{OLD},500.00,14.50,MID-1\n"
       f"B-2001,{FRI},1840.00,53.36,MID-1\nB-2002,{SAT},920.50,26.69,MID-1\n"
       f"B-2003,{SUN},410.00,11.89,MID-1\nB-2004,{MON},1275.25,36.98,MID-1\n").encode(),
      {"kind": "settlement_batches", "name": "Processor batch report", "currency": "USD",
       "columns": {"batch_id": "Batch ID", "closed_on": "Close Date", "gross_minor": "Gross",
                   "fees_minor": "Fees", "mid": "MID"}}),
     ("Operating account statement.csv",
-     (f"Date,Description,Amount\n{MON},MERCHANT DEPOSIT,1786.64\n"
+     (f"Date,Description,Amount\n{OLD_PAID},MERCHANT DEPOSIT,485.50\n{MON},MERCHANT DEPOSIT,1786.64\n"
       f"{TUE},MERCHANT DEPOSIT,1291.92\n{WED},MONTHLY FEE,-25.00\n").encode(),
      {"kind": "bank_deposits", "name": "Operating account", "currency": "USD",
       "columns": {"posted_on": "Date", "description": "Description", "amount_minor": "Amount"}}),

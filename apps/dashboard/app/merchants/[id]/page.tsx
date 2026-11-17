@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { apiUrl } from "@/lib/api";
 import { ATTENTION, missingFor, rowKey, toFinding } from "@/lib/finding";
 import { configured, connectors, railState } from "@/lib/merchants";
-import { BATCHES_DEPOSITS } from "@/lib/file-checks";
+import { BATCHES_DEPOSITS, shownOf } from "@/lib/file-checks";
 import { defaultTab, tabOf } from "@/lib/merchant-tabs";
 import { importedFiles, savedLayouts } from "@/lib/merchant-files";
 import { latestPairRun, latestRuns, runHistory, storedRun } from "@/lib/stored-runs";
@@ -44,7 +44,7 @@ export default async function MerchantPage({
         files={files.ok ? files.data.imports : []}
         layouts={layouts.ok ? layouts.data.layouts : []}
         unavailable={!files.ok || !layouts.ok}
-        check={check}
+        check={shownOf(check, files.ok ? files.data.imports : [])}
       />
     );
   }

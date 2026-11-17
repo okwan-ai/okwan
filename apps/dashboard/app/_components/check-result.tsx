@@ -1,32 +1,10 @@
 "use client";
 
-import type { CheckLine, Tone } from "@/lib/file-checks";
+import type { CheckLine, Result, Tone } from "@/lib/file-checks";
 import { Badge } from "./ui/badge";
 import { Card } from "./ui/card";
 
 const HEADLINE: Record<Tone, string> = { danger: "text-danger", warn: "text-ink", ok: "text-ok", neutral: "text-ink-soft" };
-
-/** A stored run as the Files tab draws it. Every string is written on the
- *  server (lib/file-checks.ts); nothing is worked out here. */
-export type Result = {
-  headline: string;
-  tone: Tone;
-  counts: string;
-  /** "Checked 14 Nov 2026, 12:53 UTC", and what has changed since. */
-  checked: string;
-  /** Said in the colour of a fault: the run stopped before it had read everything. */
-  cut: string;
-  /** Said in bold: lines on file the run did not reach. */
-  older: string[];
-  read: string;
-  attention: CheckLine[];
-  paid: CheckLine[];
-  /** "5,000 deposits matched to their batches", from the run's summary. */
-  paidCount: string;
-  /** " · the first 100 listed", when the page draws fewer than that. */
-  paidShown: string;
-  footnotes: string[];
-};
 
 /**
  * A reference as the merchant's file has it: its own element, in the type
@@ -73,12 +51,12 @@ function Line({ line }: { line: CheckLine }) {
 /**
  * The result of a file check, drawn from data.
  *
- * Drawn in the browser's own pass for a reason an attacker's pass found:
- * as server-rendered markup, a long result reached the page in pieces, the
- * page began to take it over before the last piece had arrived, and React
- * then threw the server's page away and drew it again ("hydration failed",
- * one load in four of a 1,000-line result). Given the lines as data, as
- * the findings list is, the page waits for all of them and takes over once.
+ * A client component for a reason an attacker's pass found. A page reaches
+ * the browser in pieces. As server markup, a long result was many of them,
+ * and the browser took the card's element over before its inside had
+ * arrived, took it again when it had, and React threw the server's page
+ * away and drew it again. Given its words as data, the card is one piece.
+ * The tab around it (files-panel.tsx) is boundaries for the same reason.
  */
 export function CheckResult({ result: r }: { result: Result }) {
   return (
@@ -88,7 +66,7 @@ export function CheckResult({ result: r }: { result: Result }) {
         {r.counts && <p className="mt-1 text-sm text-ink-soft">{r.counts}</p>}
         <p className="mt-1 text-xs text-ink-soft">{r.checked}</p>
         {r.cut && <p className="mt-2 text-sm font-semibold text-danger">{r.cut}</p>}
-        {r.older.map((line) => <p key={line} className="mt-2 text-sm font-semibold">{line}</p>)}
+        {r.notes.map((note) => <p key={note} className="mt-2 text-sm font-semibold">{note}</p>)}
         {r.read && <p className="mt-1 text-xs text-ink-soft">{r.read}</p>}
       </div>
       {r.attention.length > 0 && <ul className="divide-y divide-line">{r.attention.map((l) => <Line key={l.key} line={l} />)}</ul>}

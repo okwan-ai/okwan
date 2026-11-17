@@ -37,6 +37,7 @@ import binascii
 import logging
 import os
 import re
+import unicodedata
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -52,9 +53,9 @@ from okwan_files import (
     read,
 )
 from okwan_files.guard import is_card_column, last4
-from okwan_files.mapping import suggest
+from okwan_files.mapping import LAYOUT_NAME, suggest
 from okwan_vault import DuplicateImport, ImportFile
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .admin import _guard
 from .auth import admin_actor, get_store
@@ -71,11 +72,23 @@ def imports_open() -> bool:
     return os.environ.get("OKWAN_IMPORTS_OPEN", "").strip().lower() == "true"
 
 
+def _one_line(value: str) -> str:
+    """A file's name is drawn on the dashboard beside the page's own words,
+    so it is one line of visible text: no line break, no control character,
+    and none that draws nothing or turns the text around it."""
+    value = value.strip()
+    if not value or any(unicodedata.category(c) in {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"} for c in value):
+        raise ValueError("a file's name is one line of text, with no line breaks, control or invisible characters")
+    return value
+
+
 class ImportIn(BaseModel):
     filename: str = Field(min_length=1, max_length=200, description="The file's name as uploaded")
     content_base64: str = Field(min_length=1, description="The file's bytes, base64-encoded")
     mapping: Mapping | None = Field(None, description="How the file's columns fill the kind's fields")
     layout: str | None = Field(None, description="Or the name of a saved mapping")
+
+    _named = field_validator("filename")(_one_line)
 
 
 class PreviewIn(BaseModel):
@@ -86,7 +99,6 @@ class PreviewIn(BaseModel):
 
 #: Rows a preview shows.
 SAMPLE_ROWS = 10
-_LAYOUT_NAME = r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}$"
 
 
 def public(f: ImportFile) -> dict[str, Any]:
@@ -202,7 +214,7 @@ def build_router() -> APIRouter:
         """Save a mapping under a name, replacing one of the same name. The
         name in the path is the one recorded on every row it produces."""
         await _guard(actor, tenant_id)
-        if not re.fullmatch(_LAYOUT_NAME, name):
+        if not re.fullmatch(LAYOUT_NAME, name):
             raise HTTPException(400, "a mapping's name is 1 to 60 letters, digits, spaces, . _ or -")
         mapping = body.model_copy(update={"name": name})
         try:

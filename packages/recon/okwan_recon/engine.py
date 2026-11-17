@@ -434,6 +434,20 @@ def _code(value: Any) -> str | None:
     return value.strip().upper()
 
 
+_TOKEN = re.compile(r"[\w.\-/:#]{1,32}")
+
+
+def _token(value: Any) -> str | None:
+    """What grouped records share (a merchant id, a state code), kept only
+    when it is one: a short run of letters, digits and . - / : # _ with no
+    space in it. The field is a customer's own column, and a sentence in
+    it (a name, an address) is not kept in a stored row or in its reason."""
+    if isinstance(value, bool) or not isinstance(value, str | int):
+        return None
+    text = str(value).strip()
+    return text if _TOKEN.fullmatch(text) else None
+
+
 def _figure(value: Any) -> int | None:
     """An amount as a result keeps it: a whole number of minor units."""
     if isinstance(value, bool) or not isinstance(value, int) or abs(value) >= _MOST_MINOR:
@@ -907,7 +921,7 @@ def _apply_period_group(
         consumed.update(id(m) for m in members)
         pair = _pair(o, members, one_side, rule.kind, 1.0)
         pair.evidence = {"rule": rule.kind, "period": {"start": first.isoformat(), "end": last.isoformat()},
-                         "share": {o_path: str(dig(o, o_path)) for o_path in one_paths},
+                         "share": {o_path: _token(dig(o, o_path)) for o_path in one_paths},
                          "members": len(members)}
         out.matched.append(pair)
 
@@ -924,7 +938,7 @@ def _apply_period_group(
             waiting.append(Unverifiable(m, STOPPED_OTHER))
             continue
         spans = periods.get(k)
-        named = ", ".join(str(x) for x in k) or "this record"
+        named = ", ".join(t for x in k if (t := _token(x))) or "this record"
         if day is None or not spans:
             rest.append(m)
         elif day > max(e for _, e in spans):
@@ -1088,7 +1102,7 @@ def _apply_group_sum(
                 **({"lag": {"min_days": lag.min_days, "max_days": lag.max_days,
                             "calendar": lag.calendar, "timezone": lag.timezone}}
                    if lag else {"window": rule.window}),
-                "share": {f: dig(fits[0][0], f) for f in rule.share},
+                "share": {f: _token(dig(fits[0][0], f)) for f in rule.share},
                 "amount_tolerance_minor": rule.amount_tolerance_minor,
             }
             out.matched.append(pair)
