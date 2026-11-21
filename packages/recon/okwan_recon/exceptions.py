@@ -17,6 +17,10 @@ from, each with its age and the amount it puts at stake.
 `version` names the declaration a run came from, so a stored result says
 which version of the check produced it and a changed check shows.
 
+`open_summary` is worked out once, when a run is stored: how many findings
+the run found and kept, and its oldest open items, so a list across every
+merchant of an account reads a few items a run and never every stored row.
+
 Pure functions over stored rows. Nothing here reads a connector or the
 store, and nothing is added to a row but its key and the time it was first
 seen: no record, no customer, nothing a stored row did not already hold.
@@ -59,30 +63,43 @@ def _record(row: Row) -> Row:
     return rec if isinstance(rec, dict) else {}
 
 
-def _parts(name: str, kind: str, row: Row) -> list[Any] | None:
+def _dated(row: Row) -> list[Any]:
+    """The days a pair finding is about. A processor reuses a batch number
+    ("001" every day): two batches that share one are told apart by the
+    day each closed. An amount is not part of it, so a figure corrected
+    between runs is the same finding."""
+    ev = row.get("evidence") or {}
+    dated = ev.get("dated") if isinstance(ev.get("dated"), dict) else {}
+    return [_record(row).get("when"), dated.get("left"), dated.get("right")]
+
+
+def _parts(tenant_id: str, name: str, kind: str, row: Row) -> list[Any] | None:
     verdict = finding(kind, row)
     if verdict is None:
         return None
     if kind == "across":
-        return [name, verdict, _text((row.get("order") or {}).get("ref"))]
+        order = row.get("order") or {}
+        return [tenant_id, name, verdict, _text(order.get("ref"))]
     left, right = _text(row.get("left_ref")), _text(row.get("right_ref"))
-    parts: list[Any] = [name, verdict, left, right]
+    parts: list[Any] = [tenant_id, name, verdict, left, right, *_dated(row)]
     if left is None and right is None:
         # Neither side carries a reference (a bank line with none): what the
         # record was is all that tells one such finding from another.
         rec = _record(row)
-        parts += [rec.get("amount_minor"), rec.get("currency"), rec.get("when")]
+        parts += [rec.get("amount_minor"), rec.get("currency")]
     return parts
 
 
-def keyed(name: str, kind: str, rows: list[Row]) -> list[tuple[str | None, Row]]:
+def keyed(tenant_id: str, name: str, kind: str, rows: list[Row]) -> list[tuple[str | None, Row]]:
     """Each row with its finding's key, or None for a row that is not a
-    finding. Two findings alike in every part are told apart by the order
-    the run lists them in, so neither swallows the other."""
+    finding. The key belongs to the tenant: the same payout in another
+    account has another key. Two findings alike in every part are told
+    apart by the order the run lists them in, so neither swallows the
+    other."""
     seen: dict[str, int] = {}
     out: list[tuple[str | None, Row]] = []
     for row in rows:
-        parts = _parts(name, kind, row) if isinstance(row, dict) else None
+        parts = _parts(tenant_id, name, kind, row) if isinstance(row, dict) else None
         if parts is None:
             out.append((None, row))
             continue
@@ -95,7 +112,7 @@ def keyed(name: str, kind: str, rows: list[Row]) -> list[tuple[str | None, Row]]
     return out
 
 
-def carry(name: str, kind: str, rows: list[Row] | None, previous: list[Row] | None,
+def carry(tenant_id: str, name: str, kind: str, rows: list[Row] | None, previous: list[Row] | None,
           seen_at: datetime) -> list[Row] | None:
     """The rows to store, each finding with its `key` and `first_seen`:
     the time the previous stored run gave the same finding, or `seen_at`
@@ -105,13 +122,13 @@ def carry(name: str, kind: str, rows: list[Row] | None, previous: list[Row] | No
     if rows is None:
         return None
     before: dict[str, str] = {}
-    for key, row in keyed(name, kind, previous or []):
+    for key, row in keyed(tenant_id, name, kind, previous or []):
         first = row.get("first_seen") if isinstance(row, dict) else None
         if key is not None and isinstance(first, str):
             before[key] = first
     now = seen_at.astimezone(UTC).isoformat()
     out: list[Row] = []
-    for key, row in keyed(name, kind, rows):
+    for key, row in keyed(tenant_id, name, kind, rows):
         out.append(row if key is None else {**row, "key": key, "first_seen": before.get(key, now)})
     return out
 
@@ -175,38 +192,86 @@ def _fold_terms(row: Row) -> tuple[int | None, str | None, date | None]:
         amount = total if isinstance(total, int) and not isinstance(total, bool) else None
     else:
         amount = abs(taken - total) if ints else None
-    currency = (row.get("order") or {}).get("currency")
-    return amount, currency if isinstance(currency, str) else None, _day(row.get("collected_on"))
+    order = row.get("order") or {}
+    currency = order.get("currency")
+    # The order's own day, as the fold keeps it. `collected_on` is not a day:
+    # it names the rails that collected.
+    return amount, currency if isinstance(currency, str) else None, _day(order.get("on"))
 
 
-def open_items(name: str, kind: str, rows: list[Row] | None, now: datetime) -> list[Row]:
-    """A stored run's findings as the items a person works from: what the
-    finding is, the references involved, the amount at stake and its
-    currency, the day the finding is dated, when it was first seen, and how
-    many whole days it has been open, counted from the day it is dated or,
-    where it has none, from when it was first seen."""
-    out: list[Row] = []
-    for key, row in keyed(name, kind, rows or []):
-        if key is None:
+#: Items a run's summary keeps, oldest first: what a list across every
+#: merchant of an account shows of one check before it says how many more.
+OPEN_KEPT = 20
+#: The summary counts that are findings, for a pair check and for the fold.
+_PAIR_COUNTS = ("matched_with_unexplained_discrepancy", "unmatched_left", "unmatched_right", "ambiguous")
+_FOLD_COUNTS = FOLD_FINDINGS
+
+
+def _item(name: str, kind: str, key: str, row: Row) -> Row:
+    """A finding as an item, without its age."""
+    amount, currency, day = _fold_terms(row) if kind == "across" else _pair_terms(row)
+    first = _instant(row.get("first_seen"))
+    item: Row = {
+        "key": key,
+        "check": name,
+        "finding": finding(kind, row),
+        "amount_minor": amount,
+        "currency": currency,
+        "dated_on": day.isoformat() if day else None,
+        "first_seen": first.isoformat() if first else None,
+        "reason": row.get("reason"),
+    }
+    if kind == "across":
+        item["order_ref"] = (row.get("order") or {}).get("ref")
+    else:
+        item["left_ref"], item["right_ref"] = row.get("left_ref"), row.get("right_ref")
+    return item
+
+
+def _since(item: Row) -> date | None:
+    first = _instant(item.get("first_seen"))
+    return _day(item.get("dated_on")) or (first.date() if first else None)
+
+
+def oldest_first(item: Row) -> tuple:
+    """The order every list keeps: the longest open first, then the largest
+    amount at stake, then by key so the order is the same every time."""
+    since = _since(item)
+    return (since or date.max, -(item.get("amount_minor") or 0), str(item.get("key")))
+
+
+def aged(item: Row, now: datetime) -> Row:
+    """An item with how many whole days it has been open, counted from the
+    day it is dated or, where it has none, from when it was first seen."""
+    since = _since(item)
+    return {**item, "open_days": max((now.date() - since).days, 0) if since else None}
+
+
+def _found(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> list[Row]:
+    out = []
+    for computed, row in keyed(tenant_id, name, kind, rows or []):
+        if computed is None:
             continue
-        verdict = finding(kind, row)
-        amount, currency, day = _fold_terms(row) if kind == "across" else _pair_terms(row)
-        first = _instant(row.get("first_seen"))
-        since = day if day is not None else (first.date() if first else None)
-        item: Row = {
-            "key": row.get("key") if isinstance(row.get("key"), str) else key,
-            "check": name,
-            "finding": verdict,
-            "amount_minor": amount,
-            "currency": currency,
-            "dated_on": day.isoformat() if day else None,
-            "first_seen": first.isoformat() if first else None,
-            "open_days": max((now.date() - since).days, 0) if since else None,
-            "reason": row.get("reason"),
-        }
-        if kind == "across":
-            item["order_ref"] = (row.get("order") or {}).get("ref")
-        else:
-            item["left_ref"], item["right_ref"] = row.get("left_ref"), row.get("right_ref")
-        out.append(item)
+        stored = row.get("key")
+        out.append(_item(name, kind, stored if isinstance(stored, str) else computed, row))
     return out
+
+
+def open_items(tenant_id: str, name: str, kind: str, rows: list[Row] | None, now: datetime) -> list[Row]:
+    """A stored run's findings as the items a person works from, oldest
+    first: what the finding is, the references involved, the amount at
+    stake and its currency, the day it is dated, when it was first seen and
+    how many whole days it has been open."""
+    return [aged(i, now) for i in sorted(_found(tenant_id, name, kind, rows), key=oldest_first)]
+
+
+def open_summary(tenant_id: str, name: str, kind: str, rows: list[Row] | None,
+                 summary: Row | None) -> Row:
+    """What a run's summary keeps of its open items, worked out once when
+    the run is stored: how many findings the run found (its own counts) and
+    how many its stored rows kept (rows are kept worst first up to a
+    limit), and its OPEN_KEPT oldest items, without their age."""
+    items = sorted(_found(tenant_id, name, kind, rows), key=oldest_first)
+    counts = _FOLD_COUNTS if kind == "across" else _PAIR_COUNTS
+    found = sum(int((summary or {}).get(k) or 0) for k in counts)
+    return {"found": max(found, len(items)), "kept": len(items), "oldest": items[:OPEN_KEPT]}

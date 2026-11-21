@@ -329,7 +329,7 @@ is gone" at info level, and the tab tells the person to run it again. A
 result kept in memory for SQL to reuse is dropped the same way. The API
 tells the store which checks read files; the command below does not know
 them, so it takes results that carry the mark and leaves any stored by a
-release from before the mark to the API's own hourly sweep. To delete
+release from before the mark to the API's own sweep, every ten minutes. To delete
 expired files now:
 
 ```bash

@@ -9,6 +9,7 @@ real route gives, so an integrator can build against it.
 """
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 import httpx
@@ -132,7 +133,9 @@ async def test_trimmed_rows_are_what_the_dashboard_draws(api):
     row = body["data"][0]
     assert {"outcome", "order", "order_total_minor", "collected_minor", "collected_on", "unverified_rails",
             "reason", "rails"} <= set(row)
-    assert row["order"] == {"ref": "#2043", "currency": "USD"}, "no raw order record in a trimmed row"
+    assert set(row["order"]) == {"ref", "currency", "on"}, "no raw order record in a trimmed row"
+    assert (row["order"]["ref"], row["order"]["currency"]) == ("#2043", "USD")
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["order"]["on"]), "the order's day, never its time"
 
 
 async def test_only_the_rails_fold_has_a_sample(api):

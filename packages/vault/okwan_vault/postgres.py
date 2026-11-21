@@ -517,6 +517,24 @@ class PostgresStore:
             )
         return {r["tenant_id"]: _run(r) for r in rows}
 
+    async def newest_runs(
+        self, tenant_ids: list[str], kind: str, name: str, *,
+        ok_only: bool = False, with_rows: bool = False,
+    ) -> dict[str, RunRecord]:
+        """Each tenant's newest run of a check by when it started (when its
+        data was read), the newest that finished well with `ok_only`; rows
+        only when asked for. As MemoryStore."""
+        cols = _RUN_COLS if with_rows else _RUN_COLS_NO_ROWS
+        status = " AND status = 'ok'" if ok_only else ""
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                f"SELECT DISTINCT ON (tenant_id) {cols} FROM reconciliation_runs "
+                f"WHERE tenant_id = ANY($1::text[]) AND kind = $2 AND name = $3{status} "
+                "ORDER BY tenant_id, started_at DESC, id DESC",
+                list(tenant_ids), kind, name,
+            )
+        return {r["tenant_id"]: _run(r) for r in rows}
+
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         async with self._scoped(tenant_id) as con:
             row = await con.fetchrow(

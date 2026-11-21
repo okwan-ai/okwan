@@ -59,6 +59,8 @@ SQL_RECON_TENANT = Rule("sql:recon:tenant", 12, 60)
 #: File imports per target tenant: each one parses a file of up to 8 MB
 #: and writes up to 50,000 rows.
 IMPORT_TENANT = Rule("import:tenant", 30, 3600)
+#: The list of open items: a session reloading a page, never a loop.
+EXCEPTIONS_TENANT = Rule("exceptions:tenant", 60, 60)
 #: The sample check holds nothing of anyone's and costs one run an hour;
 #: the limit only keeps one address from hammering a route that needs no key.
 SAMPLE_IP = Rule("sample:ip", 120, 60)

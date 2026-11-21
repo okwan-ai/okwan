@@ -11,21 +11,23 @@ rail record is never written. A failed run stores the error after the
 same scrub the connection test applies.
 
 Each finding in a stored run carries its key and when it was first seen,
-carried from the check's previous stored run (okwan_recon.exceptions), and
-the summary names the version of the check that produced it.
+carried from the check's newest stored run that finished well
+(okwan_recon.exceptions). The summary names the version of the check that
+produced it and keeps its oldest open items (`open`), worked out here once.
 
 Recording never fails the run it records: like metering, a lost record
 is logged and the result still goes back to the caller.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from okwan_recon.across import AcrossRails
 from okwan_recon.engine import ref_paths
-from okwan_recon.exceptions import carry, version
+from okwan_recon.exceptions import carry, open_summary, version
 from okwan_recon.paging import MAX_ROWS
 from okwan_recon.registry import all_reconciliations
 from okwan_recon.registry import get as get_reconciliation
@@ -38,9 +40,6 @@ logger = logging.getLogger(__name__)
 
 #: The connector that serves an account's imported files (okwan_files).
 FILES = "files"
-#: How far back through a check's run history to look for the newest run
-#: that finished well, to carry its findings' first-seen times from.
-CARRY_SCAN = 5
 
 def run_clock() -> datetime:
     """When a run started, on the API's clock, tz-aware."""
@@ -61,8 +60,9 @@ async def record_run(
                 else result.trimmed_rows(*ref_paths(spec), limit=MAX_ROWS)
             )
             previous = await previous_rows(tenant.id, kind, spec.name)
-            rows = carry(spec.name, kind, rows, previous, started)
-            summary = {**(result.summary or {}), "check_version": check_version(spec)}
+            rows, summary = await asyncio.to_thread(
+                _keep, tenant.id, spec.name, kind, rows, previous, started, result.summary or {})
+            summary["check_version"] = check_version(spec)
             status, err = "ok", None
         else:
             status, summary, rows = "failed", None, None
@@ -85,19 +85,25 @@ async def record_run(
         return None
 
 
+def _keep(tenant_id: str, name: str, kind: str, rows, previous, started: datetime, summary: dict):
+    """The rows and summary to store: each finding with its key and first
+    seen time, and the summary with the run's oldest open items. Off the
+    event loop: up to MAX_ROWS rows are keyed."""
+    kept = carry(tenant_id, name, kind, rows, previous, started)
+    return kept, {**summary, "open": open_summary(tenant_id, name, kind, kept, summary)}
+
+
 async def previous_rows(tenant_id: str, kind: str, name: str) -> list | None:
-    """The rows of the check's newest stored run that finished well, or
-    None. A failed run between two good ones does not reset when a finding
-    was first seen."""
-    store = get_store()
+    """The rows of the check's newest stored run that finished well, by when
+    its data was read, or None. However many failed runs came after it, the
+    times its findings were first seen carry on."""
     try:
-        for rec in await store.list_runs(tenant_id, name, CARRY_SCAN):
-            if rec.kind == kind and rec.status == "ok":
-                full = await store.get_run(tenant_id, rec.id)
-                return full.rows if full is not None else None
+        good = await get_store().newest_runs([tenant_id], kind, name, ok_only=True, with_rows=True)
     except Exception:  # the run is still stored; its findings start from now
         logger.warning("previous run of %s not read for %s", name, tenant_id, exc_info=True)
-    return None
+        return None
+    rec = good.get(tenant_id)
+    return rec.rows if rec is not None else None
 
 
 def check_version(spec) -> str:

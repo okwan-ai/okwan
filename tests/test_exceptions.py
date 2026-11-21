@@ -23,6 +23,7 @@ from okwan_recon import exceptions as exc
 from okwan_recon.registry import get as get_reconciliation
 from test_files_connector import BANK_MAPPING, BATCH_MAPPING, BATCHES, STATEMENT, _upload
 
+TEN = "ten_test"
 T1 = datetime(2026, 9, 12, 9, 0, tzinfo=UTC)
 T2 = datetime(2026, 9, 13, 9, 0, tzinfo=UTC)
 
@@ -60,9 +61,9 @@ def _unpaid(ref: str, amount: int, when: str) -> dict:
 # ── the key ─────────────────────────────────────────────────────────
 
 def test_a_finding_has_the_same_key_in_every_run_and_a_clean_row_has_none():
-    first = exc.keyed("batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08"),
+    first = exc.keyed(TEN, "batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08"),
                                                    {"status": "matched", "left_ref": "B-4", "right_ref": "D-2"}])
-    again = exc.keyed("batches_deposits", "pair", [{"status": "matched_explained"}, _unpaid("B-5", 3884, "2026-09-08")])
+    again = exc.keyed(TEN, "batches_deposits", "pair", [{"status": "matched_explained"}, _unpaid("B-5", 3884, "2026-09-08")])
     assert first[1][0] is None and again[0][0] is None
     assert first[0][0] == again[1][0] and len(first[0][0]) == 24
 
@@ -70,10 +71,10 @@ def test_a_finding_has_the_same_key_in_every_run_and_a_clean_row_has_none():
 def test_the_key_is_what_the_finding_is_about_not_its_amount_or_wording():
     """A batch's amount or the reason given can be corrected between runs;
     it is the same finding."""
-    a = exc.keyed("batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")])[0][0]
-    b = exc.keyed("batches_deposits", "pair", [{**_unpaid("B-5", 4000, "2026-09-08"), "reason": "new"}])[0][0]
-    other_check = exc.keyed("square_payouts_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")])[0][0]
-    other_side = exc.keyed("batches_deposits", "pair", [
+    a = exc.keyed(TEN, "batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")])[0][0]
+    b = exc.keyed(TEN, "batches_deposits", "pair", [{**_unpaid("B-5", 4000, "2026-09-08"), "reason": "new"}])[0][0]
+    other_check = exc.keyed(TEN, "square_payouts_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")])[0][0]
+    other_side = exc.keyed(TEN, "batches_deposits", "pair", [
         {"status": "unmatched_right", "left_ref": None, "right_ref": "B-5"}])[0][0]
     assert a == b and len({a, other_check, other_side}) == 3
 
@@ -84,31 +85,31 @@ def test_two_findings_alike_in_every_reference_stay_two():
     line = {"status": "unmatched_right", "left_ref": None, "right_ref": None,
             "evidence": {"record": {"amount_minor": 1200, "currency": "USD", "when": "2026-09-10"}}}
     other = {**line, "evidence": {"record": {"amount_minor": 1300, "currency": "USD", "when": "2026-09-10"}}}
-    keys = [k for k, _ in exc.keyed("batches_deposits", "pair", [line, line, other])]
+    keys = [k for k, _ in exc.keyed(TEN, "batches_deposits", "pair", [line, line, other])]
     assert len(set(keys)) == 3
 
 
 def test_a_reference_reads_the_same_fresh_and_as_postgres_stored_it():
     """Postgres keeps a NUL in a reference as U+FFFD; the key must not
     change between the result and the run read back."""
-    fresh = exc.keyed("batches_deposits", "pair", [_unpaid("B\x005", 1, "2026-09-08")])[0][0]
-    stored = exc.keyed("batches_deposits", "pair", [_unpaid("B�5", 1, "2026-09-08")])[0][0]
+    fresh = exc.keyed(TEN, "batches_deposits", "pair", [_unpaid("B\x005", 1, "2026-09-08")])[0][0]
+    stored = exc.keyed(TEN, "batches_deposits", "pair", [_unpaid("B�5", 1, "2026-09-08")])[0][0]
     assert fresh == stored
 
 
 def test_a_folds_finding_is_its_order_and_outcome():
     row = {"outcome": "collected_twice", "order": {"ref": "#1002", "currency": "USD"}}
-    a = exc.keyed("rails", "across", [row, {"outcome": "collected", "order": {"ref": "#1003"}}])
-    b = exc.keyed("rails", "across", [{**row, "collected_minor": 1}])
+    a = exc.keyed(TEN, "rails", "across", [row, {"outcome": "collected", "order": {"ref": "#1003"}}])
+    b = exc.keyed(TEN, "rails", "across", [{**row, "collected_minor": 1}])
     assert a[1][0] is None and a[0][0] == b[0][0]
 
 
 # ── carried from run to run ─────────────────────────────────────────
 
 def test_a_finding_keeps_the_time_it_was_first_seen_and_a_new_one_starts_now():
-    first = exc.carry("batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")], None, T1)
+    first = exc.carry(TEN, "batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")], None, T1)
     assert first[0]["first_seen"] == T1.isoformat()
-    second = exc.carry("batches_deposits", "pair",
+    second = exc.carry(TEN, "batches_deposits", "pair",
                        [_unpaid("B-5", 3884, "2026-09-08"), _unpaid("B-6", 100, "2026-09-11")], first, T2)
     assert [r["first_seen"] for r in second] == [T1.isoformat(), T2.isoformat()]
     assert second[0]["key"] == first[0]["key"]
@@ -116,22 +117,22 @@ def test_a_finding_keeps_the_time_it_was_first_seen_and_a_new_one_starts_now():
 
 def test_carrying_adds_a_key_and_a_time_to_findings_and_nothing_else():
     clean = {"status": "matched", "left_ref": "B-4", "right_ref": "D-2"}
-    out = exc.carry("batches_deposits", "pair", [clean, _unpaid("B-5", 3884, "2026-09-08")], None, T1)
+    out = exc.carry(TEN, "batches_deposits", "pair", [clean, _unpaid("B-5", 3884, "2026-09-08")], None, T1)
     assert out[0] is clean
     assert set(out[1]) - set(_unpaid("B-5", 3884, "2026-09-08")) == {"key", "first_seen"}
-    assert exc.carry("batches_deposits", "pair", None, None, T1) is None
+    assert exc.carry(TEN, "batches_deposits", "pair", None, None, T1) is None
 
 
 def test_a_first_seen_time_that_is_not_text_is_not_carried():
     bad = [{**_unpaid("B-5", 3884, "2026-09-08"), "first_seen": 12345}]
-    assert exc.carry("batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")], bad, T2)[0]["first_seen"] == T2.isoformat()
+    assert exc.carry(TEN, "batches_deposits", "pair", [_unpaid("B-5", 3884, "2026-09-08")], bad, T2)[0]["first_seen"] == T2.isoformat()
 
 
 # ── the items a person works from ───────────────────────────────────
 
 def test_an_unpaid_batch_is_its_amount_its_day_and_the_days_since():
-    rows = exc.carry("batches_deposits", "pair", [_unpaid("B-5", -3884, "2026-09-08")], None, T1)
-    (item,) = exc.open_items("batches_deposits", "pair", rows, datetime(2026, 9, 20, 15, tzinfo=UTC))
+    rows = exc.carry(TEN, "batches_deposits", "pair", [_unpaid("B-5", -3884, "2026-09-08")], None, T1)
+    (item,) = exc.open_items(TEN, "batches_deposits", "pair", rows, datetime(2026, 9, 20, 15, tzinfo=UTC))
     assert {k: item[k] for k in ("finding", "left_ref", "right_ref", "amount_minor", "currency", "dated_on",
                                  "first_seen", "open_days")} == {
         "finding": "unmatched_left", "left_ref": "B-5", "right_ref": None, "amount_minor": 3884,
@@ -141,22 +142,22 @@ def test_an_unpaid_batch_is_its_amount_its_day_and_the_days_since():
 def test_amounts_that_differ_put_the_difference_at_stake():
     row = {"status": "matched_discrepant", "left_ref": "B-9", "right_ref": "D-9", "discrepancy": -250,
            "evidence": {"compared": {"currency": "USD"}, "dated": {"left": "2026-09-01", "right": "2026-09-03"}}}
-    (item,) = exc.open_items("batches_deposits", "pair", [row], datetime(2026, 9, 4, tzinfo=UTC))
+    (item,) = exc.open_items(TEN, "batches_deposits", "pair", [row], datetime(2026, 9, 4, tzinfo=UTC))
     assert (item["amount_minor"], item["currency"], item["dated_on"], item["open_days"]) == (250, "USD", "2026-09-01", 3)
 
 
 def test_a_finding_with_no_day_is_aged_from_when_it_was_first_seen():
     row = {"status": "ambiguous", "left_ref": "B-7", "right_ref": None, "first_seen": T1.isoformat()}
-    (item,) = exc.open_items("batches_deposits", "pair", [row], datetime(2026, 9, 15, tzinfo=UTC))
+    (item,) = exc.open_items(TEN, "batches_deposits", "pair", [row], datetime(2026, 9, 15, tzinfo=UTC))
     assert (item["dated_on"], item["open_days"], item["amount_minor"]) == (None, 3, None)
 
 
 def test_a_fold_finding_puts_the_excess_or_the_order_at_stake():
-    twice = {"outcome": "collected_twice", "order": {"ref": "#1002", "currency": "USD"},
-             "order_total_minor": 99_900, "collected_minor": 199_800, "collected_on": "2026-09-02"}
+    twice = {"outcome": "collected_twice", "order": {"ref": "#1002", "currency": "USD", "on": "2026-09-02"},
+             "order_total_minor": 99_900, "collected_minor": 199_800, "collected_on": ["paypal", "stripe"]}
     never = {"outcome": "uncollected", "order": {"ref": "#1006", "currency": "USD"},
              "order_total_minor": 7_500, "collected_minor": 0}
-    items = exc.open_items("rails", "across", [twice, never], datetime(2026, 9, 5, tzinfo=UTC))
+    items = exc.open_items(TEN, "rails", "across", [twice, never], datetime(2026, 9, 5, tzinfo=UTC))
     assert [(i["order_ref"], i["amount_minor"], i["dated_on"]) for i in items] == [
         ("#1002", 99_900, "2026-09-02"), ("#1006", 7_500, None)]
 
@@ -295,3 +296,67 @@ async def test_when_the_newest_run_failed_the_list_keeps_the_last_good_runs_find
     (check,) = body["checks"]
     assert (check["last_run"]["id"], check["last_run"]["status"], check["findings_from"]) == (failed, "failed", good)
     assert body["total"] == 2 and {i["run_id"] for i in body["data"]} == {good}
+
+
+# ── the store's newest run, on both stores ──────────────────────────
+
+@pytest.fixture(params=["memory", "postgres"])
+async def both(request):
+    import os
+
+    from okwan_vault import EnvMasterKey, MemoryStore, new_key
+    if request.param == "memory":
+        yield MemoryStore(EnvMasterKey(new_key()))
+        return
+    dsn = os.environ.get("OKWAN_VAULT_DATABASE_URL")
+    if not dsn:
+        pytest.skip("no vault database configured")
+    from okwan_vault.postgres import PostgresStore
+    s = await PostgresStore(dsn, EnvMasterKey(new_key())).connect()
+    made: list[str] = []
+    create = s.create_tenant
+
+    async def tracked(name, parent_id=None):
+        t = await create(name, parent_id=parent_id)
+        made.append(t.id)
+        return t
+
+    s.create_tenant = tracked
+    try:
+        yield s
+    finally:
+        for tid in reversed(made):
+            await s.pool.execute("DELETE FROM tenants WHERE id = $1", tid)
+        await s.close()
+
+
+async def test_the_newest_run_is_the_one_that_read_last_and_the_newest_good_one_skips_failures(both):
+    """By when a run started, that is when its data was read: a slow run
+    that read first and finished last is not the newest. The newest good
+    one is found however many failed after it, and rows come only when
+    asked for, only for the tenants asked about."""
+    from datetime import timedelta
+    a = await both.create_tenant("Store A")
+    b = await both.create_tenant("Store B")
+    t0 = datetime(2026, 11, 2, 9, tzinfo=UTC)
+
+    async def run(tid, start_min, end_min, status="ok", rows=None):
+        return await both.add_run(tid, kind="pair", name="batches_deposits", surface="rest", status=status,
+                                  started_at=t0 + timedelta(minutes=start_min),
+                                  finished_at=t0 + timedelta(minutes=end_min),
+                                  summary={"n": start_min} if status == "ok" else None,
+                                  rows=rows if status == "ok" else None, error=None if status == "ok" else "down")
+
+    slow = await run(a.id, 0, 30, rows=[{"status": "matched"}])
+    quick = await run(a.id, 10, 11, rows=[{"status": "unmatched_left"}])
+    for n in range(8):
+        await run(a.id, 40 + n, 41 + n, status="failed")
+    other = await run(b.id, 5, 6, rows=[{"status": "matched"}])
+
+    newest = await both.newest_runs([a.id], "pair", "batches_deposits")
+    assert newest[a.id].status == "failed" and newest[a.id].rows is None
+    good = await both.newest_runs([a.id, b.id], "pair", "batches_deposits", ok_only=True, with_rows=True)
+    assert (good[a.id].id, good[a.id].rows) == (quick.id, [{"status": "unmatched_left"}])
+    assert good[b.id].id == other.id and slow.id not in {r.id for r in good.values()}
+    bare = await both.newest_runs([a.id], "pair", "batches_deposits", ok_only=True)
+    assert set(bare) == {a.id} and bare[a.id].rows is None and bare[a.id].summary == {"n": 10}
