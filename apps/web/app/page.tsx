@@ -519,7 +519,7 @@ function How() {
           title="One definition. Three interfaces."
           intro="Declare the match once. Okwan generates a REST route, a SQL view and an agent tool from that one declaration, with nothing hand-written in between, so the three can never drift apart."
         />
-        <div className="mt-14 grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+        <div className="mt-14 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
           <pre className="min-w-0 overflow-x-auto rounded-[18px] border border-night-line bg-night-2 p-6 font-mono text-[12.5px] leading-[1.75] text-[#E5E5E5] sm:p-8">
             <code>{DECLARATION}</code>
           </pre>
@@ -530,7 +530,7 @@ function How() {
                   <span className="rounded-md border border-night-line px-2 py-0.5 font-mono text-[11.5px] text-white">{s.tag}</span>
                   <h3 className="text-[16px] font-semibold">{s.title}</h3>
                 </div>
-                <p className="mt-3 font-mono text-[12.5px] leading-relaxed text-night-soft">{s.body}</p>
+                <p className="mt-3 font-mono text-[12.5px] leading-relaxed text-night-soft [overflow-wrap:anywhere]">{s.body}</p>
               </div>
             ))}
           </div>
