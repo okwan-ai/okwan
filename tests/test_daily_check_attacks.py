@@ -135,7 +135,15 @@ def make_world(monkeypatch, store):
         return {"Authorization": f"Bearer {session}"}
 
     def clock(at: datetime) -> None:
-        """The time a run is stamped with, moved with the round."""
+        """The time a run is stamped with, moved with the round: the start and
+        the finish alike, on every surface (a route that bound run_clock when
+        the app was built reads the same patched clock)."""
+        class Fixed(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return at if tz is None else at.astimezone(tz)
+
+        monkeypatch.setattr("okwan_api.runs.datetime", Fixed)
         monkeypatch.setattr("okwan_api.runs.run_clock", lambda: at)
         monkeypatch.setattr(schedule, "run_clock", lambda: at)
 

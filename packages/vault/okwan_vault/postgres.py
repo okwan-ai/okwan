@@ -473,13 +473,15 @@ class PostgresStore:
                     run_id, tenant_id, kind, name, surface, status, started_at, finished_at,
                     _dumps(summary), _dumps(rows), error, reads_files,
                 )
+                # The newest RUNS_KEPT of the new run's own status, by when
+                # each read: failed runs never push out a good one.
                 await con.execute(
                     "DELETE FROM reconciliation_runs WHERE tenant_id = $1 AND kind = $2 "
-                    "AND name = $3 AND id NOT IN ("
+                    "AND name = $3 AND status = $5 AND id NOT IN ("
                     " SELECT id FROM reconciliation_runs"
-                    " WHERE tenant_id = $1 AND kind = $2 AND name = $3"
-                    " ORDER BY finished_at DESC, id DESC LIMIT $4)",
-                    tenant_id, kind, name, RUNS_KEPT,
+                    " WHERE tenant_id = $1 AND kind = $2 AND name = $3 AND status = $5"
+                    " ORDER BY started_at DESC, id DESC LIMIT $4)",
+                    tenant_id, kind, name, RUNS_KEPT, status,
                 )
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
@@ -534,6 +536,22 @@ class PostgresStore:
                 list(tenant_ids), kind, name,
             )
         return {r["tenant_id"]: _run(r) for r in rows}
+
+    async def newest_runs_all(
+        self, tenant_ids: list[str], *, ok_only: bool = False, with_rows: bool = False,
+    ) -> list[RunRecord]:
+        """Each (tenant, kind, name)'s newest run by when it read, in one
+        statement for every check. As MemoryStore."""
+        cols = _RUN_COLS if with_rows else _RUN_COLS_NO_ROWS
+        status = " AND status = 'ok'" if ok_only else ""
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                f"SELECT DISTINCT ON (tenant_id, kind, name) {cols} FROM reconciliation_runs "
+                f"WHERE tenant_id = ANY($1::text[]){status} "
+                "ORDER BY tenant_id, kind, name, started_at DESC, id DESC",
+                list(tenant_ids),
+            )
+        return [_run(r) for r in rows]
 
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         async with self._scoped(tenant_id) as con:

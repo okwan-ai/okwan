@@ -64,6 +64,7 @@ from .ratelimit import (
     client_ip,
     enforce,
 )
+from .runs import listed_summary
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +415,7 @@ async def run_tool(actor, request: Request, conversation_id: str | None,
         limit = max(1, min(int(tool_input.get("limit") or 5), 10))
         return [{"id": r.id, "kind": r.kind, "name": r.name, "surface": r.surface,
                  "status": r.status, "finished_at": r.finished_at.isoformat(),
-                 "summary": r.summary, "error": r.error}
+                 "summary": listed_summary(r.summary), "error": r.error}
                 for r in await store.list_runs(tenant_id, None, limit)]
     if name == "api_keys":
         tenant_id = await _target(actor, tool_input)

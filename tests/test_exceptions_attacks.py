@@ -183,14 +183,21 @@ async def test_the_accounts_list_reads_no_stored_rows_and_the_api_answers_meanwh
 
         listing, (status, waited) = await asyncio.gather(
             c.get(f"/v1/tenants/{root.id}/exceptions?limit=1000", headers=w["as_root"]), other())
-        body = listing.json()
         assert listing.status_code == 200 and status == 200
+        # A page of merchants at a time: walk them all.
+        pages, body, total, per = [listing.json()], listing.json(), 0, {}
+        while body["next"]:
+            body = (await c.get(f"/v1/tenants/{root.id}/exceptions?limit=1000&after={body['next']}",
+                                headers=w["as_root"])).json()
+            pages.append(body)
+        for page in pages:
+            total += page["total"]
+            assert len({i["tenant_id"] for i in page["data"]}) <= route.MERCHANTS_PER_PAGE
+            for i in page["data"]:
+                per[i["tenant_id"]] = per.get(i["tenant_id"], 0) + 1
         assert read_rows == []
-        assert body["total"] == 150 * 1000
-        per = {}
-        for i in body["data"]:
-            per[i["tenant_id"]] = per.get(i["tenant_id"], 0) + 1
-        assert max(per.values()) <= route.PER_MERCHANT and len(body["data"]) <= 1000
+        assert total == 150 * 1000 and len(per) == 150 and len(pages) == 4  # the account and 150 merchants
+        assert max(per.values()) <= route.PER_MERCHANT
         assert waited < 1.0, f"another request waited {waited:.2f}s"
 
 
@@ -359,3 +366,86 @@ async def test_a_slow_run_that_read_before_a_newer_one_does_not_take_its_place(m
         assert (await c.post(f"/v1/tenants/{shop.id}/reconciliations/shopify_stripe")).status_code == 200
         later = await listed()
         assert (later["#X"]["key"], later["#X"]["first_seen"]) == (truth["#X"]["key"], truth["#X"]["first_seen"])
+
+
+# ── The second pass (2026-11-21), on the rework ─────────────────────
+
+async def test_one_page_of_the_accounts_list_reads_a_bounded_number_of_merchants_in_two_statements(monkeypatch):
+    """Second pass, findings 1 and 2: on Postgres each statement's cost grew
+    with the number of merchants it was scoped to, times the runs kept, and
+    the list made 24 of them over every merchant of the account. A page now
+    covers MERCHANTS_PER_PAGE merchants in two statements."""
+    from okwan_api import exceptions as route
+    async with world() as w:
+        c, store, root = w["client"], w["store"], w["root"]
+        for n in range(120):
+            await store.create_tenant(f"Store {n}", parent_id=root.id)
+        calls = []
+        real = store.newest_runs_all
+
+        async def counting(ids, **kw):
+            calls.append(len(ids))
+            return await real(ids, **kw)
+
+        monkeypatch.setattr(store, "newest_runs_all", counting)
+        body = (await c.get(f"/v1/tenants/{root.id}/exceptions", headers=w["as_root"])).json()
+        assert calls == [route.MERCHANTS_PER_PAGE, route.MERCHANTS_PER_PAGE] and body["next"]
+
+
+async def test_failed_runs_never_prune_the_newest_good_run(monkeypatch):
+    """Second pass, findings 3 and 4: history was the newest 50 runs, failed
+    ones included, so fifty failures in an outage pruned the last good run,
+    and, with a slow run that read earlier but finished later, brought a
+    resolved finding back. Good and failed runs are now kept apart, each the
+    newest by when it read."""
+    from okwan_vault.models import RUNS_KEPT
+    async with world() as w:
+        store, shop = w["store"], w["shop"]
+        t0 = datetime(2026, 11, 2, 9, tzinfo=UTC)
+
+        async def run(start, end, status="ok", rows=None):
+            return await store.add_run(shop.id, kind="across", name="rails", surface="rest", status=status,
+                                       started_at=t0 + timedelta(minutes=start), finished_at=t0 + timedelta(minutes=end),
+                                       summary={} if status == "ok" else None,
+                                       rows=rows if status == "ok" else None,
+                                       error=None if status == "ok" else "down")
+
+        stale = await run(0, 30, rows=[{"outcome": "collected_twice", "order": {"ref": "#1002"}}])
+        fresh = await run(10, 11, rows=[])
+        for n in range(RUNS_KEPT + 10):
+            await run(40 + n, 41 + n, status="failed")
+        good = await store.newest_runs([shop.id], "across", "rails", ok_only=True)
+        assert good[shop.id].id == fresh.id
+        kept = {r.id for r in await store.list_runs(shop.id, "rails", 200)}
+        assert {stale.id, fresh.id} <= kept and len(kept) == 2 + RUNS_KEPT
+
+
+async def test_a_listing_and_the_support_assistant_see_counts_not_a_files_references():
+    """Second pass, finding 5: a run's summary keeps its open items, which
+    quote the merchant's files; the support assistant's recent runs sent
+    summaries to the model, and the transcript outlived the file. Listings
+    and the assistant see the counts only."""
+    from okwan_api import support
+    async with world() as w:
+        c, shop = w["client"], w["shop"]
+        await _upload(c, shop.id, BATCHES, BATCH_MAPPING)
+        await _upload(c, shop.id, STATEMENT, BANK_MAPPING, "statement.csv")
+        assert (await c.post(f"/v1/tenants/{shop.id}/reconciliations/batches_deposits")).status_code == 200
+        listing = (await c.get(f"/v1/tenants/{shop.id}/runs")).json()["data"]
+        told = await support.run_tool(shop, None, None, "recent_runs", {"tenant_id": shop.id}, [])
+        for seen in (listing, told):
+            text = repr(seen)
+            assert all(s not in text for s in ("B-5", "D-4", "3884", "2026-09-08")), text[:300]
+            assert seen[0]["summary"]["open"]["found"] == 2
+
+
+def test_one_check_of_a_merchant_cannot_keep_its_others_off_the_accounts_list():
+    """Second pass, finding 6: a merchant's 50 oldest items could all be its
+    own file findings, so its double collection was on no page. A merchant's
+    items are taken in turn from each of its checks."""
+    from okwan_api import exceptions as route
+    files = [{"check": "batches_deposits", "key": f"k{i}", "dated_on": "2026-07-01", "amount_minor": 1,
+              "first_seen": None} for i in range(80)]
+    fold = [{"check": "rails", "key": "twice", "dated_on": "2026-11-01", "amount_minor": 99_900, "first_seen": None}]
+    chosen = route._in_turn(files + fold)
+    assert len(chosen) == route.PER_MERCHANT and any(i["key"] == "twice" for i in chosen)

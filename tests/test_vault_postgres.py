@@ -294,8 +294,10 @@ async def test_runs_latest_per_tenant_and_pruning(store):
     assert latest[a.id].id == newest.id and latest[b.id].id == failed.id and isv.id not in latest
     ids = [(await _add_run(store, b.id, at=now + timedelta(seconds=i))).id for i in range(RUNS_KEPT + 2)]
     kept = await store.list_runs(b.id, name="rails", limit=100)
-    assert len(kept) == RUNS_KEPT and kept[0].id == ids[-1]
-    assert await store.get_run(b.id, failed.id) is None
+    # The newest RUNS_KEPT good runs, and apart from them the failed one.
+    assert len(kept) == RUNS_KEPT + 1 and kept[0].id == ids[-1] and failed.id in {r.id for r in kept}
+    assert await store.get_run(b.id, failed.id) is not None
+    assert await store.get_run(b.id, ids[0]) is None and await store.get_run(b.id, ids[1]) is None
 
 
 async def test_runs_are_refused_for_an_unknown_tenant(store):

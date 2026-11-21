@@ -179,8 +179,19 @@ def twice_currency(rows: list | None, summary: dict | None) -> str | None:
     return currencies.pop()
 
 
+def listed_summary(summary: dict | None) -> dict | None:
+    """A run's summary without the open items it keeps (references, amounts
+    and days, like its rows): what a listing, and the support assistant,
+    see. Counts stay."""
+    if not summary or not isinstance(summary.get("open"), dict):
+        return summary
+    opened = summary["open"]
+    return {**summary, "open": {k: opened[k] for k in ("found", "kept") if k in opened}}
+
+
 def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
-    """The record as the API returns it. A listing leaves the rows out."""
+    """The record as the API returns it. A listing leaves the rows out, and
+    the open items its summary keeps (`listed_summary`)."""
     total = run_total(rec)
     out: dict[str, Any] = {
         "id": rec.id,
@@ -191,7 +202,7 @@ def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
         "status": rec.status,
         "started_at": rec.started_at.isoformat(),
         "finished_at": rec.finished_at.isoformat(),
-        "summary": rec.summary,
+        "summary": rec.summary if with_rows else listed_summary(rec.summary),
         "error": rec.error,
         "rows_total": total,
         "twice_currency": twice_currency(rec.rows, rec.summary) if rec.kind == "across" else None,
