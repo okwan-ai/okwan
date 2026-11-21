@@ -345,7 +345,12 @@ async function checkOpenItems(page, w, h) {
 
 /** Once, at the end: explain the unpaid batch, see it leave the list and be
  *  listed with its reason among the merchant's closed items, open it again,
- *  and see it back. The seed is left as it was found. */
+ *  and see it back; then give it to someone with a long name and a long
+ *  note, and see the list stay as it was. On the way: a name typed and then
+ *  left for another choice is not sent, the terms the panel showed are; a
+ *  decision whose answer is lost says the panel cannot tell, shows the
+ *  history, and sent again is recorded once (the attacker's pass on the
+ *  dashboard, 2026-11-21, findings 1, 2, 4, 5 and 6). */
 async function checkDeciding(page) {
   const where = "deciding an open item";
   const why = "Layout check: the processor held this batch.";
@@ -357,12 +362,39 @@ async function checkDeciding(page) {
   const merchant = href.split("/")[2].split("?")[0];
   await batch().locator("button[data-decide]").click();
   const form = page.locator("[role=dialog] form[data-decide-form]");
+  // A name typed under "Give it to someone", then left for "Explain it".
+  await form.locator("input[value=assigned]").check();
+  await form.locator("input[name=owner]").fill("Layout Withdrawn-Name");
+  await form.locator("input[value=explained]").check();
+  await form.locator("textarea[name=note]").fill(why);
+  // The answer to the first send is lost on the way back: the decision is
+  // recorded, and the browser hears nothing.
+  const bodies = [];
+  await page.route("**/api/merchants/**/decisions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    bodies.push(JSON.parse(route.request().postData() ?? "{}"));
+    if (bodies.length === 1) { await route.fetch(); return route.abort("connectionreset"); }
+    return route.continue();
+  });
+  await form.locator("button[type=submit]").click();
+  const unsure = await form.locator("[role=alert]").filter({ hasText: "can't tell whether" })
+    .waitFor({ timeout: 10000 }).then(() => true, () => false);
+  if (!unsure) await note(page, where, "a lost answer does not say the panel cannot tell whether the decision was recorded");
+  const shown = await page.locator("[role=dialog] ol[data-history] > li").first()
+    .waitFor({ timeout: 10000 }).then(() => true, () => false);
+  if (!shown) await note(page, where, "after a lost answer the panel does not show the decision already recorded");
+  // Closed, opened again, and the same decision sent again: it is recorded once.
+  await page.keyboard.press("Escape");
+  await page.locator("[role=dialog]").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await batch().locator("button[data-decide]").click();
   await form.locator("input[value=explained]").check();
   await form.locator("textarea[name=note]").fill(why);
   await form.locator("button[type=submit]").click();
-  // The page draws the list again once the decision is recorded.
   const gone = await batch().waitFor({ state: "detached", timeout: 15000 }).then(() => true, () => false);
+  await page.unroute("**/api/merchants/**/decisions");
   if (!gone) return note(page, where, "the explained batch is still on the list");
+  if ("owner" in (bodies[0] ?? {})) await note(page, where, "a name typed and then left for another choice was sent");
+  if (typeof bodies[0]?.seen !== "string") await note(page, where, "the decision does not send the terms the panel showed");
   await page.goto(`${BASE}/exceptions?merchant=${encodeURIComponent(merchant)}&state=closed`, { waitUntil: "networkidle" });
   const closed = batch();
   if ((await closed.count()) !== 1) return note(page, where, "the explained batch is not among the merchant's closed items");
@@ -378,8 +410,27 @@ async function checkDeciding(page) {
   await batch().locator("button[data-decide]").click();
   const history = page.locator("[role=dialog] ol[data-history] > li");
   await history.nth(1).waitFor({ timeout: 5000 }).catch(() => {});
-  if ((await history.count()) !== 2) await note(page, where, "the history does not hold both decisions");
-  await page.keyboard.press("Escape");
+  // Two, not three: the decision sent again after its answer was lost was recorded once.
+  if ((await history.count()) !== 2) await note(page, where, `the history holds ${await history.count()} decisions, not 2`);
+  // A long name and a long note: the list draws a few lines of the note and
+  // the whole name, wrapped, on a phone as on a desktop.
+  const owner = "accounts_payable_reconciliation@kofis_store_accra.example.com.ama_mensah";
+  await form.locator("input[value=assigned]").check();
+  await form.locator("input[name=owner]").fill(owner);
+  await form.locator("textarea[name=note]").fill(Array.from({ length: 40 }, (_, n) => `Line ${n + 1} of a long note.`).join("\n"));
+  await form.locator("button[type=submit]").click();
+  await page.locator("[role=dialog]").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/exceptions`, { waitUntil: "networkidle" });
+  const item = batch();
+  const tall = (await item.boundingBox())?.height ?? 0;
+  if (tall > 700) await note(page, where, `one long note makes its item ${Math.round(tall)}px tall`);
+  const name = item.locator("bdi[data-person=owner]");
+  const fits = await name.evaluate((el) => {
+    const card = el.closest("li").getBoundingClientRect();
+    return [...el.getClientRects()].every((r) => r.right <= card.right + 1) && el.textContent.length > 70;
+  }).catch(() => false);
+  if (!fits) await note(page, where, "a long name is cut off at the edge of its item on a phone");
 }
 
 async function checkMenu(page, w, h) {

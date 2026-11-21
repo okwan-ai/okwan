@@ -33,8 +33,9 @@ export type ApiDecision = {
   run_id: string;
   /** What the item put at stake when it was decided. */
   on: { amount_minor: number | null; currency: string | null; dated_on: string | null } | null;
-  /** For one that closed the item: the item has other terms now, so it is open again. */
+  /** For one that closed the item: the item has other terms now, or a twin, so it is open again. */
   changed?: boolean;
+  changed_why?: "alike" | "terms";
 };
 
 /** One item as the API answers it. */
@@ -59,6 +60,9 @@ export type ApiItem = {
   decision?: ApiDecision | null;
   /** Alike in every reference and day to another finding of the same result: it cannot be decided on its own. */
   alike?: boolean;
+  /** What it puts at stake with its sign, which a decision sends back as what the person saw. */
+  terms?: string;
+  signed_minor?: number | null;
 };
 
 export type ApiCheck = {
@@ -100,6 +104,8 @@ export type Line = {
   decision: DecisionShown | null;
   /** Set when the item cannot be decided on its own, and why. */
   undecidable: string | null;
+  /** The item's terms as shown: sent with a decision, which the API refuses if they have changed. */
+  terms: string | null;
 };
 
 /** A decision, every word chosen: who decided what, when and why. */
@@ -215,7 +221,7 @@ export function howMade(credential: string): string {
   return credential === "session" ? "in the dashboard" : `with the key ${asWritten(credential)}`;
 }
 
-export function decisionShown(d: ApiDecision): DecisionShown {
+export function decisionShown(d: ApiDecision, item?: Pick<ApiItem, "signed_minor">): DecisionShown {
   return {
     status: d.status,
     said: SAID[d.status] ?? "Decided",
@@ -224,18 +230,29 @@ export function decisionShown(d: ApiDecision): DecisionShown {
     by: asWritten(d.by.name),
     how: howMade(d.by.credential),
     on: dayOf(d.at),
-    changed: d.changed ? changedSince(d) : null,
+    changed: d.changed ? changedSince(d, item?.signed_minor ?? null) : null,
   };
 }
 
-/** Why a closing decision no longer closes its item: it was made on other
- *  terms (an amount, a day) than the item has now. */
-function changedSince(d: ApiDecision): string {
+/** Why a closing decision no longer closes its item, in words that match
+ *  what the line shows: another item is now alike to it; the same amount
+ *  now runs the other way (over, where it was short); or it was made on
+ *  another amount or day. */
+function changedSince(d: ApiDecision, now: number | null): string {
+  const said = SAID[d.status];
+  if (d.changed_why === "alike") {
+    return `${said} when it was the only item like it. Another item of its check is now alike to it in every `
+      + "reference and day, so it is open again, and neither can be decided on its own.";
+  }
   const was = d.on;
-  const amount = was && was.amount_minor !== null ? formatMinor(was.amount_minor, was.currency) : "";
+  const signed = was?.amount_minor ?? null;
+  const amount = signed !== null ? formatMinor(Math.abs(signed), was?.currency ?? null) : "";
+  if (signed !== null && now !== null && Math.abs(signed) === Math.abs(now) && Math.sign(signed) !== Math.sign(now)) {
+    return `${said} when the same ${amount} ran the other way. It has turned around since, so it is open again.`;
+  }
   const day = was?.dated_on ? dayOf(was.dated_on) : "";
   const terms = [amount, day && `dated ${day}`].filter(Boolean).join(", ");
-  return `${SAID[d.status]} when it was ${terms || "something else"}. It has changed since, so it is open again.`;
+  return `${said} when it was ${terms || "something else"}. It has changed since, so it is open again.`;
 }
 
 /** The dashboard's own route for one item's decisions. Every part is the
@@ -274,7 +291,8 @@ export function shownOf(
     days: item.open_days,
     firstSeen: item.first_seen ? dayOf(item.first_seen) : "",
     decide: decidePath(item),
-    decision: item.decision ? decisionShown(item.decision) : null,
+    decision: item.decision ? decisionShown(item.decision, item) : null,
+    terms: item.terms ?? null,
     undecidable: item.alike
       ? "Alike in every reference and day to another item of the same check, so neither can be decided on its own. Settle it where it started."
       : null,

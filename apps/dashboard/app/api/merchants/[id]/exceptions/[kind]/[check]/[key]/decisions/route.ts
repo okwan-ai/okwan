@@ -10,9 +10,11 @@ import { fail, json, readBody } from "@/lib/respond";
  * against the shapes the API makes them in, so nothing else reaches it: a
  * kind, a check's name, an item's 24-hex key. The browser makes the
  * Idempotency-Key once per decision and sends it again on a retry; it is
- * the one header passed on. The body is rebuilt from the three fields a
- * decision has, never forwarded as sent. Signed in only: a decision is
- * recorded as the signed-in account's.
+ * the one header passed on. The body is rebuilt from the fields a decision
+ * has, never forwarded as sent: a name only when the item is given to
+ * someone, and the terms the person was shown, which the API holds the
+ * decision to. Signed in only, JSON only: a decision is recorded as the
+ * signed-in account's.
  */
 
 const KINDS = new Set(["pair", "across"]);
@@ -22,6 +24,7 @@ const KEY = /^[0-9a-f]{24}$/;
 const IDEMPOTENCY = /^[A-Za-z0-9._:-]{1,128}$/;
 const OWNER_MAX = 80;
 const NOTE_MAX = 1000;
+const SEEN_MAX = 200;
 
 type Params = { params: Promise<{ id: string; kind: string; check: string; key: string }> };
 
@@ -37,8 +40,12 @@ function text(value: unknown, max: number): string | undefined | null {
 }
 
 export async function POST(req: Request, { params }: Params) {
-  const body = await readBody<{ status?: unknown; owner?: unknown; note?: unknown }>(req);
+  if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+    return fail("send the decision as JSON", 415);
+  }
+  const body = await readBody<{ status?: unknown; owner?: unknown; note?: unknown; seen?: unknown } | null>(req);
   if (body instanceof Response) return body;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return fail("expected a decision", 400);
   const token = await session();
   if (!token) return fail("signed out — sign in again", 401);
   const { id, kind, check, key } = await params;
@@ -49,9 +56,11 @@ export async function POST(req: Request, { params }: Params) {
   const status = typeof body.status === "string" && STATUSES.has(body.status) ? body.status : null;
   const owner = text(body.owner, OWNER_MAX);
   const note = text(body.note, NOTE_MAX);
-  if (!status || owner === null || note === null) return fail("not a decision Okwan can record", 422);
+  const seen = text(body.seen, SEEN_MAX);
+  if (!status || owner === null || note === null || seen === null) return fail("not a decision Okwan can record", 422);
   const r = await api<{ decision: ApiDecision; replayed: boolean }>(to, {
-    method: "POST", session: token, idempotencyKey: idem, body: { status, owner, note },
+    method: "POST", session: token, idempotencyKey: idem,
+    body: { status, owner: status === "assigned" ? owner : undefined, note, seen },
   });
   return r.ok ? json(r.data, r.status) : fail(r.detail, r.status);
 }

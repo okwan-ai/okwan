@@ -45,7 +45,7 @@ function Item({ line, view }: { line: Line; view: View }) {
           {line.dated && <><span aria-hidden> · </span>dated {line.dated}</>}
           {line.firstSeen && <><span aria-hidden> · </span>first seen {line.firstSeen}</>}
         </p>
-        {line.decision && <div className="mt-2"><Decided d={line.decision} /></div>}
+        {line.decision && <div className="mt-2"><Decided d={line.decision} brief /></div>}
         {line.undecidable && <p className="mt-2 text-sm text-ink-soft" data-undecidable>{line.undecidable}</p>}
       </div>
       <div className="flex items-baseline gap-4 sm:flex-col sm:items-end sm:gap-1">

@@ -168,6 +168,9 @@ class DecisionIn(BaseModel):
     owner: str | None = Field(None, max_length=OWNER_MAX, description="Whom it is given to: required to assign")
     note: str | None = Field(None, max_length=NOTE_MAX,
                              description="Why: required to explain, resolve or open an item again")
+    seen: str | None = Field(None, max_length=200,
+                             description="The item's `terms` as the list showed them to the person deciding: "
+                                         "the decision is refused (409) if the item has changed since")
 
 
 def _on(text: str) -> dict[str, Any] | None:
@@ -192,6 +195,8 @@ def decision_dict(d: Decision, item: dict | None = None) -> dict[str, Any]:
     }
     if item is not None and d.closed:
         out["changed"] = not holds(d, item)
+        if out["changed"]:
+            out["changed_why"] = "alike" if item.get("alike") else "terms"
     return out
 
 
@@ -405,6 +410,9 @@ def build_router() -> APIRouter:
         if g is None or key not in items:
             raise HTTPException(404, "no such item: it is not a finding of the check's newest result")
         item = items[key]
+        if body.seen is not None and body.seen != terms(item):
+            raise HTTPException(409, "this item has changed since it was shown (what it puts at stake, or its "
+                                     "day): look at it again before deciding")
         if item.get("alike"):
             raise HTTPException(409, "this finding is alike, in every reference and day, to another one in the same "
                                      "result (two terminals that each closed batch 001 that day, say). They are told "
@@ -459,7 +467,7 @@ def build_router() -> APIRouter:
 
 def _with(item: dict, tid: str, names, title: str, kind: str, g, decision: Decision | None) -> dict:
     return {**item, "tenant_id": tid, "merchant": names[tid], "title": title, "kind": kind,
-            "run_id": g.id, "run_at": g.finished_at.isoformat(),
+            "run_id": g.id, "run_at": g.finished_at.isoformat(), "terms": terms(item),
             "decision": decision_dict(decision, item) if decision is not None else None}
 
 

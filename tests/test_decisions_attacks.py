@@ -514,3 +514,38 @@ async def test_s8_a_run_that_cut_its_rows_says_so_when_a_closed_item_is_past_the
     await _store_rows(shop, [_unpaid("A-0", 100, "2026-09-01")], T0 + timedelta(days=1), {"unmatched_left": 2})
     [line] = (await _items(c, shop.id, merchant=shop.id))["checks"]
     assert (line["cut"], line["open"], line["closed"]) == (True, 2, 0)
+
+
+# ── the dashboard's pass (2026-11-21): what the API holds a decision to ──
+
+async def test_d2_a_decision_on_terms_the_person_did_not_see_is_refused(world):
+    """The panel sends back the item's terms as it showed them; an item whose
+    amount changed while the panel was open is not closed on the new one."""
+    c, _, shop, _, _ = world
+    await _store_rows(shop, [_unpaid("B-2004", 123827)], T0, {"unmatched_left": 1})
+    [shown] = (await _items(c, shop.id))["data"]
+    await _store_rows(shop, [_unpaid("B-2004", 4996202)], T0 + timedelta(days=1), {"unmatched_left": 1})
+    stale = await c.post(f"/v1/tenants/{shop.id}/exceptions/pair/batches_deposits/{shown['key']}/decisions",
+                         json={"status": "explained", "note": "Held by the processor.", "seen": shown["terms"]},
+                         headers={"Idempotency-Key": "seen-1"})
+    assert stale.status_code == 409 and "changed since it was shown" in stale.json()["detail"]
+    assert (await _items(c, shop.id))["total"] == 1
+    [now] = (await _items(c, shop.id))["data"]
+    fresh = await c.post(f"/v1/tenants/{shop.id}/exceptions/pair/batches_deposits/{now['key']}/decisions",
+                         json={"status": "explained", "note": "Held by the processor.", "seen": now["terms"]},
+                         headers={"Idempotency-Key": "seen-2"})
+    assert fresh.status_code == 201
+
+
+async def test_d3_a_decision_that_no_longer_holds_says_why(world):
+    c, _, shop, _, _ = world
+    await _store_rows(shop, [_unpaid("B-5", 4000), {**_short("P-9", 0), "discrepancy": 500}], T0,
+                      {"unmatched_left": 1, "matched_with_unexplained_discrepancy": 1})
+    keys = {_ref(i): i["key"] for i in (await _items(c, shop.id))["data"]}
+    for ref in ("B-5", "P-9"):
+        assert (await _decide(c, shop, keys[ref], "explained", note="Fine.")).status_code == 201
+    await _store_rows(shop, [_unpaid("B-5", 4000), _unpaid("B-5", 4000), {**_short("P-9", 0), "discrepancy": -500}],
+                      T0 + timedelta(days=1), {"unmatched_left": 2, "matched_with_unexplained_discrepancy": 1})
+    why = {(_ref(i), i["key"] == keys.get(_ref(i))): (i["decision"] or {}).get("changed_why")
+           for i in (await _items(c, shop.id))["data"]}
+    assert why[("B-5", True)] == "alike" and why[("P-9", True)] == "terms"
