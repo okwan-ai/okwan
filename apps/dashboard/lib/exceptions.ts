@@ -31,6 +31,10 @@ export type ApiDecision = {
   by: { tenant_id: string; name: string; credential: string };
   at: string;
   run_id: string;
+  /** What the item put at stake when it was decided. */
+  on: { amount_minor: number | null; currency: string | null; dated_on: string | null } | null;
+  /** For one that closed the item: the item has other terms now, so it is open again. */
+  changed?: boolean;
 };
 
 /** One item as the API answers it. */
@@ -104,6 +108,8 @@ export type DecisionShown = {
   by: string;
   how: string;
   on: string;
+  /** Set when the decision closed the item on other terms than it has now. */
+  changed: string | null;
 };
 
 export type Notice = { merchantId: string; merchant: string; text: string; href?: string; link?: string };
@@ -214,7 +220,18 @@ export function decisionShown(d: ApiDecision): DecisionShown {
     by: asWritten(d.by.name),
     how: howMade(d.by.credential),
     on: dayOf(d.at),
+    changed: d.changed ? changedSince(d) : null,
   };
+}
+
+/** Why a closing decision no longer closes its item: it was made on other
+ *  terms (an amount, a day) than the item has now. */
+function changedSince(d: ApiDecision): string {
+  const was = d.on;
+  const amount = was && was.amount_minor !== null ? formatMinor(was.amount_minor, was.currency) : "";
+  const day = was?.dated_on ? dayOf(was.dated_on) : "";
+  const terms = [amount, day && `dated ${day}`].filter(Boolean).join(", ");
+  return `${SAID[d.status]} when it was ${terms || "something else"}. It has changed since, so it is open again.`;
 }
 
 /** The dashboard's own route for one item's decisions. Every part is the

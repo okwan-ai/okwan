@@ -41,6 +41,7 @@ export function Decided({ d }: { d: DecisionShown }) {
       {d.note && (
         <p className="mt-1 rounded-lg bg-canvas px-3 py-2 text-ink"><Written value={d.note} what="note" /></p>
       )}
+      {d.changed && <p className="mt-1 font-medium text-danger" data-changed>{d.changed}</p>}
     </div>
   );
 }
