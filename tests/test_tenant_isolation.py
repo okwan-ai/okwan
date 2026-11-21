@@ -309,6 +309,12 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
     ("GET", "/v1/tenants/{tenant_id}/runs"): ("/v1/tenants/{t}/runs", None),
     ("GET", "/v1/tenants/{tenant_id}/runs/{run_id}"): ("/v1/tenants/{t}/runs/{run}", None),
     ("GET", "/v1/tenants/{tenant_id}/exceptions"): ("/v1/tenants/{t}/exceptions", None),
+    # A decision on the victim's own open item, by its real key, and its history.
+    ("POST", "/v1/tenants/{tenant_id}/exceptions/{kind}/{check}/{key}/decisions"):
+        ("/v1/tenants/{t}/exceptions/across/rails/{item}/decisions",
+         {"status": "explained", "note": "INTRUDER closed it"}),
+    ("GET", "/v1/tenants/{tenant_id}/exceptions/{kind}/{check}/{key}/decisions"):
+        ("/v1/tenants/{t}/exceptions/across/rails/{item}/decisions", None),
     ("POST", "/v1/tenants/{tenant_id}/reconciliations/across/{name}"):
         ("/v1/tenants/{t}/reconciliations/across/rails", None),
     ("POST", "/v1/tenants/{tenant_id}/reconciliations/{name}"):
@@ -421,21 +427,34 @@ async def _victim_state(world, victim) -> dict[str, Any]:
         "runs": [r.id for r in await store.list_runs(victim.id, limit=50)],
         "imports": [f.id for f in await store.list_imports(victim.id)],
         "layouts": await store.list_layouts(victim.id),
+        "decisions": sorted(d.id for d, _ in await store.decided_on_runs(
+            [victim.id], [r.id for r in await store.list_runs(victim.id, limit=50)])),
     }
+
+
+def _victim_finding(key: str) -> dict:
+    return {"outcome": "collected_twice", "order": {"ref": f"#{STAMPS[key]}-1003", "currency": "USD"}}
 
 
 @pytest.fixture
 async def victim_runs(world):
-    """A stored run for every tenant, so a run route has something real to hide."""
+    """A stored run for every tenant, so a run route has something real to
+    hide, holding an open item a decision could be made on."""
     out = {}
     for key, tenant in world.t.items():
         rec = await world.store.add_run(
             tenant.id, kind="across", name="rails", surface="rest", status="ok",
             started_at=NOW, finished_at=NOW, summary={"orders": 1, "stamp": STAMPS[key]},
-            rows=[{"order": f"#{STAMPS[key]}-1002"}], error=None,
+            rows=[{"order": f"#{STAMPS[key]}-1002"}, _victim_finding(key)], error=None,
         )
         out[key] = rec.id
     return out
+
+
+def _item(world, whom: str) -> str:
+    """The key of the victim's open item, as the list would give it."""
+    from okwan_recon.exceptions import keyed
+    return keyed(world.t[whom].id, "rails", "across", [_victim_finding(whom)])[0][0]
 
 
 @pytest.fixture
@@ -466,7 +485,7 @@ async def test_an_outsider_gets_404_and_changes_nothing(
     method, _ = route
     template, body = ADMIN_BY_TENANT[route]
     victim = world.t[whom]
-    path = template.format(t=victim.id, run=victim_runs[whom], imp=victim_imports[whom])
+    path = template.format(t=victim.id, run=victim_runs[whom], imp=victim_imports[whom], item=_item(world, whom))
     before = await _victim_state(world, victim)
 
     r = await client.request(method, path, json=body, headers=_caller(world, who))
@@ -485,10 +504,10 @@ async def test_a_foreign_id_reads_exactly_like_one_that_does_not_exist(client, w
     method, _ = route
     template, body = ADMIN_BY_TENANT[route]
     foreign = await client.request(
-        method, template.format(t=world.t["isv_a"].id, run="run_nope", imp="imp_nope"),
+        method, template.format(t=world.t["isv_a"].id, run="run_nope", imp="imp_nope", item=_item(world, "isv_a")),
         json=body, headers=_caller(world, "isv_b"))
     missing = await client.request(
-        method, template.format(t="ten_doesnotexist0", run="run_nope", imp="imp_nope"),
+        method, template.format(t="ten_doesnotexist0", run="run_nope", imp="imp_nope", item="0" * 24),
         json=body, headers=_caller(world, "isv_b"))
     assert foreign.status_code == missing.status_code == 404
 

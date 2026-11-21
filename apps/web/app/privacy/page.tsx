@@ -76,6 +76,13 @@ const parts: Part[] = [
             names or email addresses from those services, and we do not store SQL queries or their results.
           </li>
           <li>
+            <strong>Decisions on open items.</strong> When someone in your account gives an open item to a person,
+            explains it, resolves it or opens it again, we keep what they chose, the name they gave and the note
+            they wrote, the amount and day the item was about, when, and which account made it and with what: a sign-in, or an API key by its prefix.
+            Decisions are only ever added, never changed, so an item&rsquo;s history stays as it was written.
+            Okwan never makes one itself, and a read-only key cannot.
+          </li>
+          <li>
             <strong>Payroll.</strong> From a payroll service you connect (Gusto today), Okwan reads each processed
             payroll&rsquo;s dates and company totals, and for each employee only the service&rsquo;s reference for
             that employee and the tips paid: cash tips and paycheck tips. It never reads or keeps an
@@ -272,6 +279,7 @@ const parts: Part[] = [
             ["Your Stripe subscription's id and state, and what each payment page you opened showed (the refund policy's version, the time, the IP address)", "As long as your account exists; for a payment page you opened and did not pay on, about a week. Stripe keeps its own payment records as the law requires"],
             ["Payments Stripe took for Pro, and any dispute of one (Stripe's ids for the payment and for you as its customer, amounts, dates, the bank's reason and decision)", "Kept after your account is deleted, without your account's id: a dispute still has to be answered, a payment Stripe takes afterwards has to be recognised as one for Okwan, and the count of payments is what a dispute rate is measured against"],
             ["Reconciliation results", "The newest 50 of each check, until your account is deleted. A result of a check that read files you imported is deleted sooner: with any of that merchant's files, when you delete one and when one expires"],
+            ["Decisions on open items: what was chosen, the name and note written, the amount and day the item was about, when, and which account and sign-in or key prefix made it", "As long as your account exists. A decision on a check that read files you imported is deleted with any of that merchant's files, when you delete one and when one expires"],
             ["Files you import: their mapped rows and the file's record", "13 months from the upload, then deleted within the hour; at once if you delete the file"],
             ["Column mappings you save", "Until you delete them or your account"],
             ["Usage counts", "As long as your account exists"],
@@ -377,7 +385,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 17, 2026"
+      updated="November 21, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

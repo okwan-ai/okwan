@@ -173,6 +173,54 @@ CREATE INDEX IF NOT EXISTS reconciliation_runs_latest_idx
 CREATE INDEX IF NOT EXISTS reconciliation_runs_read_idx
     ON reconciliation_runs (tenant_id, kind, name, status, started_at DESC, id DESC);
 
+-- ── decisions on open items ─────────────────────────────────────────
+-- What a person decided about one finding of a check (okwan_recon.exceptions
+-- keys it): given to someone, explained, resolved, or opened again, and why.
+-- Rows are only added, never changed or pruned: the history is the record an
+-- accountant asks for, and at most 100 an item. `seq` numbers an item's decisions 1, 2, 3 in the
+-- order they were made (the insert holds a lock on the item, and the unique
+-- index refuses two with one number); `prior_status` is its
+-- status before the row. `run_id` is the stored run the finding was in, with
+-- no reference to it: runs are pruned and the decision stays. A decision on
+-- a check that reads imported files may quote them in its note, so it goes
+-- with any file of its tenant, as such a run does. `credential` is how the
+-- access log names who made it: "session", or a key by its public prefix.
+CREATE TABLE IF NOT EXISTS exception_decisions (
+    id               text PRIMARY KEY,
+    seq              integer NOT NULL CHECK (seq > 0),
+    tenant_id        text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    kind             text NOT NULL CHECK (kind IN ('across', 'pair')),
+    name             text NOT NULL,
+    item_key         text NOT NULL,
+    status           text NOT NULL CHECK (status IN ('open', 'assigned', 'explained', 'resolved')),
+    prior_status     text CHECK (prior_status IN ('open', 'assigned', 'explained', 'resolved')),
+    owner            text,
+    note             text,
+    actor_tenant_id  text NOT NULL,
+    actor_name       text NOT NULL,
+    credential       text NOT NULL,
+    run_id           text NOT NULL,
+    reads_files      boolean NOT NULL DEFAULT false,
+    idempotency_key  text NOT NULL,
+    request_hash     text NOT NULL,
+    created_at       timestamptz NOT NULL,
+    -- What the item put at stake when decided (its amount, currency and
+    -- day): a decision closes it only while these are the same.
+    terms            text NOT NULL,
+    -- The decision before this one had closed the item on these terms.
+    closed_before    boolean NOT NULL
+);
+-- One decision per Idempotency-Key in a tenant: a retried request is
+-- answered with the decision it already made.
+CREATE UNIQUE INDEX IF NOT EXISTS exception_decisions_once
+    ON exception_decisions (tenant_id, idempotency_key);
+-- An item's newest decision, and its history.
+CREATE UNIQUE INDEX IF NOT EXISTS exception_decisions_item
+    ON exception_decisions (tenant_id, item_key, seq DESC);
+-- The decisions made against a check's newest stored run.
+CREATE INDEX IF NOT EXISTS exception_decisions_run
+    ON exception_decisions (tenant_id, run_id, item_key, seq);
+
 -- ── support ─────────────────────────────────────────────────────────
 -- The support assistant's conversations, kept for 30 days after their last
 -- message so a customer can come back to one and an escalation can be
@@ -615,7 +663,8 @@ BEGIN
     FOREACH t IN ARRAY ARRAY['credentials', 'usage', 'plans', 'reconciliation_runs',
                              'support_conversations', 'support_tickets', 'support_replies',
                              'import_files', 'import_rows', 'import_layouts',
-                             'access_log', 'access_alerts', 'notify_settings', 'daily_checks'] LOOP
+                             'access_log', 'access_alerts', 'notify_settings', 'daily_checks',
+                             'exception_decisions'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

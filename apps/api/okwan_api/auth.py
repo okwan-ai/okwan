@@ -68,7 +68,10 @@ async def open_store() -> Store:
     if not dsn:
         _store = MemoryStore(_dev_master())
         return _store
-    _store = await PostgresStore(dsn, from_env()).connect()
+    # Through set_store, like every store: it tells the store which checks
+    # read imported files, so a result stored without the mark still goes
+    # with the files. Assigned directly, the durable store never knew.
+    set_store(await PostgresStore(dsn, from_env()).connect())
     return _store
 
 

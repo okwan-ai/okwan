@@ -122,6 +122,91 @@ class FilesGone(Exception):
     not stored: a stored result quotes its files and never outlives one."""
 
 
+#: What a person can say about an open item. `open` puts back one that was
+#: closed; `assigned` gives it to someone and leaves it open; `explained`
+#: (nothing to fix: a deposit due Monday, a fee the processor kept) and
+#: `resolved` (fixed where it started) close it.
+DECISION_STATUSES = ("open", "assigned", "explained", "resolved")
+CLOSED_STATUSES = frozenset({"explained", "resolved"})
+#: Decisions one account can record on one item. A person decides an item a
+#: few times; more is a script. Counted per account, so a merchant cannot
+#: use up its platform's place on its own item, and an item's history,
+#: bounded by the accounts that may decide it, is read whole.
+ITEM_DECISIONS_MAX = 100
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """One thing a person decided about one finding of a check.
+
+    Decisions are only ever added, never changed: an item's history is the
+    record an accountant asks for, and its status is that of its newest
+    decision. `seq` orders them; `prior_status` is the item's status before
+    this one, None when nobody had decided anything yet. The item is the
+    finding keyed by okwan_recon.exceptions in the tenant's check (`kind`,
+    `name`), and `run_id` is the stored run it was found in when decided.
+    `terms` is what it put at stake then (okwan_recon.exceptions.terms): a
+    decision that closes an item closes it only while the item's terms are
+    the same. `closed_before` says whether the decision before this one had
+    closed it on these same terms.
+
+    Who decided is the account the session or key belongs to
+    (`actor_tenant_id`, its name then as `actor_name`) and the credential,
+    as the access log names it: "session", or a key by its public prefix.
+    Never a model: a read key, which an AI client is given, is refused.
+    """
+
+    id: str
+    seq: int
+    tenant_id: str
+    kind: str
+    name: str
+    key: str
+    status: str
+    prior_status: str | None
+    owner: str | None
+    note: str | None
+    actor_tenant_id: str
+    actor_name: str
+    credential: str
+    run_id: str
+    #: The check reads imported files: the note may quote them, so the
+    #: decision goes with any of the tenant's files, as such a run does.
+    reads_files: bool
+    idempotency_key: str
+    request_hash: str
+    created_at: datetime
+    terms: str = ""
+    closed_before: bool = False
+
+    @property
+    def closed(self) -> bool:
+        return self.status in CLOSED_STATUSES
+
+    def closes(self, terms: str) -> bool:
+        """Whether this decision closes an item that now has these terms."""
+        return self.closed and self.terms == terms
+
+
+class DecisionConflict(Exception):
+    """An Idempotency-Key already used for a different decision."""
+
+
+class HistoryFull(Exception):
+    """The account has already recorded ITEM_DECISIONS_MAX decisions on the item."""
+
+
+class ItemBusy(Exception):
+    """Another decision on the same item is being recorded. Nothing waits
+    for it: the caller sends this one again."""
+
+
+class ItemGone(Exception):
+    """The stored run an item was decided against is no longer there: a
+    file it read was deleted, or it was pruned, while the decision was
+    being recorded. Nothing is stored."""
+
+
 class DuplicateImport(Exception):
     """The same file, for the same kind, is already imported."""
 

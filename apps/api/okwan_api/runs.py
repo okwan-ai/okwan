@@ -13,7 +13,8 @@ same scrub the connection test applies.
 Each finding in a stored run carries its key and when it was first seen,
 carried from the check's newest stored run that finished well
 (okwan_recon.exceptions). The summary names the version of the check that
-produced it and keeps its oldest open items (`open`), worked out here once.
+produced it and keeps its oldest open items (`open`), worked out here once,
+leaving out the items a person has already explained or resolved.
 
 Recording never fails the run it records: like metering, a lost record
 is logged and the result still goes back to the caller.
@@ -27,7 +28,7 @@ from typing import Any
 
 from okwan_recon.across import AcrossRails
 from okwan_recon.engine import ref_paths
-from okwan_recon.exceptions import carry, open_summary, version
+from okwan_recon.exceptions import carry, holds, items_by_key, open_summary, version
 from okwan_recon.paging import MAX_ROWS
 from okwan_recon.registry import all_reconciliations
 from okwan_recon.registry import get as get_reconciliation
@@ -60,8 +61,10 @@ async def record_run(
                 else result.trimmed_rows(*ref_paths(spec), limit=MAX_ROWS)
             )
             previous = await previous_rows(tenant.id, kind, spec.name)
-            rows, summary = await asyncio.to_thread(
-                _keep, tenant.id, spec.name, kind, rows, previous, started, result.summary or {})
+            rows = await asyncio.to_thread(carry, tenant.id, spec.name, kind, rows, previous, started)
+            closed = await closed_keys(tenant.id, kind, spec.name, rows)
+            summary = await asyncio.to_thread(
+                _summarised, tenant.id, spec.name, kind, rows, result.summary or {}, closed)
             summary["check_version"] = check_version(spec)
             status, err = "ok", None
         else:
@@ -86,11 +89,36 @@ async def record_run(
 
 
 def _keep(tenant_id: str, name: str, kind: str, rows, previous, started: datetime, summary: dict):
-    """The rows and summary to store: each finding with its key and first
-    seen time, and the summary with the run's oldest open items. Off the
-    event loop: up to MAX_ROWS rows are keyed."""
+    """The rows and summary to store when no item is closed: each finding
+    with its key and first seen time, and the summary with the run's oldest
+    open items. Off the event loop: up to MAX_ROWS rows are keyed."""
     kept = carry(tenant_id, name, kind, rows, previous, started)
-    return kept, {**summary, "open": open_summary(tenant_id, name, kind, kept, summary)}
+    return kept, _summarised(tenant_id, name, kind, kept, summary, ())
+
+
+def _summarised(tenant_id: str, name: str, kind: str, kept, summary: dict, closed) -> dict:
+    """The summary to store with carried rows: its oldest open items, those
+    a person has closed (`closed`) left out and counted apart."""
+    return {**summary, "open": open_summary(tenant_id, name, kind, kept, summary, closed)}
+
+
+async def closed_keys(tenant_id: str, kind: str, name: str, rows) -> set[str]:
+    """The keys of this run's findings a person has explained or resolved,
+    as their newest decisions stand now, on the terms this run finds them
+    on: an item whose amount, currency or day changed since, or that is now
+    alike to another finding, is open again.
+    A store that cannot answer leaves every finding open: shown again
+    rather than hidden."""
+    items = await asyncio.to_thread(items_by_key, tenant_id, name, kind, rows)
+    if not items:
+        return set()
+    try:
+        current = await get_store().current_decisions([(tenant_id, k) for k in items])
+    except Exception:
+        logger.warning("decisions not read for %s's %s", tenant_id, name, exc_info=True)
+        return set()
+    return {k for (t, kd, n, k), d in current.items()
+            if t == tenant_id and kd == kind and n == name and k in items and holds(d, items[k])}
 
 
 async def previous_rows(tenant_id: str, kind: str, name: str) -> list | None:

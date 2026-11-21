@@ -20,6 +20,8 @@ which version of the check produced it and a changed check shows.
 `open_summary` is worked out once, when a run is stored: how many findings
 the run found and kept, and its oldest open items, so a list across every
 merchant of an account reads a few items a run and never every stored row.
+An item a person has closed (explained or resolved, okwan_vault's
+decisions) is left out of it and counted apart.
 
 Pure functions over stored rows. Nothing here reads a connector or the
 store, and nothing is added to a row but its key and the time it was first
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Collection
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -90,26 +93,45 @@ def _parts(tenant_id: str, name: str, kind: str, row: Row) -> list[Any] | None:
     return parts
 
 
+def _keyed(tenant_id: str, name: str, kind: str, rows: list[Row]) -> list[tuple[str | None, str | None, Row]]:
+    """(key, what it is made from, row) for each row; None and None for a
+    row that is not a finding."""
+    seen: dict[str, int] = {}
+    out: list[tuple[str | None, str | None, Row]] = []
+    for row in rows:
+        parts = _parts(tenant_id, name, kind, row) if isinstance(row, dict) else None
+        if parts is None:
+            out.append((None, None, row))
+            continue
+        base = json.dumps(parts, ensure_ascii=False, separators=(",", ":"), default=str)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        text = f"{base}#{n}" if n else base
+        out.append((hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24], base, row))
+    return out
+
+
 def keyed(tenant_id: str, name: str, kind: str, rows: list[Row]) -> list[tuple[str | None, Row]]:
     """Each row with its finding's key, or None for a row that is not a
     finding. The key belongs to the tenant: the same payout in another
     account has another key. Two findings alike in every part are told
     apart by the order the run lists them in, so neither swallows the
     other."""
-    seen: dict[str, int] = {}
-    out: list[tuple[str | None, Row]] = []
-    for row in rows:
-        parts = _parts(tenant_id, name, kind, row) if isinstance(row, dict) else None
-        if parts is None:
-            out.append((None, row))
-            continue
-        text = json.dumps(parts, ensure_ascii=False, separators=(",", ":"), default=str)
-        n = seen.get(text, 0)
-        seen[text] = n + 1
-        if n:
-            text = f"{text}#{n}"
-        out.append((hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24], row))
-    return out
+    return [(key, row) for key, _, row in _keyed(tenant_id, name, kind, rows)]
+
+
+def twins(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> set[str]:
+    """The keys of findings alike in every part to another finding of the
+    same rows (two terminals that each closed batch "001" that day). They
+    are told apart only by the order a run lists them in, so which is which
+    can change from one run to the next: a person's decision cannot be
+    pinned to one of them."""
+    found = _keyed(tenant_id, name, kind, rows or [])
+    count: dict[str, int] = {}
+    for key, base, _ in found:
+        if key is not None:
+            count[base] = count.get(base, 0) + 1
+    return {key for key, base, _ in found if key is not None and count[base] > 1}
 
 
 def carry(tenant_id: str, name: str, kind: str, rows: list[Row] | None, previous: list[Row] | None,
@@ -163,40 +185,44 @@ def _instant(value: Any) -> datetime | None:
     return at if at.tzinfo else at.replace(tzinfo=UTC)
 
 
-def _pair_terms(row: Row) -> tuple[int | None, str | None, date | None]:
-    """What a pair finding puts at stake, in what currency, and the day it
-    is dated: the difference for amounts that differ, else the record's own
-    amount; the record's day, else the day of the side that has one."""
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _pair_terms(row: Row) -> tuple[int | None, int | None, str | None, date | None]:
+    """What a pair finding puts at stake (and the same figure with its
+    sign), in what currency, and the day it is dated: the difference for
+    amounts that differ, else the record's own amount; the record's day,
+    else the day of the side that has one."""
     ev = row.get("evidence") or {}
     rec = _record(row)
     compared = ev.get("compared") if isinstance(ev.get("compared"), dict) else {}
     dated = ev.get("dated") if isinstance(ev.get("dated"), dict) else {}
     if row.get("status") == "matched_discrepant":
-        diff = row.get("discrepancy")
-        amount = abs(diff) if isinstance(diff, int) and not isinstance(diff, bool) else None
+        signed = _int(row.get("discrepancy"))
         currency = compared.get("currency")
     else:
-        value = rec.get("amount_minor")
-        amount = abs(value) if isinstance(value, int) and not isinstance(value, bool) else None
+        signed = _int(rec.get("amount_minor"))
         currency = rec.get("currency")
     day = _day(rec.get("when")) or _day(dated.get("left")) or _day(dated.get("right"))
-    return amount, currency if isinstance(currency, str) else None, day
+    return (abs(signed) if signed is not None else None), signed, currency if isinstance(currency, str) else None, day
 
 
-def _fold_terms(row: Row) -> tuple[int | None, str | None, date | None]:
+def _fold_terms(row: Row) -> tuple[int | None, int | None, str | None, date | None]:
     """An order collected twice puts the excess at stake, one that does not
-    add up the gap, one never collected its total."""
-    total, taken = row.get("order_total_minor"), row.get("collected_minor")
-    ints = all(isinstance(v, int) and not isinstance(v, bool) for v in (total, taken))
+    add up the gap (with its sign: over or short), one never collected its
+    total."""
+    total, taken = _int(row.get("order_total_minor")), _int(row.get("collected_minor"))
     if row.get("outcome") == "uncollected":
-        amount = total if isinstance(total, int) and not isinstance(total, bool) else None
+        signed = total
     else:
-        amount = abs(taken - total) if ints else None
+        signed = taken - total if total is not None and taken is not None else None
     order = row.get("order") or {}
     currency = order.get("currency")
     # The order's own day, as the fold keeps it. `collected_on` is not a day:
     # it names the rails that collected.
-    return amount, currency if isinstance(currency, str) else None, _day(order.get("on"))
+    amount = abs(signed) if signed is not None else None
+    return amount, signed, currency if isinstance(currency, str) else None, _day(order.get("on"))
 
 
 #: Items a run's summary keeps, oldest first: what a list across every
@@ -207,25 +233,55 @@ _PAIR_COUNTS = ("matched_with_unexplained_discrepancy", "unmatched_left", "unmat
 _FOLD_COUNTS = FOLD_FINDINGS
 
 
-def _item(name: str, kind: str, key: str, row: Row) -> Row:
-    """A finding as an item, without its age."""
-    amount, currency, day = _fold_terms(row) if kind == "across" else _pair_terms(row)
+def _item(name: str, kind: str, key: str, row: Row, alike: bool = False) -> Row:
+    """A finding as an item, without its age. `signed_minor`: the amount at
+    stake with its sign (over or short, in or out), which a decision is held
+    to. `alike`: another finding of the same rows is alike to it in every
+    part of its key (twins)."""
+    amount, signed, currency, day = _fold_terms(row) if kind == "across" else _pair_terms(row)
     first = _instant(row.get("first_seen"))
     item: Row = {
         "key": key,
         "check": name,
         "finding": finding(kind, row),
         "amount_minor": amount,
+        "signed_minor": signed,
         "currency": currency,
         "dated_on": day.isoformat() if day else None,
         "first_seen": first.isoformat() if first else None,
         "reason": row.get("reason"),
+        "alike": alike,
     }
     if kind == "across":
         item["order_ref"] = (row.get("order") or {}).get("ref")
     else:
         item["left_ref"], item["right_ref"] = row.get("left_ref"), row.get("right_ref")
     return item
+
+
+def terms(item: Row) -> str:
+    """What an item puts at stake, as one string: its amount with its sign
+    (100.00 over is not 100.00 short), currency and day. A decision records
+    the terms it was made on, and closes the item only while they are the
+    same: a difference explained at 1.00 is open again when the same pair is
+    5,001.00 apart, and an overpayment explained is open again as a
+    shortfall. An item stored before the sign was kept is held to its
+    amount."""
+    signed = item.get("signed_minor", item.get("amount_minor"))
+    return json.dumps([signed, item.get("currency"), item.get("dated_on")], separators=(",", ":"))
+
+
+def holds(decision: Any, item: Row) -> bool:
+    """Whether a person's decision closes this item as it stands now: it
+    closed it, on the same terms, and the item is not alike to another
+    (a run tells twins apart only by order, so a decision cannot be pinned
+    to either)."""
+    return bool(decision is not None and decision.closes(terms(item)) and not item.get("alike"))
+
+
+def items_by_key(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> dict[str, Row]:
+    """Every finding of a stored run as an item, without its age, by key."""
+    return {i["key"]: i for i in _found(tenant_id, name, kind, rows)}
 
 
 def _since(item: Row) -> date | None:
@@ -248,12 +304,17 @@ def aged(item: Row, now: datetime) -> Row:
 
 
 def _found(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> list[Row]:
+    found = _keyed(tenant_id, name, kind, rows or [])
+    count: dict[str, int] = {}
+    for computed, base, _ in found:
+        if computed is not None:
+            count[base] = count.get(base, 0) + 1
     out = []
-    for computed, row in keyed(tenant_id, name, kind, rows or []):
+    for computed, base, row in found:
         if computed is None:
             continue
         stored = row.get("key")
-        out.append(_item(name, kind, stored if isinstance(stored, str) else computed, row))
+        out.append(_item(name, kind, stored if isinstance(stored, str) else computed, row, count[base] > 1))
     return out
 
 
@@ -265,13 +326,28 @@ def open_items(tenant_id: str, name: str, kind: str, rows: list[Row] | None, now
     return [aged(i, now) for i in sorted(_found(tenant_id, name, kind, rows), key=oldest_first)]
 
 
+def run_found(kind: str, summary: Row | None) -> int:
+    """How many findings a run found, by its own counts: more than its
+    stored rows hold when they were cut."""
+    counts = _FOLD_COUNTS if kind == "across" else _PAIR_COUNTS
+    return sum(int((summary or {}).get(k) or 0) for k in counts)
+
+
 def open_summary(tenant_id: str, name: str, kind: str, rows: list[Row] | None,
-                 summary: Row | None) -> Row:
+                 summary: Row | None, closed: Collection[str] = ()) -> Row:
     """What a run's summary keeps of its open items, worked out once when
     the run is stored: how many findings the run found (its own counts) and
     how many its stored rows kept (rows are kept worst first up to a
-    limit), and its OPEN_KEPT oldest items, without their age."""
-    items = sorted(_found(tenant_id, name, kind, rows), key=oldest_first)
-    counts = _FOLD_COUNTS if kind == "across" else _PAIR_COUNTS
-    found = sum(int((summary or {}).get(k) or 0) for k in counts)
-    return {"found": max(found, len(items)), "kept": len(items), "oldest": items[:OPEN_KEPT]}
+    limit), and its OPEN_KEPT oldest items, without their age.
+
+    `closed`: the keys of items a person has explained or resolved, on the
+    terms the run finds them on, when the run is stored. They are not open:
+    they are left out of the counts and the items, and counted as `closed`.
+    A person can only decide an item a stored row holds, so every closed one
+    is among the kept rows."""
+    shut = set(closed)
+    every = _found(tenant_id, name, kind, rows)
+    items = sorted((i for i in every if i["key"] not in shut), key=oldest_first)
+    n_closed = len(every) - len(items)
+    found = max(run_found(kind, summary), len(every)) - n_closed
+    return {"found": found, "kept": len(items), "closed": n_closed, "oldest": items[:OPEN_KEPT]}
