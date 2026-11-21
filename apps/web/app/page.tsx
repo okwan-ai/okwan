@@ -277,9 +277,9 @@ function Hero() {
             <span className="whitespace-nowrap">disagree<SignalDot /></span>
           </h1>
           <p className="mt-7 max-w-[560px] text-[18px] leading-[1.6] text-ink-soft">
-            Your order ledger and your payment processors each tell a different story about the same
-            money. Okwan matches them record by record and says what agrees, what differs and why, as
-            an engine your product embeds. POS batches and bank deposits are next.
+            Your order ledger, your POS, your processors and your bank statement each tell a different
+            story about the same money. Okwan matches them record by record and says what agrees, what
+            differs and why, as an engine your product embeds.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             <a
@@ -314,7 +314,7 @@ function Hero() {
 
 function Facts() {
   const facts = [
-    ["6", "connectors live today"],
+    ["11", "connectors live today"],
     ["7", "verdicts, where most tools give two"],
     ["1 → 3", "one definition becomes an API, a SQL view and an agent tool"],
     ["0", "write access to any payment rail"],
@@ -356,13 +356,23 @@ const RETAIL: { title: string; body: string; status: "live" | "next"; detail?: s
     body: "Each order traced to the rail that collected it, across Stripe and PayPal at once: paid once, charged twice, split across rails, or not paid at all.",
     detail: "GET /v1/reconciliations/across/rails" },
   { status: "live", title: "Fees and refunds, explained",
-    body: "When a Stripe or PayPal fee, or a PayPal refund, accounts for a gap exactly, it is named as the cause, so the list you chase holds only real breaks.",
+    body: "When a Stripe, PayPal or Square fee, or a PayPal refund, accounts for a gap exactly, it is named as the cause, so the list you chase holds only real breaks.",
     detail: "explains=[rail_fee, refund]" },
   { status: "live", title: "Your own payments table, against Shopify orders",
     body: "Keep your payments in a recon_payments table in your own Postgres, and Okwan reconciles them against your Shopify orders, with refunds explained.",
     detail: 'ResourceRef(connector="postgres", resource="sql")' },
-  { status: "next", title: "POS batches against processor deposits",
-    body: "Card batches closed at the register against what the processor actually deposited, by day and by location." },
+  { status: "live", title: "Card sales against the processor",
+    body: "Each Square payment against the payout line that settled it, and each Clover card sale against the processor's settled transaction, never pairing two whose last four digits or authorization codes differ.",
+    detail: "recon.clover_payments_settlements" },
+  { status: "live", title: "Processor batches against bank deposits",
+    body: "Each batch on the processor's report, and each Square payout, against the bank deposit that paid it. A weekend's batches are summed into the one deposit, up to three business days later.",
+    detail: "recon.batches_deposits" },
+  { status: "live", title: "Delivery payouts against the bank",
+    body: "Each DoorDash, Uber Eats or Grubhub payout against the order lines it paid and the bank deposit that brought it in.",
+    detail: "recon.delivery_payouts_deposits" },
+  { status: "live", title: "Sales tax, recorded against filed",
+    body: "Each sales tax return against the tax AvaTax recorded for the same state and period, with a return's corrections to earlier periods named as the cause.",
+    detail: "recon.avatax_collected_filed" },
   { status: "next", title: "Gift cards, tips and chargebacks",
     body: "The adjustments that make a day's sales and a day's deposits disagree, each named rather than netted away." },
   { status: "next", title: "Residuals against the merchant book",
@@ -376,7 +386,7 @@ function Retail() {
         <SectionHead
           eyebrow="Retail first"
           title="Built for the retail stack."
-          intro="For POS dealers, ISVs and payment providers whose merchants sell in store and online, and collect on more than one system. Three reconciliations run today; the next three are chosen with the platforms we work with."
+          intro="For POS dealers, ISVs and payment providers whose merchants sell in store and online, and collect on more than one system. Processor reports, bank statements, delivery reports and tax returns come in as the files those systems export; everything else is read live."
         />
         <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {RETAIL.map((c) => (
@@ -399,7 +409,7 @@ function Retail() {
           ))}
         </div>
         <p className="mt-8 text-[15px] text-ink-soft">
-          Which of the three in discovery costs your merchants the most?{" "}
+          Which of the two in discovery costs your merchants the most?{" "}
           <a href={CONTACT} className="font-medium text-ink underline decoration-line-strong underline-offset-4 hover:decoration-ink">
             Tell us
           </a>
@@ -530,7 +540,10 @@ function How() {
   );
 }
 
-const CONNECTORS = ["Shopify", "Stripe", "PayPal", "Paystack", "PostgreSQL", "WhatsApp"];
+const CONNECTORS = [
+  "Shopify", "Square", "Clover", "Stripe", "PayPal", "Paystack",
+  "Avalara", "Gusto", "PostgreSQL", "WhatsApp", "Imported files",
+];
 
 const QUERY = `curl https://api.okwan.ai/v1/query \\
   -H "Authorization: Bearer okw_…" \\
@@ -550,7 +563,7 @@ function Developers() {
           </h2>
           <p className="mt-5 max-w-[520px] text-[17px] leading-[1.6] text-ink-soft">
             Federated SQL over live connectors. Only the tables a query names are fetched, and only
-            when it runs: no pipeline, no copy of your merchants&apos; data.
+            when it runs: no pipeline, and no copy of a connected system&apos;s data.
           </p>
           <p className="mt-8 font-mono text-[12px] uppercase tracking-[0.14em] text-ink-muted">Connected today</p>
           <ul className="mt-3 flex flex-wrap gap-2">
