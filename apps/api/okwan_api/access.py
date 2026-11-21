@@ -68,6 +68,13 @@ def remember(headers: Mapping[str, str], peer: str | None, token: str, target: s
     _caller.set(Caller(credential_for(token), address_from(headers, peer), target))
 
 
+def credential_now() -> str:
+    """How this request's credential is logged, as remembered when it was
+    checked: "session", or an API key by its public prefix."""
+    caller = _caller.get()
+    return caller.credential if caller is not None else "unknown"
+
+
 def remember_schedule(target: str) -> None:
     """For the daily check (schedule.py): Okwan's own read, from no address."""
     _caller.set(Caller(rules.SCHEDULE, "unknown", target))

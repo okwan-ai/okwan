@@ -20,6 +20,8 @@ which version of the check produced it and a changed check shows.
 `open_summary` is worked out once, when a run is stored: how many findings
 the run found and kept, and its oldest open items, so a list across every
 merchant of an account reads a few items a run and never every stored row.
+An item a person has closed (explained or resolved, okwan_vault's
+decisions) is left out of it and counted apart.
 
 Pure functions over stored rows. Nothing here reads a connector or the
 store, and nothing is added to a row but its key and the time it was first
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Collection
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -265,13 +268,27 @@ def open_items(tenant_id: str, name: str, kind: str, rows: list[Row] | None, now
     return [aged(i, now) for i in sorted(_found(tenant_id, name, kind, rows), key=oldest_first)]
 
 
+def run_found(kind: str, summary: Row | None) -> int:
+    """How many findings a run found, by its own counts: more than its
+    stored rows hold when they were cut."""
+    counts = _FOLD_COUNTS if kind == "across" else _PAIR_COUNTS
+    return sum(int((summary or {}).get(k) or 0) for k in counts)
+
+
 def open_summary(tenant_id: str, name: str, kind: str, rows: list[Row] | None,
-                 summary: Row | None) -> Row:
+                 summary: Row | None, closed: Collection[str] = ()) -> Row:
     """What a run's summary keeps of its open items, worked out once when
     the run is stored: how many findings the run found (its own counts) and
     how many its stored rows kept (rows are kept worst first up to a
-    limit), and its OPEN_KEPT oldest items, without their age."""
-    items = sorted(_found(tenant_id, name, kind, rows), key=oldest_first)
-    counts = _FOLD_COUNTS if kind == "across" else _PAIR_COUNTS
-    found = sum(int((summary or {}).get(k) or 0) for k in counts)
-    return {"found": max(found, len(items)), "kept": len(items), "oldest": items[:OPEN_KEPT]}
+    limit), and its OPEN_KEPT oldest items, without their age.
+
+    `closed`: the keys of items a person has explained or resolved when the
+    run is stored. They are not open: they are left out of the counts and
+    the items, and counted as `closed`. A person can only decide an item a
+    stored row holds, so every closed one is among the kept rows."""
+    shut = set(closed)
+    every = _found(tenant_id, name, kind, rows)
+    items = sorted((i for i in every if i["key"] not in shut), key=oldest_first)
+    n_closed = len(every) - len(items)
+    found = max(run_found(kind, summary), len(every)) - n_closed
+    return {"found": found, "kept": len(items), "closed": n_closed, "oldest": items[:OPEN_KEPT]}

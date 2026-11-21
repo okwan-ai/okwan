@@ -61,6 +61,9 @@ SQL_RECON_TENANT = Rule("sql:recon:tenant", 12, 60)
 IMPORT_TENANT = Rule("import:tenant", 30, 3600)
 #: The list of open items: a session reloading a page, never a loop.
 EXCEPTIONS_TENANT = Rule("exceptions:tenant", 60, 60)
+#: Decisions on open items, per account making them: a person working
+#: through a backlog, never a script writing the history full.
+DECIDE_TENANT = Rule("decide:tenant", 300, 3600)
 #: The sample check holds nothing of anyone's and costs one run an hour;
 #: the limit only keeps one address from hammering a route that needs no key.
 SAMPLE_IP = Rule("sample:ip", 120, 60)
