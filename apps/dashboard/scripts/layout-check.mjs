@@ -330,6 +330,56 @@ async function checkOpenItems(page, w, h) {
   if (said.includes("B-2004")) await note(page, where, "the batch's reference is inside the page's own words");
   const link = item.locator("a[href^='/merchants/ten_'] bdi[data-merchant-name]");
   if ((await link.count()) !== 1) await note(page, where, "the merchant's name is not a link to its page");
+  // Deciding: the panel opens with the choices and asks why before it records.
+  const decide = item.locator("button[data-decide]");
+  if (!(await decide.isVisible())) return note(page, where, "the unpaid batch has no Decide button in view");
+  await decide.click();
+  const form = page.locator("[role=dialog] form[data-decide-form]");
+  if (!(await form.isVisible())) return note(page, where, "Decide did not open its panel");
+  if ((await form.locator("input[type=radio]").count()) !== 3) await note(page, where, "the panel does not offer explain, resolve and give");
+  if (!(await form.locator("button[type=submit]").isDisabled())) await note(page, where, "a decision can be recorded with no reason");
+  await page.locator("[role=dialog] section[aria-label='What was decided']").getByText(/No one has decided|Loading/).first()
+    .waitFor({ timeout: 5000 }).catch(() => note(page, where, "the panel does not say what was decided before"));
+  await page.keyboard.press("Escape");
+}
+
+/** Once, at the end: explain the unpaid batch, see it leave the list and be
+ *  listed with its reason among the merchant's closed items, open it again,
+ *  and see it back. The seed is left as it was found. */
+async function checkDeciding(page) {
+  const where = "deciding an open item";
+  const why = "Layout check: the processor held this batch.";
+  const back = "Layout check: opened again.";
+  await page.goto(`${BASE}/exceptions`, { waitUntil: "networkidle" });
+  const batch = () => page.locator("[data-exception]").filter({ has: page.locator("bdi[data-file-ref]", { hasText: /^B-2004$/ }) });
+  if ((await batch().count()) !== 1) return note(page, where, "the seed's unpaid batch is not open");
+  const href = await batch().locator("a[href^='/merchants/ten_']").getAttribute("href");
+  const merchant = href.split("/")[2].split("?")[0];
+  await batch().locator("button[data-decide]").click();
+  const form = page.locator("[role=dialog] form[data-decide-form]");
+  await form.locator("input[value=explained]").check();
+  await form.locator("textarea[name=note]").fill(why);
+  await form.locator("button[type=submit]").click();
+  // The page draws the list again once the decision is recorded.
+  const gone = await batch().waitFor({ state: "detached", timeout: 15000 }).then(() => true, () => false);
+  if (!gone) return note(page, where, "the explained batch is still on the list");
+  await page.goto(`${BASE}/exceptions?merchant=${encodeURIComponent(merchant)}&state=closed`, { waitUntil: "networkidle" });
+  const closed = batch();
+  if ((await closed.count()) !== 1) return note(page, where, "the explained batch is not among the merchant's closed items");
+  const said = await closed.innerText();
+  if (!said.includes(why) || !said.includes("Explained by")) await note(page, where, "the closed batch does not say who explained it and why");
+  if ((await closed.locator("bdi[data-note]").count()) !== 1) await note(page, where, "the reason is not drawn as the person's own text");
+  await closed.locator("button[data-decide]").click();
+  await form.locator("textarea[name=note]").fill(back);
+  await form.locator("button[type=submit]").click();
+  await closed.waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
+  await page.goto(`${BASE}/exceptions`, { waitUntil: "networkidle" });
+  if ((await batch().count()) !== 1) return note(page, where, "the batch opened again is not back on the list");
+  await batch().locator("button[data-decide]").click();
+  const history = page.locator("[role=dialog] ol[data-history] > li");
+  await history.nth(1).waitFor({ timeout: 5000 }).catch(() => {});
+  if ((await history.count()) !== 2) await note(page, where, "the history does not hold both decisions");
+  await page.keyboard.press("Escape");
 }
 
 async function checkMenu(page, w, h) {
@@ -400,6 +450,9 @@ try {
     await ctx.close();
   }
   if (merchant) slow = await checkSlowly(browser, session, merchant);
+  const last = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce", storageState: session });
+  await checkDeciding(await last.newPage());
+  await last.close();
 } finally {
   await browser.close();
 }
@@ -410,4 +463,4 @@ if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);

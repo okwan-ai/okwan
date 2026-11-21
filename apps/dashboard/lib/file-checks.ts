@@ -113,6 +113,8 @@ export const REF_SHOWN = 200;
 // paragraph separators, every space that is not the plain one, and the
 // blank Braille pattern, which is a letter that draws as a space.
 const UNSEEN = /^(?:[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800]|(?! )\p{Zs})$/u;
+/** One character that cannot be seen, as merchants' and people's own text is checked for it. */
+export const UNSEEN_CHAR = UNSEEN;
 
 /**
  * A reference from a file, made safe to read beside the page's own words.
