@@ -582,7 +582,7 @@ class PostgresStore:
             if done is not None:
                 return _replayed(done, request_hash)
             held = await con.fetchval(
-                "SELECT id FROM reconciliation_runs WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE",
+                "SELECT id FROM reconciliation_runs WHERE id = $2 AND tenant_id = $1 FOR KEY SHARE",
                 tenant_id, run_id)
             if held is None:
                 raise ItemGone("the stored run this item was found in is no longer there")
