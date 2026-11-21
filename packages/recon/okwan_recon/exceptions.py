@@ -185,40 +185,44 @@ def _instant(value: Any) -> datetime | None:
     return at if at.tzinfo else at.replace(tzinfo=UTC)
 
 
-def _pair_terms(row: Row) -> tuple[int | None, str | None, date | None]:
-    """What a pair finding puts at stake, in what currency, and the day it
-    is dated: the difference for amounts that differ, else the record's own
-    amount; the record's day, else the day of the side that has one."""
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _pair_terms(row: Row) -> tuple[int | None, int | None, str | None, date | None]:
+    """What a pair finding puts at stake (and the same figure with its
+    sign), in what currency, and the day it is dated: the difference for
+    amounts that differ, else the record's own amount; the record's day,
+    else the day of the side that has one."""
     ev = row.get("evidence") or {}
     rec = _record(row)
     compared = ev.get("compared") if isinstance(ev.get("compared"), dict) else {}
     dated = ev.get("dated") if isinstance(ev.get("dated"), dict) else {}
     if row.get("status") == "matched_discrepant":
-        diff = row.get("discrepancy")
-        amount = abs(diff) if isinstance(diff, int) and not isinstance(diff, bool) else None
+        signed = _int(row.get("discrepancy"))
         currency = compared.get("currency")
     else:
-        value = rec.get("amount_minor")
-        amount = abs(value) if isinstance(value, int) and not isinstance(value, bool) else None
+        signed = _int(rec.get("amount_minor"))
         currency = rec.get("currency")
     day = _day(rec.get("when")) or _day(dated.get("left")) or _day(dated.get("right"))
-    return amount, currency if isinstance(currency, str) else None, day
+    return (abs(signed) if signed is not None else None), signed, currency if isinstance(currency, str) else None, day
 
 
-def _fold_terms(row: Row) -> tuple[int | None, str | None, date | None]:
+def _fold_terms(row: Row) -> tuple[int | None, int | None, str | None, date | None]:
     """An order collected twice puts the excess at stake, one that does not
-    add up the gap, one never collected its total."""
-    total, taken = row.get("order_total_minor"), row.get("collected_minor")
-    ints = all(isinstance(v, int) and not isinstance(v, bool) for v in (total, taken))
+    add up the gap (with its sign: over or short), one never collected its
+    total."""
+    total, taken = _int(row.get("order_total_minor")), _int(row.get("collected_minor"))
     if row.get("outcome") == "uncollected":
-        amount = total if isinstance(total, int) and not isinstance(total, bool) else None
+        signed = total
     else:
-        amount = abs(taken - total) if ints else None
+        signed = taken - total if total is not None and taken is not None else None
     order = row.get("order") or {}
     currency = order.get("currency")
     # The order's own day, as the fold keeps it. `collected_on` is not a day:
     # it names the rails that collected.
-    return amount, currency if isinstance(currency, str) else None, _day(order.get("on"))
+    amount = abs(signed) if signed is not None else None
+    return amount, signed, currency if isinstance(currency, str) else None, _day(order.get("on"))
 
 
 #: Items a run's summary keeps, oldest first: what a list across every
@@ -229,19 +233,24 @@ _PAIR_COUNTS = ("matched_with_unexplained_discrepancy", "unmatched_left", "unmat
 _FOLD_COUNTS = FOLD_FINDINGS
 
 
-def _item(name: str, kind: str, key: str, row: Row) -> Row:
-    """A finding as an item, without its age."""
-    amount, currency, day = _fold_terms(row) if kind == "across" else _pair_terms(row)
+def _item(name: str, kind: str, key: str, row: Row, alike: bool = False) -> Row:
+    """A finding as an item, without its age. `signed_minor`: the amount at
+    stake with its sign (over or short, in or out), which a decision is held
+    to. `alike`: another finding of the same rows is alike to it in every
+    part of its key (twins)."""
+    amount, signed, currency, day = _fold_terms(row) if kind == "across" else _pair_terms(row)
     first = _instant(row.get("first_seen"))
     item: Row = {
         "key": key,
         "check": name,
         "finding": finding(kind, row),
         "amount_minor": amount,
+        "signed_minor": signed,
         "currency": currency,
         "dated_on": day.isoformat() if day else None,
         "first_seen": first.isoformat() if first else None,
         "reason": row.get("reason"),
+        "alike": alike,
     }
     if kind == "across":
         item["order_ref"] = (row.get("order") or {}).get("ref")
@@ -251,12 +260,23 @@ def _item(name: str, kind: str, key: str, row: Row) -> Row:
 
 
 def terms(item: Row) -> str:
-    """What an item puts at stake, as one string: its amount, currency and
-    day. A decision records the terms it was made on, and closes the item
-    only while they are the same: a difference explained at 1.00 is open
-    again when the same pair is 5,001.00 apart."""
-    return json.dumps([item.get("amount_minor"), item.get("currency"), item.get("dated_on")],
-                      separators=(",", ":"))
+    """What an item puts at stake, as one string: its amount with its sign
+    (100.00 over is not 100.00 short), currency and day. A decision records
+    the terms it was made on, and closes the item only while they are the
+    same: a difference explained at 1.00 is open again when the same pair is
+    5,001.00 apart, and an overpayment explained is open again as a
+    shortfall. An item stored before the sign was kept is held to its
+    amount."""
+    signed = item.get("signed_minor", item.get("amount_minor"))
+    return json.dumps([signed, item.get("currency"), item.get("dated_on")], separators=(",", ":"))
+
+
+def holds(decision: Any, item: Row) -> bool:
+    """Whether a person's decision closes this item as it stands now: it
+    closed it, on the same terms, and the item is not alike to another
+    (a run tells twins apart only by order, so a decision cannot be pinned
+    to either)."""
+    return bool(decision is not None and decision.closes(terms(item)) and not item.get("alike"))
 
 
 def items_by_key(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> dict[str, Row]:
@@ -284,12 +304,17 @@ def aged(item: Row, now: datetime) -> Row:
 
 
 def _found(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> list[Row]:
+    found = _keyed(tenant_id, name, kind, rows or [])
+    count: dict[str, int] = {}
+    for computed, base, _ in found:
+        if computed is not None:
+            count[base] = count.get(base, 0) + 1
     out = []
-    for computed, row in keyed(tenant_id, name, kind, rows or []):
+    for computed, base, row in found:
         if computed is None:
             continue
         stored = row.get("key")
-        out.append(_item(name, kind, stored if isinstance(stored, str) else computed, row))
+        out.append(_item(name, kind, stored if isinstance(stored, str) else computed, row, count[base] > 1))
     return out
 
 

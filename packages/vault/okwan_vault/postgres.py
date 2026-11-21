@@ -577,8 +577,8 @@ class PostgresStore:
         numbered in the order they are made and each knows the status
         before it. The lock is only tried: while another decision on the
         item is being recorded this one is refused (ItemBusy) rather than
-        hold a connection waiting. An item holds at most ITEM_DECISIONS_MAX
-        (HistoryFull). The stored run it was found in is held while the row
+        hold a connection waiting. An account records at most ITEM_DECISIONS_MAX on an item
+        (HistoryFull) from one account. The stored run it was found in is held while the row
         goes in: a file deletion that takes the run either comes first, and
         nothing is stored (ItemGone), or waits, and its next statement takes
         this decision with the run."""
@@ -601,8 +601,11 @@ class PostgresStore:
             last = await con.fetchrow(
                 "SELECT seq, status, terms FROM exception_decisions WHERE tenant_id = $1 AND item_key = $2 "
                 "ORDER BY seq DESC LIMIT 1", tenant_id, key)
-            if last is not None and last["seq"] >= ITEM_DECISIONS_MAX:
-                raise HistoryFull(f"this item already holds {ITEM_DECISIONS_MAX} decisions")
+            mine = await con.fetchval(
+                "SELECT count(*) FROM exception_decisions WHERE tenant_id = $1 AND item_key = $2 "
+                "AND actor_tenant_id = $3", tenant_id, key, actor_tenant_id)
+            if mine >= ITEM_DECISIONS_MAX:
+                raise HistoryFull(f"this account already recorded {ITEM_DECISIONS_MAX} decisions on this item")
             before = last is not None and last["status"] in CLOSED_STATUSES and last["terms"] == terms
             try:
                 async with con.transaction():

@@ -811,8 +811,10 @@ class MemoryStore:
             raise ItemGone("the stored run this item was found in is no longer there")
         last = max((d for d in self._decisions if d.tenant_id == tenant_id and d.key == key),
                    key=lambda d: d.seq, default=None)
-        if last is not None and last.seq >= ITEM_DECISIONS_MAX:
-            raise HistoryFull(f"this item already holds {ITEM_DECISIONS_MAX} decisions")
+        mine = sum(1 for d in self._decisions
+                   if d.tenant_id == tenant_id and d.key == key and d.actor_tenant_id == actor_tenant_id)
+        if mine >= ITEM_DECISIONS_MAX:
+            raise HistoryFull(f"this account already recorded {ITEM_DECISIONS_MAX} decisions on this item")
         dec = Decision(
             id=f"dec_{uuid.uuid4().hex[:16]}", seq=(last.seq if last else 0) + 1, tenant_id=tenant_id,
             kind=kind, name=name, key=key, status=status, prior_status=last.status if last else None,

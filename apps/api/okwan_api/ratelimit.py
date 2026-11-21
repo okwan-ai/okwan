@@ -61,9 +61,12 @@ SQL_RECON_TENANT = Rule("sql:recon:tenant", 12, 60)
 IMPORT_TENANT = Rule("import:tenant", 30, 3600)
 #: The list of open items: a session reloading a page, never a loop.
 EXCEPTIONS_TENANT = Rule("exceptions:tenant", 60, 60)
-#: Decisions on open items, per account making them: a person working
-#: through a backlog, never a script writing the history full.
-DECIDE_TENANT = Rule("decide:tenant", 300, 3600)
+#: Decisions on open items. Each caller (a session's or a key's account) may
+#: send 300 an hour, recorded or not; an account and its merchants together
+#: record at most 1,000 an hour, charged only for a decision about to be
+#: recorded, so requests that record nothing never spend another's share.
+DECIDE_CALLER = Rule("decide:caller", 300, 3600)
+DECIDE_TENANT = Rule("decide:tenant", 1000, 3600)
 #: The sample check holds nothing of anyone's and costs one run an hour;
 #: the limit only keeps one address from hammering a route that needs no key.
 SAMPLE_IP = Rule("sample:ip", 120, 60)

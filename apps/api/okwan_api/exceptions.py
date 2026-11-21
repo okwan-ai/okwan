@@ -53,13 +53,13 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from okwan_recon.exceptions import (
     aged,
+    holds,
     items_by_key,
     oldest_first,
     open_items,
     open_summary,
     run_found,
     terms,
-    twins,
 )
 from okwan_recon.registry import all_across, all_reconciliations
 from okwan_vault import (
@@ -71,12 +71,13 @@ from okwan_vault import (
     ItemGone,
     ancestors,
 )
+from okwan_vault.authz import MAX_DEPTH
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import access
 from .admin import _guard
 from .auth import admin_actor, get_store
-from .ratelimit import DECIDE_TENANT, EXCEPTIONS_TENANT, enforce
+from .ratelimit import DECIDE_CALLER, DECIDE_TENANT, EXCEPTIONS_TENANT, enforce
 from .runs import closed_keys, file_check_names
 
 #: Items of one merchant in the account's list, at most.
@@ -85,8 +86,13 @@ PER_MERCHANT = 50
 MERCHANTS_PER_PAGE = 50
 #: Items one answer carries, at most.
 MAX_ITEMS = 1000
-#: Decisions one item's history answers with, newest first.
-HISTORY_SHOWN = 200
+#: Decisions one item's history answers with, newest first: all of them,
+#: since each account that may decide it (the item's own and those above
+#: it) records at most ITEM_DECISIONS_MAX.
+HISTORY_SHOWN = ITEM_DECISIONS_MAX * (MAX_DEPTH + 1)
+#: Checks whose stored rows the account's list reads in one request, for
+#: items opened again since their run was stored; the rest are counted.
+REOPENED_READ_MAX = 3
 #: What a person may write: whom an item is given to, and why.
 OWNER_MAX, NOTE_MAX = 80, 1000
 _IDEMPOTENCY = re.compile(r"[A-Za-z0-9._:\-]{1,128}")
@@ -125,8 +131,13 @@ _UNSEEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"})
 def _unseen(c: str) -> bool:
     """Whether a character changes how text reads without being seen. A
     note is read by an accountant, a mail and an assistant; it must say what
-    it shows. The dashboard tests the same (apps/dashboard/lib/file-checks.ts)."""
-    return unicodedata.category(c) in _UNSEEN_CATEGORIES or ord(c) in _IGNORABLE
+    it shows. The dashboard tests the same (apps/dashboard/lib/file-checks.ts).
+    Also a right-to-left sign that is not a letter (a Hebrew gershayim looks
+    like a quote mark): the figures between two of them are drawn in the
+    other order. Right-to-left letters are written and seen as such."""
+    if unicodedata.category(c) in _UNSEEN_CATEGORIES or ord(c) in _IGNORABLE:
+        return True
+    return unicodedata.bidirectional(c) in ("R", "AL") and unicodedata.category(c)[0] not in "LM"
 
 
 def _clean(value: str | None, what: str, *, lines: bool) -> str | None:
@@ -141,7 +152,8 @@ def _clean(value: str | None, what: str, *, lines: bool) -> str | None:
     if not text:
         return None
     if any(c != "\n" and _unseen(c) for c in text) or (not lines and "\n" in text):
-        raise HTTPException(422, f"{what} has a character that cannot be seen; write it as plain text")
+        raise HTTPException(422, f"{what} has a character that cannot be seen, or that changes the order "
+                                 "the text around it is drawn in; write it as plain text")
     return text
 
 
@@ -167,18 +179,19 @@ def _on(text: str) -> dict[str, Any] | None:
     return {"amount_minor": amount, "currency": currency, "dated_on": day}
 
 
-def decision_dict(d: Decision, now_terms: str | None = None) -> dict[str, Any]:
+def decision_dict(d: Decision, item: dict | None = None) -> dict[str, Any]:
     """A decision as the API answers it. `on`: what the item put at stake
     when it was decided. `changed`, for one that closed the item: the item
-    has other terms now, so the decision no longer closes it."""
+    has other terms now, or is alike to another finding, so the decision no
+    longer closes it."""
     out: dict[str, Any] = {
         "id": d.id, "seq": d.seq, "status": d.status, "prior_status": d.prior_status,
         "owner": d.owner, "note": d.note,
         "by": {"tenant_id": d.actor_tenant_id, "name": d.actor_name, "credential": d.credential},
         "at": d.created_at.isoformat(), "run_id": d.run_id, "on": _on(d.terms),
     }
-    if now_terms is not None and d.closed:
-        out["changed"] = d.terms != now_terms
+    if item is not None and d.closed:
+        out["changed"] = not holds(d, item)
     return out
 
 
@@ -191,10 +204,6 @@ def _request_hash(kind: str, check: str, key: str, status: str, owner: str | Non
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
-def _decidable(tenant_id: str, name: str, kind: str, rows) -> tuple[dict[str, dict], set[str]]:
-    """A stored run's findings as items, by key, and the keys of those alike
-    in every part to another (okwan_recon.exceptions.twins)."""
-    return items_by_key(tenant_id, name, kind, rows), twins(tenant_id, name, kind, rows)
 
 
 async def _root(store, tenant_id: str) -> str:
@@ -371,7 +380,7 @@ def build_router() -> APIRouter:
         merchants together."""
         await _guard(actor, tenant_id)
         store = get_store()
-        enforce(request, (DECIDE_TENANT, await _root(store, tenant_id)))
+        enforce(request, (DECIDE_CALLER, actor.id))
         if kind not in ("across", "pair") or (kind, check) not in _titles():
             raise HTTPException(404, f"no such check: {kind}/{check}")
         if idempotency_key is None or not _IDEMPOTENCY.fullmatch(idempotency_key):
@@ -392,28 +401,37 @@ def build_router() -> APIRouter:
             response.status_code = 200
             return {"decision": decision_dict(done), "replayed": True}
         g = (await store.newest_runs([tenant_id], kind, check, ok_only=True, with_rows=True)).get(tenant_id)
-        items, alike = await asyncio.to_thread(_decidable, tenant_id, check, kind, g.rows if g else None)
+        items = await asyncio.to_thread(items_by_key, tenant_id, check, kind, g.rows if g else None)
         if g is None or key not in items:
             raise HTTPException(404, "no such item: it is not a finding of the check's newest result")
-        if key in alike:
+        item = items[key]
+        if item.get("alike"):
             raise HTTPException(409, "this finding is alike, in every reference and day, to another one in the same "
                                      "result (two terminals that each closed batch 001 that day, say). They are told "
                                      "apart only by the order the result lists them in, which can change from one run "
                                      "to the next, so a decision could not be pinned to this one")
+        if body.status == "assigned" and note is None:
+            now_on = (await store.current_decisions([(tenant_id, key)])).get((tenant_id, kind, check, key))
+            if holds(now_on, item):
+                raise HTTPException(422, "this item is closed: say why it is open again (note) as you give it "
+                                         "to someone")
+        # The account's allowance, its merchants together, is spent only on a
+        # decision about to be recorded.
+        enforce(request, (DECIDE_TENANT, await _root(store, tenant_id)))
         try:
             made, replayed = await store.add_decision(
                 tenant_id, kind=kind, name=check, key=key, status=body.status, owner=owner, note=note,
                 actor_tenant_id=actor.id, actor_name=actor.name, credential=credential,
                 run_id=g.id, reads_files=g.reads_files or check in file_check_names(),
-                idempotency_key=idempotency_key, request_hash=digest, at=now(), terms=terms(items[key]))
+                idempotency_key=idempotency_key, request_hash=digest, at=now(), terms=terms(item))
         except DecisionConflict:
             raise HTTPException(409, "this Idempotency-Key was used for a different decision") from None
         except ItemGone:
             raise HTTPException(409, "the result this item was found in was just deleted; "
                                      "run the check again") from None
         except HistoryFull:
-            raise HTTPException(409, f"this item already holds {ITEM_DECISIONS_MAX} decisions; "
-                                     "no more are recorded on it") from None
+            raise HTTPException(409, f"this account already recorded {ITEM_DECISIONS_MAX} decisions on this item; "
+                                     "no more of its decisions are recorded on it") from None
         except ItemBusy:
             raise HTTPException(409, "another decision on this item is being recorded; send this one again",
                                 headers={"Retry-After": "1"}) from None
@@ -426,8 +444,9 @@ def build_router() -> APIRouter:
         tenant_id: str, kind: str, check: str, key: str, request: Request, actor=Depends(admin_actor),
     ) -> dict[str, Any]:
         """One item's decisions, newest first: who decided what, when and
-        why. Its status is that of the newest; with none, it is open. An item
-        holds at most ITEM_DECISIONS_MAX, so this is all of them."""
+        why. Its status is that of the newest; with none, it is open. Each
+        account that may decide an item records at most ITEM_DECISIONS_MAX on
+        it, so this is all of them."""
         await _guard(actor, tenant_id)
         enforce(request, (EXCEPTIONS_TENANT, f"{actor.id}>{tenant_id}"))
         if kind not in ("across", "pair") or (kind, check) not in _titles():
@@ -441,7 +460,7 @@ def build_router() -> APIRouter:
 def _with(item: dict, tid: str, names, title: str, kind: str, g, decision: Decision | None) -> dict:
     return {**item, "tenant_id": tid, "merchant": names[tid], "title": title, "kind": kind,
             "run_id": g.id, "run_at": g.finished_at.isoformat(),
-            "decision": decision_dict(decision, terms(item)) if decision is not None else None}
+            "decision": decision_dict(decision, item) if decision is not None else None}
 
 
 async def _one_merchant(store, merchant, checks, titles, names, newest, good, state, at):
@@ -466,7 +485,7 @@ async def _one_merchant(store, merchant, checks, titles, names, newest, good, st
         shut, still = [], []
         for i in every:
             d = current.get((tid, kind, name, i["key"]))
-            (shut if d is not None and d.closes(terms(i)) else still).append((i, d))
+            (shut if holds(d, i) else still).append((i, d))
         total = max(run_found(kind, g.summary), len(every))
         lines.append(_line(tid, name, title, kind, n, g, {"found": total - len(shut), "kept": len(still)},
                            closed=len(shut)))
@@ -491,9 +510,11 @@ async def _account(store, ids, checks, titles, names, newest, good, at):
     since, reopened = _since_stored(made, listed)
     latest = {(d.tenant_id, d.kind, d.name, d.key): d for d, _ in made}
     # An item opened again since its run was stored is not among the run's
-    # kept items: it is read from that run's rows, for those checks only.
+    # kept items: it is read from that run's rows, for at most
+    # REOPENED_READ_MAX checks a request. The others are counted; the
+    # merchant's own list, which reads its rows, shows them.
     back: dict[tuple, list[dict]] = {}
-    for k, keys in reopened.items():
+    for k, keys in sorted(reopened.items())[:REOPENED_READ_MAX]:
         full = await store.get_run(k[0], stored[k].id)
         found = await asyncio.to_thread(open_items, k[0], k[2], k[1], full.rows if full else None, at)
         back[k] = [i for i in found if i["key"] in keys]
@@ -510,7 +531,7 @@ async def _account(store, ids, checks, titles, names, newest, good, at):
         kept: list[dict] = []
         for i in o["oldest"]:
             d = current.get((tid, kind, name, i.get("key")))
-            if d is not None and d.closes(terms(i)):
+            if holds(d, i):
                 if (tid, kind, name, i.get("key")) not in latest and not o.get("fresh"):
                     delta += 1  # closed against the run before, as this one was being stored
                 continue

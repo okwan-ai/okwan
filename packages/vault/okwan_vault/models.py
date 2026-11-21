@@ -128,8 +128,10 @@ class FilesGone(Exception):
 #: `resolved` (fixed where it started) close it.
 DECISION_STATUSES = ("open", "assigned", "explained", "resolved")
 CLOSED_STATUSES = frozenset({"explained", "resolved"})
-#: Decisions one item can hold. A person decides an item a few times; a
-#: history this long is a script, and a bounded history is read whole.
+#: Decisions one account can record on one item. A person decides an item a
+#: few times; more is a script. Counted per account, so a merchant cannot
+#: use up its platform's place on its own item, and an item's history,
+#: bounded by the accounts that may decide it, is read whole.
 ITEM_DECISIONS_MAX = 100
 
 
@@ -191,7 +193,7 @@ class DecisionConflict(Exception):
 
 
 class HistoryFull(Exception):
-    """An item already holds ITEM_DECISIONS_MAX decisions."""
+    """The account has already recorded ITEM_DECISIONS_MAX decisions on the item."""
 
 
 class ItemBusy(Exception):

@@ -28,7 +28,7 @@ from typing import Any
 
 from okwan_recon.across import AcrossRails
 from okwan_recon.engine import ref_paths
-from okwan_recon.exceptions import carry, items_by_key, open_summary, terms, version
+from okwan_recon.exceptions import carry, holds, items_by_key, open_summary, version
 from okwan_recon.paging import MAX_ROWS
 from okwan_recon.registry import all_reconciliations
 from okwan_recon.registry import get as get_reconciliation
@@ -105,7 +105,8 @@ def _summarised(tenant_id: str, name: str, kind: str, kept, summary: dict, close
 async def closed_keys(tenant_id: str, kind: str, name: str, rows) -> set[str]:
     """The keys of this run's findings a person has explained or resolved,
     as their newest decisions stand now, on the terms this run finds them
-    on: an item whose amount, currency or day changed since is open again.
+    on: an item whose amount, currency or day changed since, or that is now
+    alike to another finding, is open again.
     A store that cannot answer leaves every finding open: shown again
     rather than hidden."""
     items = await asyncio.to_thread(items_by_key, tenant_id, name, kind, rows)
@@ -117,7 +118,7 @@ async def closed_keys(tenant_id: str, kind: str, name: str, rows) -> set[str]:
         logger.warning("decisions not read for %s's %s", tenant_id, name, exc_info=True)
         return set()
     return {k for (t, kd, n, k), d in current.items()
-            if t == tenant_id and kd == kind and n == name and k in items and d.closes(terms(items[k]))}
+            if t == tenant_id and kd == kind and n == name and k in items and holds(d, items[k])}
 
 
 async def previous_rows(tenant_id: str, kind: str, name: str) -> list | None:
