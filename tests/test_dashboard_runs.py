@@ -134,7 +134,7 @@ async def test_runs_as_the_merchant_and_finds_the_double_collection(client, tree
     # ledger or rail record itself.
     by_order = {row["order"]["ref"]: row["outcome"] for row in body["data"]}
     assert by_order == {"#1002": "collected_twice", "#1003": "collected"}
-    assert set(body["data"][0]["order"]) == {"ref", "currency"}
+    assert set(body["data"][0]["order"]) == {"ref", "currency", "on"}  # the order's day, never its record
     assert all("record" not in rail for row in body["data"] for rail in row["rails"])
     assert body["run_id"].startswith("run_")
     # The merchant's vault, not the ISV's own Stripe key.

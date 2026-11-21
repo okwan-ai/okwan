@@ -308,6 +308,7 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
     ("GET", "/v1/tenants/{tenant_id}/runs/latest"): ("/v1/tenants/{t}/runs/latest", None),
     ("GET", "/v1/tenants/{tenant_id}/runs"): ("/v1/tenants/{t}/runs", None),
     ("GET", "/v1/tenants/{tenant_id}/runs/{run_id}"): ("/v1/tenants/{t}/runs/{run}", None),
+    ("GET", "/v1/tenants/{tenant_id}/exceptions"): ("/v1/tenants/{t}/exceptions", None),
     ("POST", "/v1/tenants/{tenant_id}/reconciliations/across/{name}"):
         ("/v1/tenants/{t}/reconciliations/across/rails", None),
     ("POST", "/v1/tenants/{tenant_id}/reconciliations/{name}"):

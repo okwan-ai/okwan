@@ -320,6 +320,15 @@ def order_ref(order: Row) -> str | None:
     return None
 
 
+def order_day(order: Row) -> str | None:
+    """The day the ledger row was placed (`created_at`, as Shopify gives
+    it), as YYYY-MM-DD, or None. A day, never the time or the record."""
+    value = order.get("created_at") if isinstance(order, dict) else None
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}([T ].*)?", value):
+        return None
+    return value[:10]
+
+
 def trim_verdict(v: OrderVerdict, ledger_currency: str = "currency") -> Row:
     """One order's verdict without its records: outcome, reference,
     currency, totals, what each rail took and said, the reason. A rail
@@ -330,6 +339,7 @@ def trim_verdict(v: OrderVerdict, ledger_currency: str = "currency") -> Row:
         "order": {
             "ref": order_ref(v.order),
             "currency": _cur(dig(v.order, ledger_currency)),
+            "on": order_day(v.order),
         },
         "order_total_minor": v.order_total_minor,
         "collected_minor": v.collected_minor,

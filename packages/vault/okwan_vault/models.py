@@ -87,8 +87,11 @@ class RunRecord:
     reads_files: bool = False
 
 
-#: Runs kept per (tenant, kind, name); older ones are pruned on insert.
-#: A run that read imported files goes sooner, with the files.
+#: Runs kept per (tenant, kind, name): the newest RUNS_KEPT that finished
+#: well and, apart from them, the newest RUNS_KEPT that failed, newest by
+#: when each read; older ones are pruned on insert. Failed runs cannot push
+#: a good one out of history, however many come in an outage. A run that
+#: read imported files goes sooner, with the files.
 RUNS_KEPT = 50
 
 #: A support conversation is kept this long after its last message.

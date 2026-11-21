@@ -10,17 +10,24 @@ order reference, currency, totals, what each rail took, reasons. A raw
 rail record is never written. A failed run stores the error after the
 same scrub the connection test applies.
 
+Each finding in a stored run carries its key and when it was first seen,
+carried from the check's newest stored run that finished well
+(okwan_recon.exceptions). The summary names the version of the check that
+produced it and keeps its oldest open items (`open`), worked out here once.
+
 Recording never fails the run it records: like metering, a lost record
 is logged and the result still goes back to the caller.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from okwan_recon.across import AcrossRails
 from okwan_recon.engine import ref_paths
+from okwan_recon.exceptions import carry, open_summary, version
 from okwan_recon.paging import MAX_ROWS
 from okwan_recon.registry import all_reconciliations
 from okwan_recon.registry import get as get_reconciliation
@@ -52,7 +59,11 @@ async def record_run(
                 if kind == "across"
                 else result.trimmed_rows(*ref_paths(spec), limit=MAX_ROWS)
             )
-            status, summary, err = "ok", result.summary, None
+            previous = await previous_rows(tenant.id, kind, spec.name)
+            rows, summary = await asyncio.to_thread(
+                _keep, tenant.id, spec.name, kind, rows, previous, started, result.summary or {})
+            summary["check_version"] = check_version(spec)
+            status, err = "ok", None
         else:
             status, summary, rows = "failed", None, None
             secrets = secrets_of(resolver) if resolver is not None else []
@@ -72,6 +83,34 @@ async def record_run(
     except Exception:  # a lost record must not fail the run
         logger.warning("run not recorded for %s", getattr(tenant, "id", tenant), exc_info=True)
         return None
+
+
+def _keep(tenant_id: str, name: str, kind: str, rows, previous, started: datetime, summary: dict):
+    """The rows and summary to store: each finding with its key and first
+    seen time, and the summary with the run's oldest open items. Off the
+    event loop: up to MAX_ROWS rows are keyed."""
+    kept = carry(tenant_id, name, kind, rows, previous, started)
+    return kept, {**summary, "open": open_summary(tenant_id, name, kind, kept, summary)}
+
+
+async def previous_rows(tenant_id: str, kind: str, name: str) -> list | None:
+    """The rows of the check's newest stored run that finished well, by when
+    its data was read, or None. However many failed runs came after it, the
+    times its findings were first seen carry on."""
+    try:
+        good = await get_store().newest_runs([tenant_id], kind, name, ok_only=True, with_rows=True)
+    except Exception:  # the run is still stored; its findings start from now
+        logger.warning("previous run of %s not read for %s", name, tenant_id, exc_info=True)
+        return None
+    rec = good.get(tenant_id)
+    return rec.rows if rec is not None else None
+
+
+def check_version(spec) -> str:
+    """The version of a check its stored runs name (okwan_recon.exceptions)."""
+    if isinstance(spec, AcrossRails):
+        return version(spec, [get_reconciliation(rail.reconciliation) for rail in spec.rails])
+    return version(spec)
 
 
 def reads_files(spec) -> bool:
@@ -140,8 +179,19 @@ def twice_currency(rows: list | None, summary: dict | None) -> str | None:
     return currencies.pop()
 
 
+def listed_summary(summary: dict | None) -> dict | None:
+    """A run's summary without the open items it keeps (references, amounts
+    and days, like its rows): what a listing, and the support assistant,
+    see. Counts stay."""
+    if not summary or not isinstance(summary.get("open"), dict):
+        return summary
+    opened = summary["open"]
+    return {**summary, "open": {k: opened[k] for k in ("found", "kept") if k in opened}}
+
+
 def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
-    """The record as the API returns it. A listing leaves the rows out."""
+    """The record as the API returns it. A listing leaves the rows out, and
+    the open items its summary keeps (`listed_summary`)."""
     total = run_total(rec)
     out: dict[str, Any] = {
         "id": rec.id,
@@ -152,7 +202,7 @@ def run_dict(rec: RunRecord, with_rows: bool) -> dict[str, Any]:
         "status": rec.status,
         "started_at": rec.started_at.isoformat(),
         "finished_at": rec.finished_at.isoformat(),
-        "summary": rec.summary,
+        "summary": rec.summary if with_rows else listed_summary(rec.summary),
         "error": rec.error,
         "rows_total": total,
         "twice_currency": twice_currency(rec.rows, rec.summary) if rec.kind == "across" else None,

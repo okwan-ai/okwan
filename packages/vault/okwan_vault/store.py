@@ -152,6 +152,13 @@ class Store(Protocol):
     async def latest_runs(
         self, tenant_ids: list[str], kind: str, name: str
     ) -> dict[str, RunRecord]: ...
+    async def newest_runs(
+        self, tenant_ids: list[str], kind: str, name: str, *,
+        ok_only: bool = False, with_rows: bool = False,
+    ) -> dict[str, RunRecord]: ...
+    async def newest_runs_all(
+        self, tenant_ids: list[str], *, ok_only: bool = False, with_rows: bool = False,
+    ) -> list[RunRecord]: ...
     async def keys_for(self, tenant_id: str) -> list[ApiKey]: ...
     async def get_conversation(
         self, tenant_id: str, conversation_id: str
@@ -679,11 +686,12 @@ class MemoryStore:
             summary=summary, rows=rows, error=error, reads_files=reads_files,
         )
         self._runs[rec.id] = rec
-        # Prune with the insert: the newest RUNS_KEPT per (tenant, kind, name).
+        # Prune with the insert: the newest RUNS_KEPT per (tenant, kind, name)
+        # of the new run's own status, newest by when each read.
         same = sorted(
             (r for r in self._runs.values()
-             if r.tenant_id == tenant_id and r.kind == kind and r.name == name),
-            key=lambda r: (r.finished_at, r.id), reverse=True,
+             if r.tenant_id == tenant_id and r.kind == kind and r.name == name and r.status == status),
+            key=lambda r: (r.started_at, r.id), reverse=True,
         )
         for old in same[RUNS_KEPT:]:
             del self._runs[old.id]
@@ -716,6 +724,44 @@ class MemoryStore:
             if cur is None or (r.finished_at, r.id) > (cur.finished_at, cur.id):
                 out[r.tenant_id] = r
         return out
+
+    async def newest_runs(
+        self, tenant_ids: list[str], kind: str, name: str, *,
+        ok_only: bool = False, with_rows: bool = False,
+    ) -> dict[str, RunRecord]:
+        """Each tenant's newest run of a check by when it started, that is
+        by when its data was read, not when it finished: a slow run that read
+        before a quicker one does not take its place. `ok_only`: the newest
+        that finished well, however many failed after it. Rows only when
+        asked for."""
+        wanted = set(tenant_ids)
+        out: dict[str, RunRecord] = {}
+        for r in self._runs.values():
+            if r.tenant_id not in wanted or r.kind != kind or r.name != name:
+                continue
+            if ok_only and r.status != "ok":
+                continue
+            cur = out.get(r.tenant_id)
+            if cur is None or (r.started_at, r.id) > (cur.started_at, cur.id):
+                out[r.tenant_id] = r
+        return out if with_rows else {t: replace(r, rows=None) for t, r in out.items()}
+
+    async def newest_runs_all(
+        self, tenant_ids: list[str], *, ok_only: bool = False, with_rows: bool = False,
+    ) -> list[RunRecord]:
+        """newest_runs for every check at once: each (tenant, kind, name)'s
+        newest run by when it read, the newest that finished well with
+        `ok_only`."""
+        wanted = set(tenant_ids)
+        out: dict[tuple[str, str, str], RunRecord] = {}
+        for r in self._runs.values():
+            if r.tenant_id not in wanted or (ok_only and r.status != "ok"):
+                continue
+            k = (r.tenant_id, r.kind, r.name)
+            cur = out.get(k)
+            if cur is None or (r.started_at, r.id) > (cur.started_at, cur.id):
+                out[k] = r
+        return [r if with_rows else replace(r, rows=None) for r in out.values()]
 
     async def set_plan(self, tenant_id: str, name: str) -> None:
         if name not in PLANS:

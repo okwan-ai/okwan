@@ -27,7 +27,7 @@ dealer files arrive (§9 2026-11-07).
 
 **Retention.** A file and its rows expire 13 months after upload. Reads
 skip an expired file, an upload prunes the tenant's expired files, and
-`sweeper()` deletes every tenant's once an hour.
+`sweeper()` deletes every tenant's every ten minutes.
 """
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ from .ratelimit import IMPORT_TENANT, enforce
 
 logger = logging.getLogger("okwan.imports")
 
-SWEEP_SECONDS = 3600
+SWEEP_SECONDS = 600
 
 
 def imports_open() -> bool:

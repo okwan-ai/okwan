@@ -168,6 +168,10 @@ END $$;
 -- The newest run per tenant and name is what every page asks for.
 CREATE INDEX IF NOT EXISTS reconciliation_runs_latest_idx
     ON reconciliation_runs (tenant_id, name, finished_at DESC);
+-- And the open-items list asks for each check's newest run by when it read,
+-- the newest good one apart; pruning keeps each status's newest the same way.
+CREATE INDEX IF NOT EXISTS reconciliation_runs_read_idx
+    ON reconciliation_runs (tenant_id, kind, name, status, started_at DESC, id DESC);
 
 -- ── support ─────────────────────────────────────────────────────────
 -- The support assistant's conversations, kept for 30 days after their last

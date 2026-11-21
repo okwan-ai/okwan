@@ -152,7 +152,7 @@ async def test_a_stored_run_never_carries_a_rail_record(client, store, tree, rai
     assert SECRET not in blob
     assert '"record"' not in blob and "payer_email" not in blob
     # And what the dashboard received was the same trimmed shape.
-    assert set(rec.rows[0]["order"]) == {"ref", "currency"}
+    assert set(rec.rows[0]["order"]) == {"ref", "currency", "on"}  # the order's day, never its record
 
 
 async def test_a_failed_run_is_stored_with_the_error_scrubbed(client, store, tree, rejected):

@@ -43,6 +43,7 @@ import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
 from okwan_api.admin import build_router as build_admin_router
 from okwan_api.billing import build_router as build_billing_router
+from okwan_api.exceptions import build_router as build_exceptions_router
 from okwan_api.imports import build_router as build_imports_router
 from okwan_api.connect import build_router as build_connect_router
 from okwan_api.imports import sweeper as imports_sweeper
@@ -239,6 +240,7 @@ okwan_gusto.connector.use_store(_get_store)
 app.include_router(build_router())
 app.include_router(build_query_router())
 app.include_router(build_admin_router())
+app.include_router(build_exceptions_router())
 app.include_router(build_signup_router())
 app.include_router(build_support_router())
 app.include_router(build_ops_router())
