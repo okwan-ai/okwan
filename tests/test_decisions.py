@@ -236,12 +236,21 @@ async def test_text_that_reads_differently_from_what_it_shows_is_refused(api):
     it say something other than what it shows."""
     client, _, shop, _, _, _ = api
     key = await _key(client, shop, "D-4")
-    for sneaky in (chr(0x202E), chr(0x200B), chr(0x2066), chr(0x07), chr(0xFEFF), chr(0x00AD)):
+    for sneaky in (chr(0x202E), chr(0x200B), chr(0x2066), chr(0x07), chr(0xFEFF), chr(0x00AD), chr(0x2028),
+                   chr(0xE000), chr(0x034F), chr(0xFE0F), chr(0x2800), chr(0x0378)):
         r = await _decide(client, shop, key, "explained", note=f"Refund{sneaky} 1200")
         assert r.status_code == 422, hex(ord(sneaky))
     assert (await _decide(client, shop, key, "assigned", owner="Ama\nand Kofi")).status_code == 422
     ok = await _decide(client, shop, key, "explained", note="Café #1002: refunded\nat the till — see slip.")
     assert ok.status_code == 201 and ok.json()["decision"]["note"] == "Café #1002: refunded\nat the till — see slip."
+
+
+async def test_a_tab_or_a_space_pasted_from_a_sheet_becomes_a_plain_space(api):
+    client, _, shop, _, _, _ = api
+    key = await _key(client, shop, "B-5")
+    r = await _decide(client, shop, key, "assigned", owner=f"Ama{chr(0x00A0)}Mensah", note=f"Batch\t{chr(0x202F)}B-5")
+    assert r.status_code == 201, r.text
+    assert (r.json()["decision"]["owner"], r.json()["decision"]["note"]) == ("Ama Mensah", "Batch  B-5")
 
 
 async def test_a_retry_with_the_same_idempotency_key_makes_one_decision(api):

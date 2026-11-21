@@ -46,6 +46,7 @@ import asyncio
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -99,24 +100,37 @@ def _titles() -> dict[tuple[str, str], str]:
 
 # ── what a person writes ────────────────────────────────────────────
 
-#: Characters that change how text reads without being seen: controls,
-#: zero-width characters and the marks that reverse a line's direction.
-#: A note is read by an accountant, a mail and an assistant; it must say
-#: what it shows.
-_UNSEEN = re.compile("[\x00-\x09\x0b-\x1f\x7f-\x9f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e"
-                     "\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]")
+#: Code points Unicode says to draw as nothing that are not format
+#: characters (Cf): a combining grapheme joiner, the Hangul fillers, Khmer's
+#: inherent vowels, the variation selectors, and the blank braille cell.
+_IGNORABLE = frozenset(
+    [0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x2800, 0x3164, 0xFFA0]
+    + list(range(0x180B, 0x1810)) + list(range(0xFE00, 0xFE10)) + list(range(0xE0100, 0xE01F0)))
+#: Categories that are never seen: controls, format characters (zero-width
+#: characters, the marks that reverse a line's direction), private use,
+#: surrogates, unassigned code points, and line and paragraph separators.
+_UNSEEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"})
+
+
+def _unseen(c: str) -> bool:
+    """Whether a character changes how text reads without being seen. A
+    note is read by an accountant, a mail and an assistant; it must say what
+    it shows. The dashboard tests the same (apps/dashboard/lib/file-checks.ts)."""
+    return unicodedata.category(c) in _UNSEEN_CATEGORIES or ord(c) in _IGNORABLE
 
 
 def _clean(value: str | None, what: str, *, lines: bool) -> str | None:
-    """Text as a person wrote it, trimmed, or None when there is none.
-    Refused (422) with a character that cannot be seen, or a line break
-    where one line is asked for."""
+    """Text as a person wrote it, trimmed, or None when there is none. A tab,
+    or a space of another width (a no-break space pasted from a sheet),
+    becomes a space. Refused (422) with a character that cannot be seen, or
+    a line break where one line is asked for."""
     if value is None:
         return None
-    text = value.replace("\r\n", "\n").strip()
+    text = "".join(" " if c == "\t" or unicodedata.category(c) == "Zs" else c
+                   for c in value.replace("\r\n", "\n")).strip()
     if not text:
         return None
-    if _UNSEEN.search(text) or (not lines and "\n" in text):
+    if any(c != "\n" and _unseen(c) for c in text) or (not lines and "\n" in text):
         raise HTTPException(422, f"{what} has a character that cannot be seen; write it as plain text")
     return text
 
