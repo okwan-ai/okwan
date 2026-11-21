@@ -385,7 +385,7 @@ async function checkDeciding(page) {
   if (!shown) await note(page, where, "after a lost answer the panel does not show the decision already recorded");
   // Closed, opened again, and the same decision sent again: it is recorded once.
   await page.keyboard.press("Escape");
-  await page.locator("[role=dialog]").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.locator("[role=dialog][aria-labelledby=slideover-title]").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await batch().locator("button[data-decide]").click();
   await form.locator("input[value=explained]").check();
   await form.locator("textarea[name=note]").fill(why);
@@ -419,7 +419,7 @@ async function checkDeciding(page) {
   await form.locator("input[name=owner]").fill(owner);
   await form.locator("textarea[name=note]").fill(Array.from({ length: 40 }, (_, n) => `Line ${n + 1} of a long note.`).join("\n"));
   await form.locator("button[type=submit]").click();
-  await page.locator("[role=dialog]").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
+  await page.locator("[role=dialog][aria-labelledby=slideover-title]").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${BASE}/exceptions`, { waitUntil: "networkidle" });
   const item = batch();
