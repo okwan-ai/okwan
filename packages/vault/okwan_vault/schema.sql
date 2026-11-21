@@ -177,7 +177,7 @@ CREATE INDEX IF NOT EXISTS reconciliation_runs_read_idx
 -- What a person decided about one finding of a check (okwan_recon.exceptions
 -- keys it): given to someone, explained, resolved, or opened again, and why.
 -- Rows are only added, never changed or pruned: the history is the record an
--- accountant asks for. `seq` numbers an item's decisions 1, 2, 3 in the
+-- accountant asks for, and at most 100 an item. `seq` numbers an item's decisions 1, 2, 3 in the
 -- order they were made (the insert holds a lock on the item, and the unique
 -- index refuses two with one number); `prior_status` is its
 -- status before the row. `run_id` is the stored run the finding was in, with
@@ -203,7 +203,12 @@ CREATE TABLE IF NOT EXISTS exception_decisions (
     reads_files      boolean NOT NULL DEFAULT false,
     idempotency_key  text NOT NULL,
     request_hash     text NOT NULL,
-    created_at       timestamptz NOT NULL
+    created_at       timestamptz NOT NULL,
+    -- What the item put at stake when decided (its amount, currency and
+    -- day): a decision closes it only while these are the same.
+    terms            text NOT NULL,
+    -- The decision before this one had closed the item on these terms.
+    closed_before    boolean NOT NULL
 );
 -- One decision per Idempotency-Key in a tenant: a retried request is
 -- answered with the decision it already made.
@@ -214,7 +219,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS exception_decisions_item
     ON exception_decisions (tenant_id, item_key, seq DESC);
 -- The decisions made against a check's newest stored run.
 CREATE INDEX IF NOT EXISTS exception_decisions_run
-    ON exception_decisions (tenant_id, run_id);
+    ON exception_decisions (tenant_id, run_id, item_key, seq);
 
 -- ── support ─────────────────────────────────────────────────────────
 -- The support assistant's conversations, kept for 30 days after their last

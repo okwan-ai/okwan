@@ -427,8 +427,8 @@ async def _victim_state(world, victim) -> dict[str, Any]:
         "runs": [r.id for r in await store.list_runs(victim.id, limit=50)],
         "imports": [f.id for f in await store.list_imports(victim.id)],
         "layouts": await store.list_layouts(victim.id),
-        "decisions": [d.id for d in await store.decisions_on_runs(
-            [victim.id], [r.id for r in await store.list_runs(victim.id, limit=50)])],
+        "decisions": sorted(d.id for d, _ in await store.decided_on_runs(
+            [victim.id], [r.id for r in await store.list_runs(victim.id, limit=50)])),
     }
 
 

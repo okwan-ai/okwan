@@ -37,7 +37,9 @@ from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
+    CLOSED_STATUSES,
     IMPORT_KEPT_MONTHS,
+    ITEM_DECISIONS_MAX,
     KEY_SCOPES,
     LAYOUTS_KEPT,
     NOTIFY_DEFAULTS,
@@ -50,7 +52,9 @@ from .models import (
     DecisionConflict,
     DuplicateImport,
     FilesGone,
+    HistoryFull,
     ImportFile,
+    ItemBusy,
     ItemGone,
     RunRecord,
     SealedCredential,
@@ -563,7 +567,7 @@ class PostgresStore:
         self, tenant_id: str, *, kind: str, name: str, key: str, status: str,
         owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
         credential: str, run_id: str, reads_files: bool, idempotency_key: str,
-        request_hash: str, at: datetime,
+        request_hash: str, at: datetime, terms: str = "",
     ) -> tuple[Decision, bool]:
         """Record one decision; return it and whether it was recorded
         before, by the same Idempotency-Key for the same request (a key
@@ -571,13 +575,21 @@ class PostgresStore:
 
         The item is locked for the transaction, so its decisions are
         numbered in the order they are made and each knows the status
-        before it. The stored run it was found in is held while the row goes
-        in: a file deletion that takes the run either comes first, and
-        nothing is stored (ItemGone), or waits, and its next statement
-        takes this decision with the run."""
+        before it. The lock is only tried: while another decision on the
+        item is being recorded this one is refused (ItemBusy) rather than
+        hold a connection waiting. An item holds at most ITEM_DECISIONS_MAX
+        (HistoryFull). The stored run it was found in is held while the row
+        goes in: a file deletion that takes the run either comes first, and
+        nothing is stored (ItemGone), or waits, and its next statement takes
+        this decision with the run."""
         async with self._scoped(tenant_id) as con:
-            await con.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                              f"okwan:decision:{tenant_id}:{key}")
+            done = await _by_idempotency(con, tenant_id, idempotency_key)
+            if done is not None:
+                return _replayed(done, request_hash)
+            got = await con.fetchval("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))",
+                                     f"okwan:decision:{tenant_id}:{key}")
+            if not got:
+                raise ItemBusy("another decision on this item is being recorded")
             done = await _by_idempotency(con, tenant_id, idempotency_key)
             if done is not None:
                 return _replayed(done, request_hash)
@@ -587,20 +599,23 @@ class PostgresStore:
             if held is None:
                 raise ItemGone("the stored run this item was found in is no longer there")
             last = await con.fetchrow(
-                "SELECT seq, status FROM exception_decisions WHERE tenant_id = $1 AND item_key = $2 "
+                "SELECT seq, status, terms FROM exception_decisions WHERE tenant_id = $1 AND item_key = $2 "
                 "ORDER BY seq DESC LIMIT 1", tenant_id, key)
+            if last is not None and last["seq"] >= ITEM_DECISIONS_MAX:
+                raise HistoryFull(f"this item already holds {ITEM_DECISIONS_MAX} decisions")
+            before = last is not None and last["status"] in CLOSED_STATUSES and last["terms"] == terms
             try:
                 async with con.transaction():
                     row = await con.fetchrow(
                         "INSERT INTO exception_decisions (id, seq, tenant_id, kind, name, item_key, "
                         "status, prior_status, owner, note, actor_tenant_id, actor_name, credential, "
-                        "run_id, reads_files, idempotency_key, request_hash, created_at) VALUES ($1, $2, "
-                        "$3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) "
-                        f"RETURNING {_DECISION_COLS}",
+                        "run_id, reads_files, idempotency_key, request_hash, created_at, terms, "
+                        "closed_before) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, "
+                        f"$14, $15, $16, $17, $18, $19, $20) RETURNING {_DECISION_COLS}",
                         f"dec_{uuid.uuid4().hex[:16]}", (last["seq"] if last else 0) + 1, tenant_id,
                         kind, name, key, status, last["status"] if last else None, owner, note,
                         actor_tenant_id, actor_name, credential, run_id, reads_files,
-                        idempotency_key, request_hash, at)
+                        idempotency_key, request_hash, at, terms, before)
             except asyncpg.UniqueViolationError:
                 # The same Idempotency-Key, for another item, at the same moment.
                 done = await _by_idempotency(con, tenant_id, idempotency_key)
@@ -615,34 +630,39 @@ class PostgresStore:
             return await _by_idempotency(con, tenant_id, idempotency_key)
 
     async def current_decisions(
-        self, tenant_ids: list[str], keys: Collection[str]
+        self, items: Collection[tuple[str, str]]
     ) -> dict[tuple[str, str, str, str], Decision]:
-        """Each item's newest decision, for these tenants' items with these
-        keys, by (tenant, kind, name, key)."""
-        wanted = list(set(keys))
-        if not wanted or not tenant_ids:
+        """Each item's newest decision, for these (tenant, key) items, by
+        (tenant, kind, name, key): one row an item, read from the index,
+        however long its history."""
+        wanted = sorted(set(items))
+        if not wanted:
             return {}
-        async with self._scoped(*tenant_ids) as con:
+        tids = sorted({t for t, _ in wanted})
+        async with self._scoped(*tids) as con:
             rows = await con.fetch(
-                f"SELECT DISTINCT ON (tenant_id, item_key) {_DECISION_COLS} FROM exception_decisions "
-                "WHERE tenant_id = ANY($1::text[]) AND item_key = ANY($2::text[]) "
-                "ORDER BY tenant_id, item_key, seq DESC", list(tenant_ids), wanted)
+                "SELECT d.* FROM unnest($1::text[], $2::text[]) AS k(tid, key) CROSS JOIN LATERAL ("
+                f" SELECT {_DECISION_COLS} FROM exception_decisions e"
+                " WHERE e.tenant_id = k.tid AND e.item_key = k.key ORDER BY e.seq DESC LIMIT 1) d",
+                [t for t, _ in wanted], [k for _, k in wanted])
         return {(d.tenant_id, d.kind, d.name, d.key): d for d in map(_decision, rows)}
 
-    async def decisions_on_runs(
+    async def decided_on_runs(
         self, tenant_ids: list[str], run_ids: Collection[str]
-    ) -> list[Decision]:
-        """The decisions made against these stored runs, each item's in the
-        order they were made."""
+    ) -> list[tuple[Decision, bool]]:
+        """For each item decided against one of these stored runs: its
+        newest decision against it, and whether the first decision against
+        it found the item closed on the same terms. One row an item."""
         wanted = list(set(run_ids))
         if not wanted or not tenant_ids:
             return []
         async with self._scoped(*tenant_ids) as con:
             rows = await con.fetch(
-                f"SELECT {_DECISION_COLS} FROM exception_decisions "
-                "WHERE tenant_id = ANY($1::text[]) AND run_id = ANY($2::text[]) "
-                "ORDER BY tenant_id, item_key, seq", list(tenant_ids), wanted)
-        return [_decision(r) for r in rows]
+                f"SELECT DISTINCT ON (tenant_id, item_key) {_DECISION_COLS}, first_value(closed_before) "
+                "OVER (PARTITION BY tenant_id, item_key ORDER BY seq) AS first_before "
+                "FROM exception_decisions WHERE tenant_id = ANY($1::text[]) AND run_id = ANY($2::text[]) "
+                "ORDER BY tenant_id, item_key, seq DESC", list(tenant_ids), wanted)
+        return [(_decision(r), r["first_before"]) for r in rows]
 
     async def decision_history(
         self, tenant_id: str, kind: str, name: str, key: str, limit: int = 200
@@ -1882,7 +1902,7 @@ def _loads(value):
 
 _DECISION_COLS = ("id, seq, tenant_id, kind, name, item_key, status, prior_status, owner, note, "
                   "actor_tenant_id, actor_name, credential, run_id, reads_files, idempotency_key, "
-                  "request_hash, created_at")
+                  "request_hash, created_at, terms, closed_before")
 
 
 def _decision(row) -> Decision:
@@ -1892,7 +1912,8 @@ def _decision(row) -> Decision:
         owner=row["owner"], note=row["note"], actor_tenant_id=row["actor_tenant_id"],
         actor_name=row["actor_name"], credential=row["credential"], run_id=row["run_id"],
         reads_files=row["reads_files"], idempotency_key=row["idempotency_key"],
-        request_hash=row["request_hash"], created_at=row["created_at"],
+        request_hash=row["request_hash"], created_at=row["created_at"], terms=row["terms"],
+        closed_before=row["closed_before"],
     )
 
 

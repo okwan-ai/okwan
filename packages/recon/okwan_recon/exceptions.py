@@ -93,26 +93,45 @@ def _parts(tenant_id: str, name: str, kind: str, row: Row) -> list[Any] | None:
     return parts
 
 
+def _keyed(tenant_id: str, name: str, kind: str, rows: list[Row]) -> list[tuple[str | None, str | None, Row]]:
+    """(key, what it is made from, row) for each row; None and None for a
+    row that is not a finding."""
+    seen: dict[str, int] = {}
+    out: list[tuple[str | None, str | None, Row]] = []
+    for row in rows:
+        parts = _parts(tenant_id, name, kind, row) if isinstance(row, dict) else None
+        if parts is None:
+            out.append((None, None, row))
+            continue
+        base = json.dumps(parts, ensure_ascii=False, separators=(",", ":"), default=str)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        text = f"{base}#{n}" if n else base
+        out.append((hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24], base, row))
+    return out
+
+
 def keyed(tenant_id: str, name: str, kind: str, rows: list[Row]) -> list[tuple[str | None, Row]]:
     """Each row with its finding's key, or None for a row that is not a
     finding. The key belongs to the tenant: the same payout in another
     account has another key. Two findings alike in every part are told
     apart by the order the run lists them in, so neither swallows the
     other."""
-    seen: dict[str, int] = {}
-    out: list[tuple[str | None, Row]] = []
-    for row in rows:
-        parts = _parts(tenant_id, name, kind, row) if isinstance(row, dict) else None
-        if parts is None:
-            out.append((None, row))
-            continue
-        text = json.dumps(parts, ensure_ascii=False, separators=(",", ":"), default=str)
-        n = seen.get(text, 0)
-        seen[text] = n + 1
-        if n:
-            text = f"{text}#{n}"
-        out.append((hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:24], row))
-    return out
+    return [(key, row) for key, _, row in _keyed(tenant_id, name, kind, rows)]
+
+
+def twins(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> set[str]:
+    """The keys of findings alike in every part to another finding of the
+    same rows (two terminals that each closed batch "001" that day). They
+    are told apart only by the order a run lists them in, so which is which
+    can change from one run to the next: a person's decision cannot be
+    pinned to one of them."""
+    found = _keyed(tenant_id, name, kind, rows or [])
+    count: dict[str, int] = {}
+    for key, base, _ in found:
+        if key is not None:
+            count[base] = count.get(base, 0) + 1
+    return {key for key, base, _ in found if key is not None and count[base] > 1}
 
 
 def carry(tenant_id: str, name: str, kind: str, rows: list[Row] | None, previous: list[Row] | None,
@@ -231,6 +250,20 @@ def _item(name: str, kind: str, key: str, row: Row) -> Row:
     return item
 
 
+def terms(item: Row) -> str:
+    """What an item puts at stake, as one string: its amount, currency and
+    day. A decision records the terms it was made on, and closes the item
+    only while they are the same: a difference explained at 1.00 is open
+    again when the same pair is 5,001.00 apart."""
+    return json.dumps([item.get("amount_minor"), item.get("currency"), item.get("dated_on")],
+                      separators=(",", ":"))
+
+
+def items_by_key(tenant_id: str, name: str, kind: str, rows: list[Row] | None) -> dict[str, Row]:
+    """Every finding of a stored run as an item, without its age, by key."""
+    return {i["key"]: i for i in _found(tenant_id, name, kind, rows)}
+
+
 def _since(item: Row) -> date | None:
     first = _instant(item.get("first_seen"))
     return _day(item.get("dated_on")) or (first.date() if first else None)
@@ -282,10 +315,11 @@ def open_summary(tenant_id: str, name: str, kind: str, rows: list[Row] | None,
     how many its stored rows kept (rows are kept worst first up to a
     limit), and its OPEN_KEPT oldest items, without their age.
 
-    `closed`: the keys of items a person has explained or resolved when the
-    run is stored. They are not open: they are left out of the counts and
-    the items, and counted as `closed`. A person can only decide an item a
-    stored row holds, so every closed one is among the kept rows."""
+    `closed`: the keys of items a person has explained or resolved, on the
+    terms the run finds them on, when the run is stored. They are not open:
+    they are left out of the counts and the items, and counted as `closed`.
+    A person can only decide an item a stored row holds, so every closed one
+    is among the kept rows."""
     shut = set(closed)
     every = _found(tenant_id, name, kind, rows)
     items = sorted((i for i in every if i["key"] not in shut), key=oldest_first)

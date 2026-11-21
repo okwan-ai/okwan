@@ -23,7 +23,9 @@ from .accounts import AccountRefused
 from .crypto import new_key, open_sealed, seal
 from .keys import MasterKeyProvider
 from .models import (
+    CLOSED_STATUSES,
     IMPORT_KEPT_MONTHS,
+    ITEM_DECISIONS_MAX,
     KEY_SCOPES,
     LAYOUTS_KEPT,
     NOTIFY_DEFAULTS,
@@ -36,6 +38,7 @@ from .models import (
     DecisionConflict,
     DuplicateImport,
     FilesGone,
+    HistoryFull,
     ImportFile,
     ItemGone,
     RunRecord,
@@ -166,17 +169,17 @@ class Store(Protocol):
         self, tenant_id: str, *, kind: str, name: str, key: str, status: str,
         owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
         credential: str, run_id: str, reads_files: bool, idempotency_key: str,
-        request_hash: str, at: datetime,
+        request_hash: str, at: datetime, terms: str = "",
     ) -> tuple[Decision, bool]: ...
     async def decision_by_idempotency(
         self, tenant_id: str, idempotency_key: str
     ) -> Decision | None: ...
     async def current_decisions(
-        self, tenant_ids: list[str], keys: Collection[str]
+        self, items: Collection[tuple[str, str]]
     ) -> dict[tuple[str, str, str, str], Decision]: ...
-    async def decisions_on_runs(
+    async def decided_on_runs(
         self, tenant_ids: list[str], run_ids: Collection[str]
-    ) -> list[Decision]: ...
+    ) -> list[tuple[Decision, bool]]: ...
     async def decision_history(
         self, tenant_id: str, kind: str, name: str, key: str, limit: int = 200
     ) -> list[Decision]: ...
@@ -792,14 +795,13 @@ class MemoryStore:
         self, tenant_id: str, *, kind: str, name: str, key: str, status: str,
         owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
         credential: str, run_id: str, reads_files: bool, idempotency_key: str,
-        request_hash: str, at: datetime,
+        request_hash: str, at: datetime, terms: str = "",
     ) -> tuple[Decision, bool]:
         """As PostgresStore: nothing here awaits between the read and the
-        write, so one decision is recorded at a time."""
+        write, so one decision is recorded at a time and none is ever busy."""
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
-        done = next((d for d in self._decisions
-                     if d.tenant_id == tenant_id and d.idempotency_key == idempotency_key), None)
+        done = await self.decision_by_idempotency(tenant_id, idempotency_key)
         if done is not None:
             if done.request_hash != request_hash:
                 raise DecisionConflict("this Idempotency-Key was used for a different decision")
@@ -809,12 +811,15 @@ class MemoryStore:
             raise ItemGone("the stored run this item was found in is no longer there")
         last = max((d for d in self._decisions if d.tenant_id == tenant_id and d.key == key),
                    key=lambda d: d.seq, default=None)
+        if last is not None and last.seq >= ITEM_DECISIONS_MAX:
+            raise HistoryFull(f"this item already holds {ITEM_DECISIONS_MAX} decisions")
         dec = Decision(
             id=f"dec_{uuid.uuid4().hex[:16]}", seq=(last.seq if last else 0) + 1, tenant_id=tenant_id,
             kind=kind, name=name, key=key, status=status, prior_status=last.status if last else None,
             owner=owner, note=note, actor_tenant_id=actor_tenant_id, actor_name=actor_name,
             credential=credential, run_id=run_id, reads_files=reads_files,
-            idempotency_key=idempotency_key, request_hash=request_hash, created_at=at,
+            idempotency_key=idempotency_key, request_hash=request_hash, created_at=at, terms=terms,
+            closed_before=last is not None and last.status in CLOSED_STATUSES and last.terms == terms,
         )
         self._decisions.append(dec)
         return dec, False
@@ -824,23 +829,30 @@ class MemoryStore:
                      if d.tenant_id == tenant_id and d.idempotency_key == idempotency_key), None)
 
     async def current_decisions(
-        self, tenant_ids: list[str], keys: Collection[str]
+        self, items: Collection[tuple[str, str]]
     ) -> dict[tuple[str, str, str, str], Decision]:
-        wanted, keys = set(tenant_ids), set(keys)
+        wanted = set(items)
         out: dict[tuple[str, str, str, str], Decision] = {}
         for d in self._decisions:
-            if d.tenant_id in wanted and d.key in keys:
+            if (d.tenant_id, d.key) in wanted:
                 k = (d.tenant_id, d.kind, d.name, d.key)
                 if k not in out or d.seq > out[k].seq:
                     out[k] = d
         return out
 
-    async def decisions_on_runs(
+    async def decided_on_runs(
         self, tenant_ids: list[str], run_ids: Collection[str]
-    ) -> list[Decision]:
+    ) -> list[tuple[Decision, bool]]:
         wanted, runs = set(tenant_ids), set(run_ids)
-        found = [d for d in self._decisions if d.tenant_id in wanted and d.run_id in runs]
-        return sorted(found, key=lambda d: (d.tenant_id, d.key, d.seq))
+        by_item: dict[tuple[str, str], list[Decision]] = {}
+        for d in self._decisions:
+            if d.tenant_id in wanted and d.run_id in runs:
+                by_item.setdefault((d.tenant_id, d.key), []).append(d)
+        out = []
+        for ds in by_item.values():
+            ds.sort(key=lambda d: d.seq)
+            out.append((ds[-1], ds[0].closed_before))
+        return out
 
     async def decision_history(
         self, tenant_id: str, kind: str, name: str, key: str, limit: int = 200

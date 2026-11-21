@@ -128,6 +128,9 @@ class FilesGone(Exception):
 #: `resolved` (fixed where it started) close it.
 DECISION_STATUSES = ("open", "assigned", "explained", "resolved")
 CLOSED_STATUSES = frozenset({"explained", "resolved"})
+#: Decisions one item can hold. A person decides an item a few times; a
+#: history this long is a script, and a bounded history is read whole.
+ITEM_DECISIONS_MAX = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +143,10 @@ class Decision:
     this one, None when nobody had decided anything yet. The item is the
     finding keyed by okwan_recon.exceptions in the tenant's check (`kind`,
     `name`), and `run_id` is the stored run it was found in when decided.
+    `terms` is what it put at stake then (okwan_recon.exceptions.terms): a
+    decision that closes an item closes it only while the item's terms are
+    the same. `closed_before` says whether the decision before this one had
+    closed it on these same terms.
 
     Who decided is the account the session or key belongs to
     (`actor_tenant_id`, its name then as `actor_name`) and the credential,
@@ -167,14 +174,29 @@ class Decision:
     idempotency_key: str
     request_hash: str
     created_at: datetime
+    terms: str = ""
+    closed_before: bool = False
 
     @property
     def closed(self) -> bool:
         return self.status in CLOSED_STATUSES
 
+    def closes(self, terms: str) -> bool:
+        """Whether this decision closes an item that now has these terms."""
+        return self.closed and self.terms == terms
+
 
 class DecisionConflict(Exception):
     """An Idempotency-Key already used for a different decision."""
+
+
+class HistoryFull(Exception):
+    """An item already holds ITEM_DECISIONS_MAX decisions."""
+
+
+class ItemBusy(Exception):
+    """Another decision on the same item is being recorded. Nothing waits
+    for it: the caller sends this one again."""
 
 
 class ItemGone(Exception):

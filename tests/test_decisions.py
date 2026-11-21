@@ -405,9 +405,9 @@ async def test_an_items_decisions_are_numbered_in_order_each_knowing_the_status_
     history = await both.decision_history(t.id, "pair", "batches_deposits", "k1")
     assert [(d.seq, d.status, d.prior_status) for d in history] == [
         (3, "open", "explained"), (2, "explained", "assigned"), (1, "assigned", None)]
-    current = await both.current_decisions([t.id], ["k1", "k-none"])
+    current = await both.current_decisions([(t.id, "k1"), (t.id, "k-none")])
     assert [d.seq for d in current.values()] == [3]
-    assert [d.seq for d in await both.decisions_on_runs([t.id], [run.id])] == [1, 2, 3]
+    assert [(d.seq, first) for d, first in await both.decided_on_runs([t.id], [run.id])] == [(3, False)]
 
 
 async def test_an_idempotency_key_makes_one_decision_and_refuses_another(both):
@@ -439,18 +439,29 @@ async def test_a_tenant_reads_only_its_own_decisions(both):
     ra, rb = await _stored_run(both, a.id), await _stored_run(both, b.id)
     await both.add_decision(a.id, **_args(a.id, ra.id, key="ka"))
     await both.add_decision(b.id, **_args(b.id, rb.id, key="kb"))
-    assert set(await both.current_decisions([a.id], ["ka", "kb"])) == {(a.id, "pair", "batches_deposits", "ka")}
-    assert await both.decisions_on_runs([a.id], [rb.id]) == []
+    assert set(await both.current_decisions([(a.id, "ka"), (a.id, "kb")])) == {(a.id, "pair", "batches_deposits", "ka")}
+    assert await both.decided_on_runs([a.id], [rb.id]) == []
     assert await both.decision_by_idempotency(a.id, "i1") is not None
     assert (await both.decision_by_idempotency(a.id, "i1")).tenant_id == a.id
 
 
 async def test_decisions_made_at_once_on_one_item_get_one_number_each(both):
+    """Sent at once, one is recorded at a time: one that finds the item busy
+    is refused at once, never kept waiting, and sent again, as a client
+    does with its same Idempotency-Key."""
+    from okwan_vault import ItemBusy
     t = await both.create_tenant("Store")
     run = await _stored_run(both, t.id)
     statuses = ["explained", "open"] * 10
-    made = await asyncio.gather(*(both.add_decision(t.id, **_args(t.id, run.id, status=s, idem=f"c{n}"))
-                                  for n, s in enumerate(statuses)))
+
+    async def send(n, status):
+        while True:
+            try:
+                return await both.add_decision(t.id, **_args(t.id, run.id, status=status, idem=f"c{n}"))
+            except ItemBusy:
+                await asyncio.sleep(0.01)
+
+    made = await asyncio.gather(*(send(n, s) for n, s in enumerate(statuses)))
     history = sorted(await both.decision_history(t.id, "pair", "batches_deposits", "k1"), key=lambda d: d.seq)
     assert [d.seq for d in history] == list(range(1, 21)) and len(made) == 20
     assert all(later.prior_status == earlier.status for earlier, later in pairwise(history))
@@ -470,4 +481,4 @@ async def test_a_file_deleted_takes_the_decisions_of_checks_that_read_files(both
     await both.add_decision(t.id, **_args(t.id, rails.id, kind="across", name="rails", key="k2", idem="i2"))
     assert await both.delete_import(t.id, f.id)
     assert await both.decision_history(t.id, "pair", "batches_deposits", "k1") == []
-    assert [d.key for d in (await both.current_decisions([t.id], ["k1", "k2"])).values()] == ["k2"]
+    assert [d.key for d in (await both.current_decisions([(t.id, "k1"), (t.id, "k2")])).values()] == ["k2"]

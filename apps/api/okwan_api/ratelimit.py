@@ -128,9 +128,11 @@ class Limiter:
         self._hits.clear()
 
 
-_RULES = (SIGNUP_IP, SIGNUP_ADDRESS, VERIFY_IP, SIGNIN_IP, SIGNIN_ADDRESS,
-          TEST_IP, TEST_TENANT, SQL_RECON_TENANT, IMPORT_TENANT, SAMPLE_IP,
-          UNSUBSCRIBE_IP, BILLING_TENANT)
+#: Every rule above, found rather than listed: the sweep keeps a counter
+#: only for a rule it knows, so a rule left off a hand-kept list (the
+#: operator's unlock, the support assistant, the open items) had its
+#: counters dropped whenever a flood of keys made the limiter sweep.
+_RULES = tuple(v for v in list(globals().values()) if isinstance(v, Rule))
 
 limiter = Limiter()
 
