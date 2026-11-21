@@ -79,6 +79,10 @@ export const NavHome = () => (
 export const NavFindings = () => (
   <svg {...nav}><path d="M12 3.4 20.6 12 12 20.6 3.4 12Z" /><path d="M12 8.7v3.8" /><path d="M12 15.5h.01" strokeWidth={2.8} /></svg>
 );
+/* Open items: a clipboard of what is still to do. */
+export const NavOpen = () => (
+  <svg {...nav}><rect x="5" y="4.6" width="14" height="16" rx="2.6" /><path d="M9.2 3.2h5.6v3H9.2Z" /><path d="M8.8 11h6.4M8.8 15h4" /></svg>
+);
 export const NavMerchants = () => (
   <svg {...nav}><path d="M3.6 9.4 5.2 4.6h13.6l1.6 4.8" /><path d="M3.6 9.4a2.8 2.8 0 0 0 5.6 0 2.8 2.8 0 0 0 5.6 0 2.8 2.8 0 0 0 5.6 0" /><path d="M5.2 12v8.2h13.6V12" /><path d="M10 20.2v-4.6h4v4.6" /></svg>
 );

@@ -8,7 +8,7 @@ import { CommandPalette, openPalette } from "./command-palette";
 import { openSupport } from "./support-panel";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
-import { IconArrowRight, IconClose, IconGear, IconHelp, IconLock, IconMenu, IconSearch, IconSignOut, NavAgents, NavApi, NavFindings, NavHome, NavIntegrations, NavMerchants } from "./ui/icons";
+import { IconArrowRight, IconClose, IconGear, IconHelp, IconLock, IconMenu, IconSearch, IconSignOut, NavAgents, NavApi, NavFindings, NavHome, NavIntegrations, NavMerchants, NavOpen } from "./ui/icons";
 import { planState } from "@/lib/usage-shape";
 import { OkwanLogo } from "./ui/mark";
 
@@ -78,6 +78,7 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
       >
         Findings
       </Item>
+      <Item href="/exceptions" path={path} icon={<NavOpen />}>Open items</Item>
       <Item href="/merchants" path={path} icon={<NavMerchants />} count={<Count n={merchants.length} label="merchants" />}>
         Merchants
       </Item>
