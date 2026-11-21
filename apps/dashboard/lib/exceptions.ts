@@ -57,6 +57,8 @@ export type ApiItem = {
   run_id: string;
   run_at: string;
   decision?: ApiDecision | null;
+  /** Alike in every reference and day to another finding of the same result: it cannot be decided on its own. */
+  alike?: boolean;
 };
 
 export type ApiCheck = {
@@ -96,6 +98,8 @@ export type Line = {
   decide: string;
   /** What a person last decided about it, when anything was. */
   decision: DecisionShown | null;
+  /** Set when the item cannot be decided on its own, and why. */
+  undecidable: string | null;
 };
 
 /** A decision, every word chosen: who decided what, when and why. */
@@ -271,6 +275,9 @@ export function shownOf(
     firstSeen: item.first_seen ? dayOf(item.first_seen) : "",
     decide: decidePath(item),
     decision: item.decision ? decisionShown(item.decision) : null,
+    undecidable: item.alike
+      ? "Alike in every reference and day to another item of the same check, so neither can be decided on its own. Settle it where it started."
+      : null,
   }));
   const known = new Map(Object.entries(names));
   for (const i of answer.data) known.set(i.tenant_id, i.merchant);
@@ -291,7 +298,10 @@ export function shownOf(
       });
     }
     if (c.cut) {
-      notices.push({ merchantId: c.tenant_id, merchant, text: `${c.title}: the run found more than it kept. Only the first items are here.` });
+      notices.push({
+        merchantId: c.tenant_id, merchant,
+        text: `${c.title}: the run found more than it kept. Only the first items are here, and the count may include items someone already closed.`,
+      });
     }
   }
   for (const [tid, n] of more) {

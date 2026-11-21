@@ -46,6 +46,7 @@ function Item({ line, view }: { line: Line; view: View }) {
           {line.firstSeen && <><span aria-hidden> · </span>first seen {line.firstSeen}</>}
         </p>
         {line.decision && <div className="mt-2"><Decided d={line.decision} /></div>}
+        {line.undecidable && <p className="mt-2 text-sm text-ink-soft" data-undecidable>{line.undecidable}</p>}
       </div>
       <div className="flex items-baseline gap-4 sm:flex-col sm:items-end sm:gap-1">
         {line.amount && <span className="font-mono text-[15px] font-semibold tabular-nums text-ink">{line.amount}</span>}
@@ -54,7 +55,7 @@ function Item({ line, view }: { line: Line; view: View }) {
             {line.open === "Today" ? "Open since today" : `Open ${line.open}`}
           </span>
         )}
-        <DecideItem line={line} view={view} />
+        {!line.undecidable && <DecideItem line={line} view={view} />}
       </div>
     </li>
   );
