@@ -32,9 +32,12 @@ from .models import (
     SUPPORT_KEPT_DAYS,
     ApiKey,
     DailyCheck,
+    Decision,
+    DecisionConflict,
     DuplicateImport,
     FilesGone,
     ImportFile,
+    ItemGone,
     RunRecord,
     SealedCredential,
     SupportConversation,
@@ -159,6 +162,24 @@ class Store(Protocol):
     async def newest_runs_all(
         self, tenant_ids: list[str], *, ok_only: bool = False, with_rows: bool = False,
     ) -> list[RunRecord]: ...
+    async def add_decision(
+        self, tenant_id: str, *, kind: str, name: str, key: str, status: str,
+        owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
+        credential: str, run_id: str, reads_files: bool, idempotency_key: str,
+        request_hash: str, at: datetime,
+    ) -> tuple[Decision, bool]: ...
+    async def decision_by_idempotency(
+        self, tenant_id: str, idempotency_key: str
+    ) -> Decision | None: ...
+    async def current_decisions(
+        self, tenant_ids: list[str], keys: Collection[str]
+    ) -> dict[tuple[str, str, str, str], Decision]: ...
+    async def decisions_on_runs(
+        self, tenant_ids: list[str], run_ids: Collection[str]
+    ) -> list[Decision]: ...
+    async def decision_history(
+        self, tenant_id: str, kind: str, name: str, key: str, limit: int = 200
+    ) -> list[Decision]: ...
     async def keys_for(self, tenant_id: str) -> list[ApiKey]: ...
     async def get_conversation(
         self, tenant_id: str, conversation_id: str
@@ -273,6 +294,7 @@ class MemoryStore:
         self._payments: dict[str, dict] = {}
         self._disputes: dict[str, dict] = {}
         self._runs: dict[str, RunRecord] = {}
+        self._decisions: list[Decision] = []
         self._conversations: dict[str, SupportConversation] = {}
         self._tickets: dict[str, SupportTicket] = {}
         self._replies: list[dict] = []
@@ -324,6 +346,7 @@ class MemoryStore:
         self._accounts = {k: v for k, v in self._accounts.items() if v[0] not in gone}
         self._sessions = {k: v for k, v in self._sessions.items() if v[0] not in gone}
         self._runs = {k: v for k, v in self._runs.items() if v.tenant_id not in gone}
+        self._decisions = [d for d in self._decisions if d.tenant_id not in gone]
         self._conversations = {k: v for k, v in self._conversations.items() if v.tenant_id not in gone}
         self._tickets = {k: v for k, v in self._tickets.items() if v.tenant_id not in gone}
         self._replies = [r for r in self._replies if r["tenant_id"] not in gone]
@@ -763,6 +786,69 @@ class MemoryStore:
                 out[k] = r
         return [r if with_rows else replace(r, rows=None) for r in out.values()]
 
+    # ── decisions on open items ─────────────────────────────────────
+
+    async def add_decision(
+        self, tenant_id: str, *, kind: str, name: str, key: str, status: str,
+        owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
+        credential: str, run_id: str, reads_files: bool, idempotency_key: str,
+        request_hash: str, at: datetime,
+    ) -> tuple[Decision, bool]:
+        """As PostgresStore: nothing here awaits between the read and the
+        write, so one decision is recorded at a time."""
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        done = next((d for d in self._decisions
+                     if d.tenant_id == tenant_id and d.idempotency_key == idempotency_key), None)
+        if done is not None:
+            if done.request_hash != request_hash:
+                raise DecisionConflict("this Idempotency-Key was used for a different decision")
+            return done, True
+        run = self._runs.get(run_id)
+        if run is None or run.tenant_id != tenant_id:
+            raise ItemGone("the stored run this item was found in is no longer there")
+        last = max((d for d in self._decisions if d.tenant_id == tenant_id and d.key == key),
+                   key=lambda d: d.seq, default=None)
+        dec = Decision(
+            id=f"dec_{uuid.uuid4().hex[:16]}", seq=(last.seq if last else 0) + 1, tenant_id=tenant_id,
+            kind=kind, name=name, key=key, status=status, prior_status=last.status if last else None,
+            owner=owner, note=note, actor_tenant_id=actor_tenant_id, actor_name=actor_name,
+            credential=credential, run_id=run_id, reads_files=reads_files,
+            idempotency_key=idempotency_key, request_hash=request_hash, created_at=at,
+        )
+        self._decisions.append(dec)
+        return dec, False
+
+    async def decision_by_idempotency(self, tenant_id: str, idempotency_key: str) -> Decision | None:
+        return next((d for d in self._decisions
+                     if d.tenant_id == tenant_id and d.idempotency_key == idempotency_key), None)
+
+    async def current_decisions(
+        self, tenant_ids: list[str], keys: Collection[str]
+    ) -> dict[tuple[str, str, str, str], Decision]:
+        wanted, keys = set(tenant_ids), set(keys)
+        out: dict[tuple[str, str, str, str], Decision] = {}
+        for d in self._decisions:
+            if d.tenant_id in wanted and d.key in keys:
+                k = (d.tenant_id, d.kind, d.name, d.key)
+                if k not in out or d.seq > out[k].seq:
+                    out[k] = d
+        return out
+
+    async def decisions_on_runs(
+        self, tenant_ids: list[str], run_ids: Collection[str]
+    ) -> list[Decision]:
+        wanted, runs = set(tenant_ids), set(run_ids)
+        found = [d for d in self._decisions if d.tenant_id in wanted and d.run_id in runs]
+        return sorted(found, key=lambda d: (d.tenant_id, d.key, d.seq))
+
+    async def decision_history(
+        self, tenant_id: str, kind: str, name: str, key: str, limit: int = 200
+    ) -> list[Decision]:
+        found = [d for d in self._decisions if d.tenant_id == tenant_id and d.kind == kind
+                 and d.name == name and d.key == key]
+        return sorted(found, key=lambda d: d.seq, reverse=True)[:limit]
+
     async def set_plan(self, tenant_id: str, name: str) -> None:
         if name not in PLANS:
             raise PlanRefused(f"unknown plan {name!r}; known: {', '.join(PLANS)}")
@@ -1067,6 +1153,9 @@ class MemoryStore:
         for run_id in [k for k, r in self._runs.items()
                        if (r.reads_files or r.name in named) and r.tenant_id in tenant_ids]:
             del self._runs[run_id]
+        # And the decisions on those checks' items, whose notes may quote them.
+        self._decisions = [d for d in self._decisions if not (
+            d.tenant_id in tenant_ids and (d.reads_files or d.name in named))]
 
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,

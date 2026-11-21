@@ -143,8 +143,12 @@ async def two(store):
         await store.put_credential(t.id, "stripe", "secret_key", f"sk_{name}")
         await store.record_request(t.id, "rest:test")
         await store.set_plan(t.id, "pro")
-        await store.add_run(t.id, kind="across", name="rails", surface="rest", status="ok",
-                            started_at=now, finished_at=now, summary={}, rows=[], error=None)
+        run = await store.add_run(t.id, kind="across", name="rails", surface="rest", status="ok",
+                                  started_at=now, finished_at=now, summary={}, rows=[], error=None)
+        await store.add_decision(
+            t.id, kind="across", name="rails", key=f"key-{name}", status="assigned", owner=f"{name} ops",
+            note=None, actor_tenant_id=t.id, actor_name=name, credential="session", run_id=run.id,
+            reads_files=False, idempotency_key=f"idem-{name}", request_hash="h", at=now)
         cid = await store.save_conversation(t.id, None, [{"role": "user", "content": "hi"}], 1)
         ticket = await store.add_ticket(t.id, conversation_id=cid, severity="sev3", category="other",
                                         summary=f"{name} asked for help", notified=False)
@@ -303,6 +307,11 @@ def _insert(table: str, tenant_id: str) -> tuple:
                              "ON CONFLICT (tenant_id) DO UPDATE SET finding_emails = false"), tenant_id),
         "daily_checks": (("INSERT INTO daily_checks (tenant_id, checked_at) VALUES ($1, now()) "
                           "ON CONFLICT (tenant_id) DO UPDATE SET checked_at = now()"), tenant_id),
+        "exception_decisions": (("INSERT INTO exception_decisions (id, seq, tenant_id, kind, name, "
+                                 "item_key, status, actor_tenant_id, actor_name, credential, run_id, "
+                                 "idempotency_key, request_hash, created_at) VALUES ('dec_rls_probe_' || $1, "
+                                 "1, $1, 'pair', 'batches_deposits', 'rlsprobe', 'assigned', $1, 'x', "
+                                 "'session', 'run_x', 'rls-probe', 'h', $2)"), tenant_id, now),
     }[table]
 
 

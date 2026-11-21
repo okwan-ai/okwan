@@ -46,9 +46,12 @@ from .models import (
     SUPPORT_KEPT_DAYS,
     ApiKey,
     DailyCheck,
+    Decision,
+    DecisionConflict,
     DuplicateImport,
     FilesGone,
     ImportFile,
+    ItemGone,
     RunRecord,
     SealedCredential,
     SupportConversation,
@@ -87,6 +90,7 @@ TENANT_TABLES = (
     "import_files", "import_rows", "import_layouts", "access_log", "access_alerts",
     "notify_settings",
     "daily_checks",
+    "exception_decisions",
 )
 
 
@@ -552,6 +556,104 @@ class PostgresStore:
                 list(tenant_ids),
             )
         return [_run(r) for r in rows]
+
+    # ── decisions on open items ─────────────────────────────────────
+
+    async def add_decision(
+        self, tenant_id: str, *, kind: str, name: str, key: str, status: str,
+        owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
+        credential: str, run_id: str, reads_files: bool, idempotency_key: str,
+        request_hash: str, at: datetime,
+    ) -> tuple[Decision, bool]:
+        """Record one decision; return it and whether it was recorded
+        before, by the same Idempotency-Key for the same request (a key
+        used for another one raises DecisionConflict).
+
+        The item is locked for the transaction, so its decisions are
+        numbered in the order they are made and each knows the status
+        before it. The stored run it was found in is held while the row goes
+        in: a file deletion that takes the run either comes first, and
+        nothing is stored (ItemGone), or waits, and its next statement
+        takes this decision with the run."""
+        async with self._scoped(tenant_id) as con:
+            await con.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                              f"okwan:decision:{tenant_id}:{key}")
+            done = await _by_idempotency(con, tenant_id, idempotency_key)
+            if done is not None:
+                return _replayed(done, request_hash)
+            held = await con.fetchval(
+                "SELECT id FROM reconciliation_runs WHERE id = $2 AND tenant_id = $1 FOR KEY SHARE",
+                tenant_id, run_id)
+            if held is None:
+                raise ItemGone("the stored run this item was found in is no longer there")
+            last = await con.fetchrow(
+                "SELECT seq, status FROM exception_decisions WHERE tenant_id = $1 AND item_key = $2 "
+                "ORDER BY seq DESC LIMIT 1", tenant_id, key)
+            try:
+                async with con.transaction():
+                    row = await con.fetchrow(
+                        "INSERT INTO exception_decisions (id, seq, tenant_id, kind, name, item_key, "
+                        "status, prior_status, owner, note, actor_tenant_id, actor_name, credential, "
+                        "run_id, reads_files, idempotency_key, request_hash, created_at) VALUES ($1, $2, "
+                        "$3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) "
+                        f"RETURNING {_DECISION_COLS}",
+                        f"dec_{uuid.uuid4().hex[:16]}", (last["seq"] if last else 0) + 1, tenant_id,
+                        kind, name, key, status, last["status"] if last else None, owner, note,
+                        actor_tenant_id, actor_name, credential, run_id, reads_files,
+                        idempotency_key, request_hash, at)
+            except asyncpg.UniqueViolationError:
+                # The same Idempotency-Key, for another item, at the same moment.
+                done = await _by_idempotency(con, tenant_id, idempotency_key)
+                if done is None:
+                    raise
+                return _replayed(done, request_hash)
+        return _decision(row), False
+
+    async def decision_by_idempotency(self, tenant_id: str, idempotency_key: str) -> Decision | None:
+        """The decision a tenant already made under this Idempotency-Key."""
+        async with self._scoped(tenant_id) as con:
+            return await _by_idempotency(con, tenant_id, idempotency_key)
+
+    async def current_decisions(
+        self, tenant_ids: list[str], keys: Collection[str]
+    ) -> dict[tuple[str, str, str, str], Decision]:
+        """Each item's newest decision, for these tenants' items with these
+        keys, by (tenant, kind, name, key)."""
+        wanted = list(set(keys))
+        if not wanted or not tenant_ids:
+            return {}
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                f"SELECT DISTINCT ON (tenant_id, item_key) {_DECISION_COLS} FROM exception_decisions "
+                "WHERE tenant_id = ANY($1::text[]) AND item_key = ANY($2::text[]) "
+                "ORDER BY tenant_id, item_key, seq DESC", list(tenant_ids), wanted)
+        return {(d.tenant_id, d.kind, d.name, d.key): d for d in map(_decision, rows)}
+
+    async def decisions_on_runs(
+        self, tenant_ids: list[str], run_ids: Collection[str]
+    ) -> list[Decision]:
+        """The decisions made against these stored runs, each item's in the
+        order they were made."""
+        wanted = list(set(run_ids))
+        if not wanted or not tenant_ids:
+            return []
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                f"SELECT {_DECISION_COLS} FROM exception_decisions "
+                "WHERE tenant_id = ANY($1::text[]) AND run_id = ANY($2::text[]) "
+                "ORDER BY tenant_id, item_key, seq", list(tenant_ids), wanted)
+        return [_decision(r) for r in rows]
+
+    async def decision_history(
+        self, tenant_id: str, kind: str, name: str, key: str, limit: int = 200
+    ) -> list[Decision]:
+        """One item's decisions, newest first."""
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                f"SELECT {_DECISION_COLS} FROM exception_decisions WHERE tenant_id = $1 "
+                "AND kind = $2 AND name = $3 AND item_key = $4 ORDER BY seq DESC LIMIT $5",
+                tenant_id, kind, name, key, limit)
+        return [_decision(r) for r in rows]
 
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         async with self._scoped(tenant_id) as con:
@@ -1275,6 +1377,7 @@ class PostgresStore:
                     "RETURNING id", tenant_id, now)
                 if expired:
                     await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
+                    await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
                 same = await con.fetchval(
                     "SELECT id FROM import_files WHERE tenant_id = $1 AND kind = $2 AND sha256 = $3",
                     tenant_id, kind, sha256)
@@ -1336,6 +1439,7 @@ class PostgresStore:
                 tenant_id, file_id)
             if gone is not None:
                 await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
         return gone is not None
 
     async def imports_live(
@@ -1434,11 +1538,12 @@ class PostgresStore:
         """Delete every tenant's expired files, by cascade their rows, and
         those tenants' stored runs that read files.
 
-        Two statements in one transaction, in this order: the first waits
-        for any run being stored against a file it is about to delete, and
-        the second, which starts after it, sees that run and takes it. As
-        one statement the two halves would share a snapshot, and such a run
-        would be missed.
+        Statements in one transaction, in this order: the first waits for
+        any run being stored against a file it is about to delete, and the
+        second, which starts after it, sees that run and takes it; the third
+        takes the decisions on those checks' items, after any being recorded
+        against a run the second deleted. As one statement they would share
+        a snapshot, and such a run or decision would be missed.
 
         Across tenants on purpose, so as the login role, like deleting a
         tenant: it reads nothing back and touches only what has expired.
@@ -1449,10 +1554,13 @@ class PostgresStore:
                 "DELETE FROM import_files WHERE expires_at <= $1 RETURNING tenant_id",
                 now or datetime.now(UTC))
             if gone:
+                tenants, names = list({r["tenant_id"] for r in gone}), list(self.file_checks())
                 await con.execute(
                     "DELETE FROM reconciliation_runs WHERE tenant_id = ANY($1::text[]) "
-                    "AND (reads_files OR name = ANY($2::text[]))",
-                    list({r["tenant_id"] for r in gone}), list(self.file_checks()))
+                    "AND (reads_files OR name = ANY($2::text[]))", tenants, names)
+                await con.execute(
+                    "DELETE FROM exception_decisions WHERE tenant_id = ANY($1::text[]) "
+                    "AND (reads_files OR name = ANY($2::text[]))", tenants, names)
         return len(gone)
 
     # ── access log ──────────────────────────────────────────────────
@@ -1733,6 +1841,12 @@ _RUN_COLS_NO_ROWS = ("id, tenant_id, kind, name, surface, status, started_at, "
 _RUNS_FIRST = "LOCK TABLE reconciliation_runs IN ROW EXCLUSIVE MODE"
 _DROP_FILE_RUNS = ("DELETE FROM reconciliation_runs WHERE tenant_id = $1 "
                    "AND (reads_files OR name = ANY($2::text[]))")
+#: And, in the statement after it, the decisions on those checks' items,
+#: whose notes may quote the same files. A decision being recorded holds its
+#: run, so the statement above waits for it and this one, which starts after,
+#: sees it.
+_DROP_FILE_DECISIONS = ("DELETE FROM exception_decisions WHERE tenant_id = $1 "
+                        "AND (reads_files OR name = ANY($2::text[]))")
 
 
 def _dumps(value) -> str | None:
@@ -1764,6 +1878,39 @@ def _loads(value):
     if value is None or not isinstance(value, str):
         return value
     return json.loads(value)
+
+
+_DECISION_COLS = ("id, seq, tenant_id, kind, name, item_key, status, prior_status, owner, note, "
+                  "actor_tenant_id, actor_name, credential, run_id, reads_files, idempotency_key, "
+                  "request_hash, created_at")
+
+
+def _decision(row) -> Decision:
+    return Decision(
+        id=row["id"], seq=row["seq"], tenant_id=row["tenant_id"], kind=row["kind"], name=row["name"],
+        key=row["item_key"], status=row["status"], prior_status=row["prior_status"],
+        owner=row["owner"], note=row["note"], actor_tenant_id=row["actor_tenant_id"],
+        actor_name=row["actor_name"], credential=row["credential"], run_id=row["run_id"],
+        reads_files=row["reads_files"], idempotency_key=row["idempotency_key"],
+        request_hash=row["request_hash"], created_at=row["created_at"],
+    )
+
+
+async def _by_idempotency(con, tenant_id: str, idempotency_key: str) -> Decision | None:
+    """On a connection already scoped to the tenant: the decision made under
+    this Idempotency-Key."""
+    row = await con.fetchrow(
+        f"SELECT {_DECISION_COLS} FROM exception_decisions "
+        "WHERE tenant_id = $1 AND idempotency_key = $2", tenant_id, idempotency_key)
+    return None if row is None else _decision(row)
+
+
+def _replayed(done: Decision, request_hash: str) -> tuple[Decision, bool]:
+    """A decision already made under the Idempotency-Key: the same one when
+    the request is the same, refused when it is another."""
+    if done.request_hash != request_hash:
+        raise DecisionConflict("this Idempotency-Key was used for a different decision")
+    return done, True
 
 
 def _run(row) -> RunRecord:
