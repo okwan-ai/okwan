@@ -12,6 +12,7 @@ type Command = { id: string; group: string; label: string; hint?: string; href: 
 const PAGES: Command[] = [
   { id: "p-overview", group: "Pages", label: "Overview", href: "/overview", keywords: "home dashboard verdict" },
   { id: "p-findings", group: "Pages", label: "Findings", href: "/findings", keywords: "collected twice refunds issues" },
+  { id: "p-open", group: "Pages", label: "Open items", href: "/exceptions", keywords: "exceptions open aged batches deposits not deposited queue" },
   { id: "p-twice", group: "Pages", label: "Findings: collected twice", href: "/findings?outcome=collected_twice", keywords: "double refund owed" },
   { id: "p-merchants", group: "Pages", label: "Merchants", href: "/merchants", keywords: "tenants stores" },
   { id: "p-catalog", group: "Pages", label: "Integrations", href: "/integrations", keywords: "connectors catalog rest sql mcp tables routes" },

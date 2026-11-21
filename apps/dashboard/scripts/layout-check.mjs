@@ -26,7 +26,7 @@ mkdirSync(OUT, { recursive: true });
 const SIZES = [[1670, 941], [1366, 768], [1024, 768], [390, 844]];
 const SIGNED_OUT = ["/signup?mode=signin", "/signup", "/verify?token=layout-check", "/unsubscribe?token=layout-check"];
 const SIGNED_IN = [
-  "/overview", "/overview?days=all", "/sample", "/findings", "/merchants", "/integrations", "/agents",
+  "/overview", "/overview?days=all", "/sample", "/findings", "/exceptions", "/merchants", "/integrations", "/agents",
   "/settings", "/settings?tab=plan", "/settings?tab=keys", "/settings?tab=access", "/settings?tab=security", "/ops",
 ];
 
@@ -313,6 +313,25 @@ async function checkSlowly(browser, session, merchant, loads = 15) {
   return loads;
 }
 
+// Open items: every finding of the workspace's merchants, across checks. The
+// seed's unpaid batch is there with its amount and how long it has been
+// open, its reference in an element of its own and in none of the page's
+// sentences, and the merchant's name is a link to its page.
+async function checkOpenItems(page, w, h) {
+  const where = `${w}x${h} /exceptions`;
+  await page.goto(`${BASE}/exceptions`, { waitUntil: "networkidle" });
+  const item = page.locator("[data-exception]").filter({ has: page.locator("bdi[data-file-ref]", { hasText: /^B-2004$/ }) });
+  if ((await item.count()) !== 1) return note(page, where, "the seed's unpaid batch B-2004 is not one open item");
+  const text = await item.innerText();
+  if (!text.includes("Batch with no deposit")) await note(page, where, `the unpaid batch does not say what it is ("${text.slice(0, 80)}")`);
+  if (!/\$1,238\.27/.test(text)) await note(page, where, "the unpaid batch does not show its amount");
+  if (!/Open \d+ days?|Open since today/.test(text)) await note(page, where, "the unpaid batch does not say how long it has been open");
+  const said = await item.locator("span.font-semibold").first().innerText();
+  if (said.includes("B-2004")) await note(page, where, "the batch's reference is inside the page's own words");
+  const link = item.locator("a[href^='/merchants/ten_'] bdi[data-merchant-name]");
+  if ((await link.count()) !== 1) await note(page, where, "the merchant's name is not a link to its page");
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -376,6 +395,7 @@ try {
     await checkPlanNotice(page, w, h);
     if (merchant) await checkFileCheck(page, w, h, merchant);
     if (merchant) await checkImport(page, w, h, merchant);
+    await checkOpenItems(page, w, h);
     if (w >= 900) await checkMenu(page, w, h);
     await ctx.close();
   }
@@ -390,4 +410,4 @@ if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);

@@ -882,7 +882,7 @@ days read: the seed has a batch from before them), runs the check again
 through the dashboard's own route and holds its answer to a run's id and a
 time, asks that route for checks the tab does not offer, which it must
 refuse, and sends it a request as another site's page would, which it must
-refuse too. Last, it loads the Files tab fifteen times through a proxy
+refuse too. On *Open items* it finds the seed's unpaid batch as one item, with its amount and how long it has been open, its reference in an element of its own and in none of the page's words, and the merchant's name a link to its page. Last, it loads the Files tab fifteen times through a proxy
 that hands the document on 2 KB at a time, 40 ms apart: a page built so
 that a part can arrive after the element that holds it is thrown away by
 React on a slow link and drawn again ("hydration failed"), which a fast
