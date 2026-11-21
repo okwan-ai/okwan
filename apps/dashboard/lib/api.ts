@@ -25,13 +25,16 @@ export type ApiResult<T> = { ok: true; status: number; data: T } | {
 
 export async function api<T>(
   path: string,
-  init: { method?: string; body?: unknown; session?: string | null } = {},
+  init: { method?: string; body?: unknown; session?: string | null; idempotencyKey?: string } = {},
 ): Promise<ApiResult<T>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(await forwardedClient()),
   };
   if (init.session) headers.Authorization = `Bearer ${init.session}`;
+  // One header a change may carry, and only this one: a route cannot set
+  // or override any other on its way to the API.
+  if (init.idempotencyKey) headers["Idempotency-Key"] = init.idempotencyKey;
   let res: Response;
   try {
     res = await fetch(`${apiUrl()}${path}`, {

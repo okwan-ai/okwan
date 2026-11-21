@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { Line, Shown } from "@/lib/exceptions";
+import type { Line, Shown, View } from "@/lib/exceptions";
+import { Decided, DecideItem } from "./decide-item";
 import { ButtonLink } from "./ui/button";
 import { Card } from "./ui/card";
 import { EmptyState } from "./ui/empty-state";
@@ -22,7 +23,7 @@ function Theirs({ value, what }: { value: string; what: "name" | "ref" }) {
     : <bdi dir="ltr" data-file-ref className="break-all rounded bg-canvas px-1.5 py-0.5 font-mono text-[13px]">{value}</bdi>;
 }
 
-function Item({ line }: { line: Line }) {
+function Item({ line, view }: { line: Line; view: View }) {
   const old = line.days !== null && line.days >= OLD_DAYS;
   return (
     <li className="grid gap-x-6 gap-y-2 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto]" data-exception={line.key}>
@@ -44,14 +45,17 @@ function Item({ line }: { line: Line }) {
           {line.dated && <><span aria-hidden> · </span>dated {line.dated}</>}
           {line.firstSeen && <><span aria-hidden> · </span>first seen {line.firstSeen}</>}
         </p>
+        {line.decision && <div className="mt-2"><Decided d={line.decision} brief /></div>}
+        {line.undecidable && <p className="mt-2 text-sm text-ink-soft" data-undecidable>{line.undecidable}</p>}
       </div>
       <div className="flex items-baseline gap-4 sm:flex-col sm:items-end sm:gap-1">
         {line.amount && <span className="font-mono text-[15px] font-semibold tabular-nums text-ink">{line.amount}</span>}
-        {line.open && (
+        {view === "open" && line.open && (
           <span className={`text-sm ${old ? "font-semibold text-danger" : "text-ink-soft"}`}>
             {line.open === "Today" ? "Open since today" : `Open ${line.open}`}
           </span>
         )}
+        {!line.undecidable && <DecideItem line={line} view={view} />}
       </div>
     </li>
   );
@@ -81,25 +85,38 @@ export function ExceptionsPanel({ shown }: { shown: Shown }) {
           </ul>
         </Card>
       )}
-      {shown.total === 0 ? (
+      {shown.otherHref && (shown.view === "closed" || shown.closed > 0) && (
+        <p className="text-sm">
+          <Link href={shown.otherHref} className="font-medium text-ink underline underline-offset-4 hover:no-underline" data-other-view>
+            {shown.view === "open"
+              ? `See the ${shown.closed.toLocaleString("en-US")} item${shown.closed === 1 ? "" : "s"} someone explained or resolved`
+              : "Back to the open items"}
+          </Link>
+        </p>
+      )}
+      {shown.total === 0 && shown.view === "closed" ? (
+        <EmptyState icon={<IconAlert />} title="Nothing is closed">
+          An item someone explains or resolves is listed here, with who decided and why.
+        </EmptyState>
+      ) : shown.total === 0 ? (
         <EmptyState
           icon={<IconAlert />}
           title={shown.checks === 0 ? "No check has run yet" : "Nothing is open"}
           action={shown.checks === 0 ? <ButtonLink href="/merchants">Go to merchants</ButtonLink> : undefined}
         >
           {shown.checks === 0
-            ? "Run a check on a merchant, and anything it finds that needs a look is listed here until a later run no longer finds it."
-            : "The newest run of every check found nothing that needs a look."}
+            ? "Run a check on a merchant, and anything it finds that needs a look is listed here until a later run no longer finds it, or someone explains or resolves it."
+            : "Nothing the newest run of every check found still needs a look."}
         </EmptyState>
       ) : (
-        <Card as="section" flush aria-label="Open items">
+        <Card as="section" flush aria-label={shown.view === "open" ? "Open items" : "Closed items"}>
           <p className="border-b border-line px-5 py-3 text-sm text-ink-soft">
             {shown.merchant && <><Theirs value={shown.merchant.name} what="name" />: </>}
-            {shown.total.toLocaleString("en-US")} open item{shown.total === 1 ? "" : "s"}, oldest first.
+            {shown.total.toLocaleString("en-US")} {shown.view === "open" ? "open" : "closed"} item{shown.total === 1 ? "" : "s"}, oldest first.
             {shown.left > 0 && ` ${shown.lines.length.toLocaleString("en-US")} are listed here.`}
           </p>
           <ul className="divide-y divide-line">
-            {shown.lines.map((line) => <Item key={line.key} line={line} />)}
+            {shown.lines.map((line) => <Item key={line.key} line={line} view={shown.view} />)}
           </ul>
           {shown.nextHref && (
             <p className="border-t border-line px-5 py-3 text-sm">
