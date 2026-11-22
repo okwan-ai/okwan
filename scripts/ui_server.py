@@ -16,6 +16,9 @@ reads a fixed number of days, always has them to read.
 The access log has a week of reads by Kofi's Store's key from its usual
 network, today's reads from a new one with the alert they raised, and the
 dashboard session's own run, so every column of Settings › Access log fills.
+Suggestions on open items are answered by a scripted model that cites the
+item itself (SeededModel), so the Decide panel's suggestion renders and can
+be used or turned down; no model is called.
 Dummy credentials; nothing leaves the machine; nothing is written to disk.
 
     python scripts/ui_server.py    # listens on 127.0.0.1:8000, prints "seeded"
@@ -24,11 +27,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import uvicorn
+from okwan_api import support
 from okwan_api.auth import get_store
 from okwan_api.main import app
 from okwan_recon import across
@@ -170,7 +176,30 @@ async def seed_access(store, tenant_id: str) -> None:
     await store.set_alert_mailed(tenant_id, alert["id"])  # as production's mailer would
 
 
+class SeededModel:
+    """`client.beta.messages.create` for the layout check: a suggestion that
+    explains the item from its own record, and a plain answer otherwise."""
+
+    def __init__(self) -> None:
+        self.beta = SimpleNamespace(messages=self)
+        self.asked = 0
+
+    async def create(self, **kwargs):
+        if "format" not in (kwargs.get("output_config") or {}):
+            text = "This is the layout check's assistant; it answers nothing."
+        else:
+            self.asked += 1
+            text = json.dumps({
+                "suggestion": "explained", "confidence": "medium",
+                "note": f"Layout check suggestion {self.asked}: the batch closed on a Monday and is paid in the "
+                        "deposit after the last day the statement covers.",
+                "evidence": [{"ref": "F1", "why": "The batch has no deposit in the days the statement covers."}]})
+        return SimpleNamespace(stop_reason="end_turn", model="claude-opus-5-5",
+                               content=[{"type": "text", "text": text}])
+
+
 async def main() -> None:
+    support.set_client(SeededModel())
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning"))
     serving = asyncio.create_task(server.serve())
     while not server.started:

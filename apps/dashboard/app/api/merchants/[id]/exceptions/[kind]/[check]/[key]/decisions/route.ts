@@ -13,7 +13,8 @@ import { fail, json, readBody } from "@/lib/respond";
  * the one header passed on. The body is rebuilt from the fields a decision
  * has, never forwarded as sent: a name only when the item is given to
  * someone, and the terms the person was shown, which the API holds the
- * decision to. Signed in only, JSON only: a decision is recorded as the
+ * decision to; and the suggestion it is made from, when it is (C60), by its
+ * id's shape. Signed in only, JSON only: a decision is recorded as the
  * signed-in account's.
  */
 
@@ -25,6 +26,7 @@ const IDEMPOTENCY = /^[A-Za-z0-9._:-]{1,128}$/;
 const OWNER_MAX = 80;
 const NOTE_MAX = 1000;
 const SEEN_MAX = 200;
+const SUGGESTION = /^sug_[0-9a-f]{16}$/;
 
 type Params = { params: Promise<{ id: string; kind: string; check: string; key: string }> };
 
@@ -43,7 +45,8 @@ export async function POST(req: Request, { params }: Params) {
   if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
     return fail("send the decision as JSON", 415);
   }
-  const body = await readBody<{ status?: unknown; owner?: unknown; note?: unknown; seen?: unknown } | null>(req);
+  const body = await readBody<{ status?: unknown; owner?: unknown; note?: unknown; seen?: unknown;
+                                suggestion?: unknown } | null>(req);
   if (body instanceof Response) return body;
   if (body === null || typeof body !== "object" || Array.isArray(body)) return fail("expected a decision", 400);
   const token = await session();
@@ -57,10 +60,14 @@ export async function POST(req: Request, { params }: Params) {
   const owner = text(body.owner, OWNER_MAX);
   const note = text(body.note, NOTE_MAX);
   const seen = text(body.seen, SEEN_MAX);
-  if (!status || owner === null || note === null || seen === null) return fail("not a decision Okwan can record", 422);
+  const suggestion = body.suggestion === undefined || body.suggestion === null ? undefined
+    : typeof body.suggestion === "string" && SUGGESTION.test(body.suggestion) ? body.suggestion : null;
+  if (!status || owner === null || note === null || seen === null || suggestion === null) {
+    return fail("not a decision Okwan can record", 422);
+  }
   const r = await api<{ decision: ApiDecision; replayed: boolean }>(to, {
     method: "POST", session: token, idempotencyKey: idem,
-    body: { status, owner: status === "assigned" ? owner : undefined, note, seen },
+    body: { status, owner: status === "assigned" ? owner : undefined, note, seen, suggestion },
   });
   return r.ok ? json(r.data, r.status) : fail(r.detail, r.status);
 }
