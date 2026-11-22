@@ -69,6 +69,7 @@ from okwan_vault import (
     HistoryFull,
     ItemBusy,
     ItemGone,
+    SuggestionAnswered,
     ancestors,
 )
 from okwan_vault.authz import MAX_DEPTH
@@ -171,6 +172,12 @@ class DecisionIn(BaseModel):
     seen: str | None = Field(None, max_length=200,
                              description="The item's `terms` as the list showed them to the person deciding: "
                                          "the decision is refused (409) if the item has changed since")
+    suggestion: str | None = Field(
+        None, pattern=r"^sug_[0-9a-f]{16}$",
+        description="The suggestion this decision is made from, if any (POST …/suggestions). The decision is "
+                    "the person's: it records whether they kept the suggested words (`as_suggested`: "
+                    "explained, with the suggested note) or changed them (`edited`). Refused once the "
+                    "suggestion is answered, or when the item has changed since it was made")
 
 
 def _on(text: str) -> dict[str, Any] | None:
@@ -192,6 +199,7 @@ def decision_dict(d: Decision, item: dict | None = None) -> dict[str, Any]:
         "owner": d.owner, "note": d.note,
         "by": {"tenant_id": d.actor_tenant_id, "name": d.actor_name, "credential": d.credential},
         "at": d.created_at.isoformat(), "run_id": d.run_id, "on": _on(d.terms),
+        "suggestion": {"id": d.suggestion_id, "as": d.from_suggestion} if d.suggestion_id else None,
     }
     if item is not None and d.closed:
         out["changed"] = not holds(d, item)
@@ -201,14 +209,37 @@ def decision_dict(d: Decision, item: dict | None = None) -> dict[str, Any]:
 
 
 def _request_hash(kind: str, check: str, key: str, status: str, owner: str | None, note: str | None,
-                  actor_id: str, credential: str) -> str:
+                  actor_id: str, credential: str, suggestion: str | None = None) -> str:
     """What a retry must repeat to be answered with the decision already
-    made: the same decision, by the same account and credential."""
-    text = json.dumps([kind, check, key, status, owner, note, actor_id, credential],
-                      ensure_ascii=False, separators=(",", ":"))
+    made: the same decision, from the same suggestion, by the same account
+    and credential."""
+    parts: list[Any] = [kind, check, key, status, owner, note, actor_id, credential]
+    if suggestion is not None:
+        parts.append(suggestion)
+    text = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
+
+
+async def _from_suggestion(store, tenant_id: str, kind: str, check: str, key: str, item: dict,
+                           status: str, note: str | None, suggestion_id: str) -> str:
+    """How a decision is made from a suggestion: `as_suggested` when it
+    explains the item in the suggested words, else `edited`. Refused for
+    another item's suggestion, one already answered, or one made on terms
+    the item no longer has."""
+    if status == "open":
+        raise HTTPException(422, "a suggestion is decided from to explain, resolve or assign an item, "
+                                 "not to open one again")
+    s = await store.get_suggestion(tenant_id, suggestion_id)
+    if s is None or (s.kind, s.name, s.key) != (kind, check, key):
+        raise HTTPException(404, "no such suggestion on this item")
+    if s.answer is not None:
+        raise HTTPException(409, "this suggestion was already answered: decided from, or turned down")
+    if s.terms != terms(item):
+        raise HTTPException(409, "this item has changed since the suggestion was made (what it puts at stake, "
+                                 "or its day): ask for a new one")
+    return "as_suggested" if status == s.status == "explained" and note == s.note else "edited"
 
 
 async def _root(store, tenant_id: str) -> str:
@@ -398,7 +429,7 @@ def build_router() -> APIRouter:
         if body.status != "assigned" and note is None:
             raise HTTPException(422, "say why (note): an item is explained, resolved or opened again with a reason")
         credential = access.credential_now()
-        digest = _request_hash(kind, check, key, body.status, owner, note, actor.id, credential)
+        digest = _request_hash(kind, check, key, body.status, owner, note, actor.id, credential, body.suggestion)
         done = await store.decision_by_idempotency(tenant_id, idempotency_key)
         if done is not None:
             if done.request_hash != digest:
@@ -418,6 +449,10 @@ def build_router() -> APIRouter:
                                      "result (two terminals that each closed batch 001 that day, say). They are told "
                                      "apart only by the order the result lists them in, which can change from one run "
                                      "to the next, so a decision could not be pinned to this one")
+        source = None
+        if body.suggestion is not None:
+            source = await _from_suggestion(store, tenant_id, kind, check, key, item, body.status, note,
+                                            body.suggestion)
         if body.status == "assigned" and note is None:
             now_on = (await store.current_decisions([(tenant_id, key)])).get((tenant_id, kind, check, key))
             if holds(now_on, item):
@@ -431,7 +466,8 @@ def build_router() -> APIRouter:
                 tenant_id, kind=kind, name=check, key=key, status=body.status, owner=owner, note=note,
                 actor_tenant_id=actor.id, actor_name=actor.name, credential=credential,
                 run_id=g.id, reads_files=g.reads_files or check in file_check_names(),
-                idempotency_key=idempotency_key, request_hash=digest, at=now(), terms=terms(item))
+                idempotency_key=idempotency_key, request_hash=digest, at=now(), terms=terms(item),
+                suggestion_id=body.suggestion, from_suggestion=source)
         except DecisionConflict:
             raise HTTPException(409, "this Idempotency-Key was used for a different decision") from None
         except ItemGone:
@@ -443,6 +479,8 @@ def build_router() -> APIRouter:
         except ItemBusy:
             raise HTTPException(409, "another decision on this item is being recorded; send this one again",
                                 headers={"Retry-After": "1"}) from None
+        except SuggestionAnswered:
+            raise HTTPException(409, "this suggestion was already answered: decided from, or turned down") from None
         if replayed:
             response.status_code = 200
         return {"decision": decision_dict(made), "replayed": replayed}

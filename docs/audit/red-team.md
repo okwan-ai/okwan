@@ -29,6 +29,7 @@ that matters comes from somewhere else. Three layers do that
 | The operator console | `apps/api/okwan_api/ops.py` |
 | Okwan's own billing (who may pay or manage it, the signed webhook that sets the plan, the record of what a customer was shown, disputes and the evidence sent to a bank) | `apps/api/okwan_api/billing.py`, `apps/api/okwan_api/policy.py`, `apps/api/okwan_api/disputes.py` |
 | The daily check and its mail (Okwan reads rails and sends mail unasked) | `apps/api/okwan_api/schedule.py`, `apps/api/okwan_api/notify.py`, `apps/dashboard/app/unsubscribe/` |
+| A person's decisions on open items, and the model's suggestions beside them (what the model is shown, what it may say, and that only a person's decision closes an item) | `apps/api/okwan_api/exceptions.py` (`decide`), `apps/api/okwan_api/suggestions.py`, `packages/recon/okwan_recon/exceptions.py`, `apps/dashboard/app/_components/decide-item.tsx` |
 
 ## How to run it (owner, about ten minutes)
 
@@ -80,6 +81,10 @@ Try to:
 7. Make the server loop, page forever or allocate without bound with a
    small request.
 8. Make money come out wrong: a float, a rounding, a currency's decimals.
+9. Make a model's suggestion on an open item close it, count as a decision,
+   or be recorded as anything but a person's own; make it show a record
+   Okwan did not store; or steer it, through text a merchant controls, into
+   saying what the records do not show.
 
 For each finding give: severity (critical, high, medium, low), the file
 and line of the cause, the exact requests or code that exploit it, what

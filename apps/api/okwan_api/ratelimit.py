@@ -67,6 +67,12 @@ EXCEPTIONS_TENANT = Rule("exceptions:tenant", 60, 60)
 #: recorded, so requests that record nothing never spend another's share.
 DECIDE_CALLER = Rule("decide:caller", 300, 3600)
 DECIDE_TENANT = Rule("decide:tenant", 1000, 3600)
+#: Suggestions on open items: each one asked for is a model call that costs
+#: money. A caller may ask 30 times an hour; an account and its merchants
+#: together get 300 model calls a day, charged only for a call about to be
+#: made, so a suggestion answered from one already made spends nothing.
+SUGGEST_CALLER = Rule("suggest:caller", 30, 3600)
+SUGGEST_TENANT = Rule("suggest:tenant", 300, 86400)
 #: The sample check holds nothing of anyone's and costs one run an hour;
 #: the limit only keeps one address from hammering a route that needs no key.
 SAMPLE_IP = Rule("sample:ip", 120, 60)

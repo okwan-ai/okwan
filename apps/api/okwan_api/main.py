@@ -56,6 +56,7 @@ from okwan_api.auth import get_store as _get_store
 from okwan_api.sample import build_router as build_sample_router
 from okwan_api.signup import build_router as build_signup_router
 from okwan_api.ops import build_router as build_ops_router
+from okwan_api.suggestions import build_router as build_suggestions_router
 from okwan_api.support import build_router as build_support_router
 from okwan_api.auth import (
     check_quota, close_store, load_credentials, meter, open_store,
@@ -241,6 +242,7 @@ app.include_router(build_router())
 app.include_router(build_query_router())
 app.include_router(build_admin_router())
 app.include_router(build_exceptions_router())
+app.include_router(build_suggestions_router())
 app.include_router(build_signup_router())
 app.include_router(build_support_router())
 app.include_router(build_ops_router())
