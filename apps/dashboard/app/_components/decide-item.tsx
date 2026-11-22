@@ -137,7 +137,7 @@ function Suggest({ line, using, onUse, onDrop }: {
               : "Not sure what this is? Okwan can read this item's records and suggest what it is. A suggestion closes nothing: you decide."}
           </p>
           {asked.state === "idle" && asked.said && <p role="alert" className="text-sm font-medium text-danger">{asked.said}</p>}
-          <div><Button type="button" onClick={ask} data-ask-suggestion>{asked.state === "declined" ? "Ask again" : "Ask Okwan"}</Button></div>
+          <div><Button type="button" onClick={ask} data-ask-suggestion>{asked.state === "declined" ? "Ask again" : "Ask for a suggestion"}</Button></div>
         </div>
       )}
     </section>
