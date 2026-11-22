@@ -433,6 +433,18 @@ class PostgresStore:
                 ids, since,
             )
 
+    async def surface_usage_since(self, root_id: str, since, surface: str) -> int:
+        """Requests on one surface across a tenant and everything it
+        provisioned, read as `usage_since` is."""
+        async with self.pool.acquire() as con, con.transaction():
+            ids = await _subtree(con, root_id)
+            await _enter_scope(con, ids)
+            return await con.fetchval(
+                "SELECT COALESCE(SUM(requests), 0) FROM usage "
+                "WHERE tenant_id = ANY($1::text[]) AND hour >= $2 AND surface = $3",
+                ids, since, surface,
+            )
+
     async def usage_buckets(
         self, root_id: str, since
     ) -> list[tuple[str, datetime, str, int]]:
@@ -1587,6 +1599,22 @@ class PostgresStore:
                 await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
                 await con.execute(_DROP_FILE_SUGGESTIONS, tenant_id, list(self.file_checks()))
         return gone is not None
+
+    async def drop_expired_imports(self, tenant_id: str, now: datetime | None = None) -> int:
+        """Delete one tenant's expired files, their rows, and the stored runs,
+        decisions and suggestions that may quote them, in one transaction,
+        as an upload does first: what reads a stored result for a third party
+        calls this before it reads, rather than wait for the sweep."""
+        async with self._scoped(tenant_id) as con:
+            await con.execute(_RUNS_FIRST)
+            expired = await con.fetch(
+                "DELETE FROM import_files WHERE tenant_id = $1 AND expires_at <= $2 RETURNING id",
+                tenant_id, now or datetime.now(UTC))
+            if expired:
+                await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_SUGGESTIONS, tenant_id, list(self.file_checks()))
+        return len(expired)
 
     async def imports_live(
         self, tenant_id: str, file_ids: Collection[str], now: datetime | None = None

@@ -223,11 +223,12 @@ def _request_hash(kind: str, check: str, key: str, status: str, owner: str | Non
 
 
 async def _from_suggestion(store, tenant_id: str, kind: str, check: str, key: str, item: dict,
-                           status: str, note: str | None, suggestion_id: str) -> str:
+                           status: str, note: str | None, suggestion_id: str, run_id: str) -> str:
     """How a decision is made from a suggestion: `as_suggested` when it
     explains the item in the suggested words, else `edited`. Refused for
-    another item's suggestion, one already answered, or one made on terms
-    the item no longer has."""
+    another item's suggestion, one already answered, or one made from
+    another result than the check's newest (`run_id`): the records it rests
+    on are no longer the result, even where the item's terms came back."""
     if status == "open":
         raise HTTPException(422, "a suggestion is decided from to explain, resolve or assign an item, "
                                  "not to open one again")
@@ -236,9 +237,9 @@ async def _from_suggestion(store, tenant_id: str, kind: str, check: str, key: st
         raise HTTPException(404, "no such suggestion on this item")
     if s.answer is not None:
         raise HTTPException(409, "this suggestion was already answered: decided from, or turned down")
-    if s.terms != terms(item):
-        raise HTTPException(409, "this item has changed since the suggestion was made (what it puts at stake, "
-                                 "or its day): ask for a new one")
+    if s.run_id != run_id or s.terms != terms(item):
+        raise HTTPException(409, "this item's check has a newer result than the one the suggestion was made "
+                                 "from, so the records it rests on may have changed: ask for a new one")
     return "as_suggested" if status == s.status == "explained" and note == s.note else "edited"
 
 
@@ -452,7 +453,7 @@ def build_router() -> APIRouter:
         source = None
         if body.suggestion is not None:
             source = await _from_suggestion(store, tenant_id, kind, check, key, item, body.status, note,
-                                            body.suggestion)
+                                            body.suggestion, g.id)
         if body.status == "assigned" and note is None:
             now_on = (await store.current_decisions([(tenant_id, key)])).get((tenant_id, kind, check, key))
             if holds(now_on, item):

@@ -32,7 +32,13 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
-MAX_KEYS = 100_000
+#: Counters one rule keeps. A flood of fresh subjects on one rule (a new
+#: address on every request) makes room among that rule's own counters,
+#: the expired ones first and then its oldest, and never touches another
+#: rule's: a burst of addresses at the unsubscribe link cannot give an
+#: account back an allowance it spent somewhere else. Each rule's counters
+#: are bounded, so the limiter's memory is bounded by the rules it has.
+MAX_KEYS = 20_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,11 +74,12 @@ EXCEPTIONS_TENANT = Rule("exceptions:tenant", 60, 60)
 DECIDE_CALLER = Rule("decide:caller", 300, 3600)
 DECIDE_TENANT = Rule("decide:tenant", 1000, 3600)
 #: Suggestions on open items: each one asked for is a model call that costs
-#: money. A caller may ask 30 times an hour; an account and its merchants
-#: together get 300 model calls a day, charged only for a call about to be
-#: made, so a suggestion answered from one already made spends nothing.
+#: money. A caller may ask 30 times an hour, and make at most 20 model calls
+#: on one item a day, kept or not. What an account and each of its merchants
+#: may spend in a day is counted in the database from the calls metered
+#: (okwan_api.suggestions), so neither a restart nor a flood gives it back.
 SUGGEST_CALLER = Rule("suggest:caller", 30, 3600)
-SUGGEST_TENANT = Rule("suggest:tenant", 300, 86400)
+SUGGEST_ITEM = Rule("suggest:item", 20, 86400)
 #: The sample check holds nothing of anyone's and costs one run an hour;
 #: the limit only keeps one address from hammering a route that needs no key.
 SAMPLE_IP = Rule("sample:ip", 120, 60)
@@ -93,6 +100,8 @@ class Limiter:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._hits: dict[tuple[str, str], tuple[float, int]] = {}
+        #: Counters held, by rule.
+        self._held: dict[str, int] = {}
 
     def take(self, *checks: tuple[Rule, str], cost: int = 1) -> float | None:
         """Count `cost` attempts against every check, or none of them.
@@ -117,31 +126,31 @@ class Limiter:
         if wait:
             return wait
         for key, start, n in current:
+            if key not in self._hits:
+                self._held[key[0]] = self._held.get(key[0], 0) + 1
             self._hits[key] = (start, n + cost)
-        if len(self._hits) > MAX_KEYS:
-            self._sweep(now)
+        for rule, _ in checks:
+            if self._held.get(rule.name, 0) > MAX_KEYS:
+                self._make_room(rule, now)
         return None
 
-    def _sweep(self, now: float) -> None:
-        """Bound memory under a flood of distinct keys."""
-        windows = {r.name: r.window for r in _RULES}
-        self._hits = {
-            k: v for k, v in self._hits.items()
-            if now - v[0] < windows.get(k[0], 0)
-        }
-        if len(self._hits) > MAX_KEYS:
-            oldest = sorted(self._hits.items(), key=lambda kv: kv[1][0])
-            self._hits = dict(oldest[len(oldest) // 2:])
+    def _make_room(self, rule: Rule, now: float) -> None:
+        """Bound one rule's counters under a flood of fresh subjects: its
+        expired counters go, and, while it still holds more than MAX_KEYS,
+        its oldest, down to half. No other rule's counter is touched."""
+        mine = [(k, v) for k, v in self._hits.items() if k[0] == rule.name]
+        live = [(k, v) for k, v in mine if now - v[0] < rule.window]
+        if len(live) > MAX_KEYS:
+            live = sorted(live, key=lambda kv: kv[1][0])[-(MAX_KEYS // 2):]
+        for k, _ in mine:
+            del self._hits[k]
+        self._hits.update(live)
+        self._held[rule.name] = len(live)
 
     def reset(self) -> None:
         self._hits.clear()
+        self._held.clear()
 
-
-#: Every rule above, found rather than listed: the sweep keeps a counter
-#: only for a rule it knows, so a rule left off a hand-kept list (the
-#: operator's unlock, the support assistant, the open items) had its
-#: counters dropped whenever a flood of keys made the limiter sweep.
-_RULES = tuple(v for v in list(globals().values()) if isinstance(v, Rule))
 
 limiter = Limiter()
 

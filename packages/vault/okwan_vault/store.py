@@ -93,6 +93,8 @@ class Store(Protocol):
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]: ...
     async def record_request(self, tenant_id: str, surface: str) -> None: ...
     async def usage_since(self, root_id: str, since) -> int: ...
+    async def surface_usage_since(self, root_id: str, since, surface: str) -> int: ...
+    async def drop_expired_imports(self, tenant_id: str, now: datetime | None = None) -> int: ...
     async def usage_buckets(
         self, root_id: str, since
     ) -> list[tuple[str, datetime, str, int]]: ...
@@ -701,6 +703,11 @@ class MemoryStore:
             n for (tid, hour, _), n in self._usage.items()
             if tid in subtree and hour >= since
         )
+
+    async def surface_usage_since(self, root_id: str, since, surface: str) -> int:
+        subtree = self._subtree(root_id)
+        return sum(n for (tid, hour, s), n in self._usage.items()
+                   if tid in subtree and hour >= since and s == surface)
 
     async def usage_buckets(
         self, root_id: str, since
@@ -1340,6 +1347,17 @@ class MemoryStore:
 
     async def delete_layout(self, tenant_id: str, name: str) -> bool:
         return self._layouts.pop((tenant_id, name), None) is not None
+
+    async def drop_expired_imports(self, tenant_id: str, now: datetime | None = None) -> int:
+        """As PostgresStore: one tenant's expired files, and what quotes them."""
+        now = now or datetime.now(UTC)
+        expired = [f.id for f in self._imports.values() if f.tenant_id == tenant_id and f.expires_at <= now]
+        for file_id in expired:
+            del self._imports[file_id]
+            self._import_rows.pop(file_id, None)
+        if expired:
+            self._drop_file_runs({tenant_id})
+        return len(expired)
 
     async def sweep_imports(self, now: datetime | None = None) -> int:
         """Delete every tenant's expired files, their rows, and the stored

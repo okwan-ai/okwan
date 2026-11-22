@@ -431,7 +431,7 @@ async def test_an_item_changed_since_the_suggestion_cannot_be_decided_from_it(ap
     await _store_run(api.store, api.shop.id, changed, at=T0 + timedelta(hours=1), previous=run.rows)
     key = _key("#1001", api=api)
     d = await _decide(api, key, "explained", note=s["note"], suggestion=s["id"])
-    assert d.status_code == 409 and "changed since the suggestion" in d.json()["detail"]
+    assert d.status_code == 409 and "newer result" in d.json()["detail"]
     [kept] = (await api.c.get(BASE.format(t=api.shop.id, k=key) + "/suggestions")).json()["data"]
     assert kept["changed"] is True and kept["answer"] is None
 
@@ -535,8 +535,7 @@ async def test_a_callers_suggestions_are_limited_an_hour(api, model, monkeypatch
 
 
 async def test_the_accounts_daily_allowance_is_spent_only_on_a_model_call(api, model, monkeypatch):
-    from okwan_api import ratelimit
-    monkeypatch.setattr(suggestions, "SUGGEST_TENANT", ratelimit.Rule("suggest:tenant:test", 1, 86400))
+    monkeypatch.setattr(suggestions, "DAILY_ACCOUNT", 1)
     m = model(answer(), answer())
     assert (await _suggest(api)).status_code == 201
     assert (await _suggest(api)).status_code == 200, "a reused suggestion spends nothing"

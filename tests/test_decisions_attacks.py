@@ -391,11 +391,23 @@ async def test_the_durable_store_knows_which_checks_read_files(monkeypatch):
         await auth.close_store()
 
 
-def test_the_limiters_sweep_knows_every_rule():
+def test_the_limiters_sweep_knows_every_rule(monkeypatch):
+    """A rule's counters are kept through a flood of fresh keys, whichever
+    rule it is: the sweep once kept only the rules on a hand-kept list. A
+    rule's counters are now touched only by its own room-making."""
     from okwan_api import ratelimit
-    every = {v.name for v in vars(ratelimit).values() if isinstance(v, ratelimit.Rule)}
-    assert {r.name for r in ratelimit._RULES} == every
-    assert {"decide:tenant", "exceptions:tenant", "ops:unlock", "ops:unlock:ip"} <= every
+    monkeypatch.setattr(ratelimit, "MAX_KEYS", 50)
+    lim = ratelimit.Limiter(lambda: 1000.0)
+    every = [v for v in vars(ratelimit).values() if isinstance(v, ratelimit.Rule)]
+    assert {"decide:tenant", "exceptions:tenant", "ops:unlock", "ops:unlock:ip", "suggest:item"} <= {r.name for r in every}
+    for rule in every:
+        assert lim.take((rule, "spent"), cost=rule.limit) is None
+    flood = next(r for r in every if r.name == "unsubscribe:ip")
+    for i in range(500):
+        lim.take((flood, f"2001:db8::{i:x}"))
+    for rule in every:
+        if rule is not flood:
+            assert lim.take((rule, "spent")) is not None, f"{rule.name} was handed back its allowance"
 
 
 # ── the second pass ─────────────────────────────────────────────────

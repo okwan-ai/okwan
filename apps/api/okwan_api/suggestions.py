@@ -31,9 +31,11 @@ What keeps it a suggestion:
   refuses the answer, as it would a person's note.
 * **It is bounded.** A suggestion asked for again, on the same result and
   terms and not yet answered, is answered with the one already made. Each
-  caller may ask SUGGEST_CALLER an hour, an account and its merchants
-  SUGGEST_TENANT model calls a day, each account ITEM_SUGGESTIONS_MAX on
-  one item.
+  caller may ask SUGGEST_CALLER an hour; each model call is a request on
+  the account's plan, metered, and within the day's allowance of the
+  account (DAILY_ACCOUNT) and of the merchant (DAILY_MERCHANT), counted in
+  the database; one account makes at most SUGGEST_ITEM calls on one item
+  a day and keeps ITEM_SUGGESTIONS_MAX.
 
 A suggestion takes a dashboard session or an admin key, as deciding does: a
 read key is refused. It quotes the records of its check, so on a check that
@@ -49,7 +51,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import anthropic
@@ -66,19 +68,20 @@ from okwan_vault import (
     Suggestion,
     SuggestionAnswered,
     SuggestionsFull,
+    ancestors,
 )
 from okwan_vault.authz import MAX_DEPTH
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import access, support
 from .admin import _guard
-from .auth import admin_actor, get_store
-from .exceptions import NOTE_MAX, _clean, _on, _root, _titles, now
+from .auth import admin_actor, check_quota, get_store, meter
+from .exceptions import NOTE_MAX, _clean, _on, _titles, now
 from .ratelimit import (
     DECIDE_CALLER,
     EXCEPTIONS_TENANT,
     SUGGEST_CALLER,
-    SUGGEST_TENANT,
+    SUGGEST_ITEM,
     enforce,
 )
 from .runs import file_check_names
@@ -102,6 +105,16 @@ WHY_MAX = 300
 #: Suggestions one item's list answers with: all of them, since each account
 #: that may ask (the item's own and those above it) asks ITEM_SUGGESTIONS_MAX.
 SHOWN = ITEM_SUGGESTIONS_MAX * (MAX_DEPTH + 1)
+#: How a model call is metered: a request on this surface, against the
+#: plan, and the count the daily allowances below are read from.
+SURFACE = "rest:suggest"
+#: Model calls in the last day, counted from what was metered: an account
+#: and everything under it, and one merchant (a child of the account) and
+#: everything under that, so no merchant can spend its platform's day.
+DAILY_ACCOUNT, DAILY_MERCHANT = 300, 100
+#: What the model is shown, as text: a merchant's "<", ">" or "&" written as
+#: JSON escapes, so nothing in the data can close or open the block it is in.
+_DATA_ESCAPES = str.maketrans({c: f"{chr(92)}u{ord(c):04x}" for c in "<>&"})
 _SUGGESTION_ID = re.compile(r"sug_[0-9a-f]{16}")
 
 SYSTEM = """You help a person at a business settle one open item from a reconciliation check in \
@@ -126,7 +139,8 @@ on are other findings of the same result, closest to F1 first, each with its dif
 already worked out. D refs are earlier decisions people made on this item; P refs are how people \
 closed other items of the same check. Cite only refs you were given, and say in each `why`, in \
 one sentence, what that record shows. A decision or a precedent is what a person said, not proof: \
-cite it as that.
+cite it as that. One marked from_okwan_suggestion began as an earlier suggestion of yours, and is \
+no more independent of you than this one.
 
 The note: plain text, no markdown, one short paragraph of at most 600 characters, in the words a \
 person would record with the decision. Use amounts as the records format them (fields named \
@@ -170,6 +184,9 @@ def _short(value: Any) -> Any:
     longer than LIST_MAX: a reference from a file is a merchant's text, of
     any length."""
     if isinstance(value, str):
+        # Secrets out first, whole: a cut could take the end a pattern
+        # needs (a private key's END line, the "@" after a password).
+        value = support.redact(value)[0]
         return value if len(value) <= TEXT_MAX else value[:TEXT_MAX] + "…"
     if isinstance(value, dict):
         return {str(k)[:TEXT_MAX]: _short(v) for k, v in list(value.items())[:LIST_MAX * 2]}
@@ -208,7 +225,8 @@ def _record(item: dict, is_item: bool) -> dict[str, Any]:
 def _said(d: Decision, *, other: bool) -> dict[str, Any]:
     """A decision as a suggestion keeps it."""
     out = {"decision_id": d.id, "status": d.status, "owner": d.owner, "note": d.note,
-           "by": d.actor_name, "at": d.created_at.isoformat(), "on": _on(d.terms)}
+           "by": d.actor_name, "at": d.created_at.isoformat(), "on": _on(d.terms),
+           "from_suggestion": d.from_suggestion}
     return {**out, "key": d.key} if other else out
 
 
@@ -276,6 +294,12 @@ def _findings(tenant_id: str, name: str, kind: str, rows: list) -> tuple[dict, d
     return by_key, items_by_key(tenant_id, name, kind, rows)
 
 
+def _okwans(d: Decision) -> dict[str, Any]:
+    """Said of a decision made from one of Okwan's suggestions: its words
+    began as Okwan's, kept or changed by the person."""
+    return {"from_okwan_suggestion": d.from_suggestion} if d.from_suggestion else {}
+
+
 async def brief(store, tenant_id: str, kind: str, name: str, key: str, run) -> tuple[dict, dict]:
     """What the model is shown about one item, and every record it may
     cite, by ref, as a suggestion keeps it."""
@@ -286,8 +310,11 @@ async def brief(store, tenant_id: str, kind: str, name: str, key: str, run) -> t
                     key=lambda o: _closeness(item, o))[:RELATED_MAX]
     current = await store.current_decisions([(tenant_id, o["key"]) for o in others])
     history = await store.decision_history(tenant_id, kind, name, key, HISTORY_MAX)
-    precedents = [d for d in await store.closing_decisions(tenant_id, kind, name, PRECEDENTS_MAX + 1)
-                  if d.key != key][:PRECEDENTS_MAX]
+    # A decision made in Okwan's own suggested words is not a person's
+    # practice: it is not shown as a precedent, so the model's words never
+    # come back to it as what people do.
+    precedents = [d for d in await store.closing_decisions(tenant_id, kind, name, 2 * PRECEDENTS_MAX + 1)
+                  if d.key != key and d.from_suggestion != "as_suggested"][:PRECEDENTS_MAX]
 
     records: dict[str, dict] = {"F1": _record(item, True)}
     shown_others = []
@@ -297,20 +324,21 @@ async def brief(store, tenant_id: str, kind: str, name: str, key: str, run) -> t
         entry = {"ref": ref, **_shown(o, by_key.get(o["key"], {})), "vs_F1": _versus(item, o)}
         d = current.get((tenant_id, kind, name, o["key"]))
         if d is not None:
-            entry["decided"] = {"status": d.status, "note": _short(d.note)}
+            entry["decided"] = {"status": d.status, "note": _short(d.note),
+                                **_okwans(d)}
         shown_others.append(entry)
     shown_history = []
     for n, d in enumerate(history, start=1):
         records[f"D{n}"] = _said(d, other=False)
         shown_history.append({"ref": f"D{n}", "status": d.status, "owner": _short(d.owner),
-                              "note": _short(d.note), "at": d.created_at.date().isoformat()})
+                              "note": _short(d.note), "at": d.created_at.date().isoformat(), **_okwans(d)})
     shown_precedents = []
     for n, d in enumerate(precedents, start=1):
         records[f"P{n}"] = _said(d, other=True)
         on = _on(d.terms) or {}
         shown_precedents.append({"ref": f"P{n}", "status": d.status, "note": _short(d.note),
                                  "at_stake": _money(on.get("amount_minor"), on.get("currency")),
-                                 "dated_on": on.get("dated_on")})
+                                 "dated_on": on.get("dated_on"), **_okwans(d)})
     shown = {
         "check": _check(kind, name, run.summary),
         "item": {"ref": "F1", **_shown(item, by_key.get(key, {}))},
@@ -371,10 +399,19 @@ def _block(b: Any) -> dict[str, Any]:
     return {"type": getattr(b, "type", None), "text": getattr(b, "text", None)}
 
 
+def data_text(shown: dict) -> str:
+    """What the model is shown, as the text between the data tags: secrets
+    removed, and every "<", ">" and "&" a JSON escape, which reads back as
+    the same JSON. A reference holding "</item_records>" stays inside the
+    block, as the text of a reference."""
+    text, _ = support.redact(json.dumps(shown, ensure_ascii=False, default=str))
+    return text.translate(_DATA_ESCAPES)
+
+
 async def ask(shown: dict) -> tuple[Any, str] | None:
     """One model call over what the model is shown: its answer, parsed, and
     the model that gave it; None when it declined or stopped short."""
-    text, _ = support.redact(json.dumps(shown, ensure_ascii=False, default=str))
+    text = data_text(shown)
     response = await support.get_client().beta.messages.create(
         model=MODEL, max_tokens=MAX_TOKENS, system=SYSTEM,
         messages=[{"role": "user", "content": [{"type": "text", "text": (
@@ -394,10 +431,11 @@ async def ask(shown: dict) -> tuple[Any, str] | None:
 
 # ── what the API answers ────────────────────────────────────────────
 
-def suggestion_dict(s: Suggestion, item: dict | None = None) -> dict[str, Any]:
-    """A suggestion as the API answers it. `changed`: the item has other
-    terms now, or is no longer a finding of the check's newest result, so
-    no decision can be made from it."""
+def suggestion_dict(s: Suggestion, item: dict | None = None, run_id: str | None = None) -> dict[str, Any]:
+    """A suggestion as the API answers it. `changed`: the check has a newer
+    result than the one it was made from (`run_id`, the newest now), or the
+    item is no longer a finding of it, or has other terms, so no decision
+    can be made from it: the records it rests on are no longer the result."""
     out: dict[str, Any] = {
         "id": s.id, "status": s.status, "note": s.note, "evidence": s.evidence,
         "confidence": s.confidence, "model": s.model, "run_id": s.run_id, "on": _on(s.terms),
@@ -410,8 +448,30 @@ def suggestion_dict(s: Suggestion, item: dict | None = None) -> dict[str, Any]:
             "at": s.answered_at.isoformat() if s.answered_at else None},
     }
     if item is not None or s.answer is None:
-        out["changed"] = item is None or terms(item) != s.terms
+        out["changed"] = item is None or terms(item) != s.terms or run_id != s.run_id
     return out
+
+
+async def _branch(store, tenant_id: str) -> tuple[str, str]:
+    """The account at the top of a tenant's tree, and the merchant under it
+    the tenant belongs to (the account itself for the account's own)."""
+    chain = [tenant_id, *await ancestors(store, tenant_id)]
+    return chain[-1], chain[-2] if len(chain) > 1 else chain[-1]
+
+
+async def _within_the_day(store, tenant_id: str) -> None:
+    """Refuse (429) a model call past the day's allowance of the account the
+    item is under, or of its merchant, counted from the calls metered in the
+    database: no restart, no second instance and no flood of the in-memory
+    limiter gives a spent day back."""
+    root, branch = await _branch(store, tenant_id)
+    since = now() - timedelta(days=1)
+    if await store.surface_usage_since(root, since, SURFACE) >= DAILY_ACCOUNT:
+        raise HTTPException(429, f"this account and its merchants asked for {DAILY_ACCOUNT} suggestions in the "
+                                 "last day; ask again later", headers={"Retry-After": "3600"})
+    if branch != root and await store.surface_usage_since(branch, since, SURFACE) >= DAILY_MERCHANT:
+        raise HTTPException(429, f"{DAILY_MERCHANT} suggestions were asked for on this merchant's items in the "
+                                 "last day; ask again later", headers={"Retry-After": "3600"})
 
 
 class RejectionIn(BaseModel):
@@ -426,7 +486,12 @@ def _declared(kind: str, check: str) -> None:
 
 
 async def _item(store, tenant_id: str, kind: str, check: str, key: str):
-    """The check's newest good result and the item in it, or None."""
+    """The check's newest good result and the item in it, or None. A check
+    that reads imported files is read only after the tenant's expired files
+    are gone, with what quotes them: a suggestion sends what it reads to a
+    third party, so it never reads a file past its keeping."""
+    if check in file_check_names():
+        await store.drop_expired_imports(tenant_id, now())
     g = (await store.newest_runs([tenant_id], kind, check, ok_only=True, with_rows=True)).get(tenant_id)
     items = await asyncio.to_thread(items_by_key, tenant_id, check, kind, g.rows if g else None)
     return g, items.get(key)
@@ -466,16 +531,24 @@ def build_router() -> APIRouter:
         made = await store.open_suggestion(tenant_id, kind, check, key, terms(item), g.id)
         if made is not None:
             response.status_code = 200
-            return {"suggestion": suggestion_dict(made, item), "reused": True}
+            return {"suggestion": suggestion_dict(made, item, g.id), "reused": True}
         asked = [s for s in await store.suggestions_of(tenant_id, kind, check, key, SHOWN)
                  if s.actor_tenant_id == actor.id]
         if len(asked) >= ITEM_SUGGESTIONS_MAX:
             raise HTTPException(409, f"this account already asked for {ITEM_SUGGESTIONS_MAX} suggestions on "
                                      "this item")
+        # A model call is a request on the plan (402 past it), within the
+        # day's allowance of the account and of the merchant, and at most
+        # SUGGEST_ITEM on one item from one account, kept or not. It is
+        # metered before it is made, so a call that fails still counts.
+        target = await store.get_tenant(tenant_id)
+        if target is None:
+            raise HTTPException(404, f"no such tenant: {tenant_id}")
+        await check_quota(target)
+        await _within_the_day(store, tenant_id)
+        enforce(request, (SUGGEST_ITEM, f"{actor.id}>{tenant_id}:{kind}:{check}:{key}"))
         shown, records = await brief(store, tenant_id, kind, check, key, g)
-        # The account's daily allowance, its merchants together, is spent
-        # only on a model call about to be made.
-        enforce(request, (SUGGEST_TENANT, await _root(store, tenant_id)))
+        await meter(target, SURFACE, f"suggest {kind}/{check}")
         try:
             answered = await ask(shown)
         except anthropic.RateLimitError:
@@ -511,7 +584,7 @@ def build_router() -> APIRouter:
         except SuggestionsFull:
             raise HTTPException(409, f"this account already asked for {ITEM_SUGGESTIONS_MAX} suggestions on "
                                      "this item") from None
-        return {"suggestion": suggestion_dict(made, item), "reused": False}
+        return {"suggestion": suggestion_dict(made, item, g.id), "reused": False}
 
     @router.get(base)
     async def suggestions(
@@ -524,9 +597,9 @@ def build_router() -> APIRouter:
         enforce(request, (EXCEPTIONS_TENANT, f"{actor.id}>{tenant_id}"))
         _declared(kind, check)
         store = get_store()
+        g, item = await _item(store, tenant_id, kind, check, key)
         found = await store.suggestions_of(tenant_id, kind, check, key, SHOWN)
-        item = (await _item(store, tenant_id, kind, check, key))[1] if found else None
-        return {"data": [suggestion_dict(s, item) for s in found]}
+        return {"data": [suggestion_dict(s, item, g.id if g else None) for s in found]}
 
     @router.post(base + "/{suggestion_id}/rejection")
     async def reject(
