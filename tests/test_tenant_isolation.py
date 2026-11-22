@@ -315,6 +315,15 @@ ADMIN_BY_TENANT: dict[tuple[str, str], tuple[str, dict | None]] = {
          {"status": "explained", "note": "INTRUDER closed it"}),
     ("GET", "/v1/tenants/{tenant_id}/exceptions/{kind}/{check}/{key}/decisions"):
         ("/v1/tenants/{t}/exceptions/across/rails/{item}/decisions", None),
+    # A suggestion on the victim's item (a model call, on the victim's
+    # allowance), its suggestions, and turning down its own suggestion by id.
+    ("POST", "/v1/tenants/{tenant_id}/exceptions/{kind}/{check}/{key}/suggestions"):
+        ("/v1/tenants/{t}/exceptions/across/rails/{item}/suggestions", None),
+    ("GET", "/v1/tenants/{tenant_id}/exceptions/{kind}/{check}/{key}/suggestions"):
+        ("/v1/tenants/{t}/exceptions/across/rails/{item}/suggestions", None),
+    ("POST", "/v1/tenants/{tenant_id}/exceptions/{kind}/{check}/{key}/suggestions/{suggestion_id}/rejection"):
+        ("/v1/tenants/{t}/exceptions/across/rails/{item}/suggestions/{sug}/rejection",
+         {"note": "INTRUDER turned it down"}),
     ("POST", "/v1/tenants/{tenant_id}/reconciliations/across/{name}"):
         ("/v1/tenants/{t}/reconciliations/across/rails", None),
     ("POST", "/v1/tenants/{tenant_id}/reconciliations/{name}"):
@@ -429,6 +438,8 @@ async def _victim_state(world, victim) -> dict[str, Any]:
         "layouts": await store.list_layouts(victim.id),
         "decisions": sorted(d.id for d, _ in await store.decided_on_runs(
             [victim.id], [r.id for r in await store.list_runs(victim.id, limit=50)])),
+        "suggestions": [(x.id, x.answer) for x in await store.suggestions_of(
+            victim.id, "across", "rails", _item(world, next(k for k, t in world.t.items() if t.id == victim.id)))],
     }
 
 
@@ -448,6 +459,12 @@ async def victim_runs(world):
             rows=[{"order": f"#{STAMPS[key]}-1002"}, _victim_finding(key)], error=None,
         )
         out[key] = rec.id
+        made = await world.store.add_suggestion(
+            tenant.id, kind="across", name="rails", key=_item(world, key), terms="[]", run_id=rec.id,
+            reads_files=False, status="none", note=f"{STAMPS[key]}: look at the bank file", evidence=[],
+            confidence="low", model="claude-opus-5-5", actor_tenant_id=tenant.id, actor_name=STAMPS[key],
+            credential="session", at=NOW)
+        out[f"sug:{key}"] = made.id
     return out
 
 
@@ -485,7 +502,8 @@ async def test_an_outsider_gets_404_and_changes_nothing(
     method, _ = route
     template, body = ADMIN_BY_TENANT[route]
     victim = world.t[whom]
-    path = template.format(t=victim.id, run=victim_runs[whom], imp=victim_imports[whom], item=_item(world, whom))
+    path = template.format(t=victim.id, run=victim_runs[whom], imp=victim_imports[whom], item=_item(world, whom),
+                           sug=victim_runs[f"sug:{whom}"])
     before = await _victim_state(world, victim)
 
     r = await client.request(method, path, json=body, headers=_caller(world, who))
@@ -504,10 +522,12 @@ async def test_a_foreign_id_reads_exactly_like_one_that_does_not_exist(client, w
     method, _ = route
     template, body = ADMIN_BY_TENANT[route]
     foreign = await client.request(
-        method, template.format(t=world.t["isv_a"].id, run="run_nope", imp="imp_nope", item=_item(world, "isv_a")),
+        method, template.format(t=world.t["isv_a"].id, run="run_nope", imp="imp_nope", item=_item(world, "isv_a"),
+                                sug=victim_runs["sug:isv_a"]),
         json=body, headers=_caller(world, "isv_b"))
     missing = await client.request(
-        method, template.format(t="ten_doesnotexist0", run="run_nope", imp="imp_nope", item="0" * 24),
+        method, template.format(t="ten_doesnotexist0", run="run_nope", imp="imp_nope", item="0" * 24,
+                                sug="sug_" + "0" * 16),
         json=body, headers=_caller(world, "isv_b"))
     assert foreign.status_code == missing.status_code == 404
 

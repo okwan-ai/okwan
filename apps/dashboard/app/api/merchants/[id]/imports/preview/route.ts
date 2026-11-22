@@ -1,5 +1,8 @@
-import { api, session } from "@/lib/api";
+import { api, sameOrigin, session } from "@/lib/api";
 import { fail, json, readBody } from "@/lib/respond";
+
+/** An 8 MB file as base64, and its mapping. */
+const IMPORT_BODY_MAX = 12 * 1024 * 1024;
 
 /**
  * Read a file without storing it: its columns, its first rows and a
@@ -8,10 +11,12 @@ import { fail, json, readBody } from "@/lib/respond";
  * digits at most.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const body = await readBody<Record<string, unknown>>(req);
-  if (body instanceof Response) return body;
+  if (!sameOrigin(req)) return fail("cross-origin request refused", 403);
+  // Signed in before a file-sized body is read.
   const token = await session();
   if (!token) return fail("signed out — sign in again", 401);
+  const body = await readBody<Record<string, unknown>>(req, IMPORT_BODY_MAX);
+  if (body instanceof Response) return body;
   const { id } = await params;
   const r = await api<Record<string, unknown>>(`/v1/tenants/${encodeURIComponent(id)}/imports/preview`, {
     method: "POST",

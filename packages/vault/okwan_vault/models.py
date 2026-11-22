@@ -178,6 +178,11 @@ class Decision:
     created_at: datetime
     terms: str = ""
     closed_before: bool = False
+    #: The suggestion the person decided from (Suggestion), and how:
+    #: `as_suggested` (explained, with its note word for word) or `edited`.
+    #: The decision is the person's either way; the note is theirs.
+    suggestion_id: str | None = None
+    from_suggestion: str | None = None
 
     @property
     def closed(self) -> bool:
@@ -186,6 +191,69 @@ class Decision:
     def closes(self, terms: str) -> bool:
         """Whether this decision closes an item that now has these terms."""
         return self.closed and self.terms == terms
+
+
+#: What a suggestion proposes: `explained`, with the note a person would
+#: record, or `none`: the records do not explain the item, and the note says
+#: what to look at.
+SUGGESTION_STATUSES = ("explained", "none")
+#: How a person answered a suggestion, once: decided from it word for word,
+#: decided from it with their own changes, or turned it down.
+SUGGESTION_ANSWERS = ("as_suggested", "edited", "rejected")
+#: Suggestions one account can ask for on one item. Each is a model call; a
+#: person asks a few times at most.
+ITEM_SUGGESTIONS_MAX = 20
+
+
+@dataclass(frozen=True, slots=True)
+class Suggestion:
+    """What Okwan's model suggests one open item is, and the records it
+    rests on. It is never a decision: it closes nothing, and only a person's
+    decision that cites it (Decision.suggestion_id) acts on it.
+
+    `evidence` is [{ref, why, record}]: the model chose which records and
+    says why in `why`; `record` is the record as Okwan stored it when the
+    suggestion was made, never the model's restatement. `terms` and
+    `run_id` are the item's when the suggestion was made: a decision can
+    cite it only while the item has the same terms. `answer` is set once,
+    by the decision that cites it or by a person turning it down, with who
+    did and when.
+    """
+
+    id: str
+    tenant_id: str
+    kind: str
+    name: str
+    key: str
+    terms: str
+    run_id: str
+    reads_files: bool
+    status: str
+    note: str
+    evidence: list
+    confidence: str
+    #: The model that answered, as the API named it.
+    model: str
+    actor_tenant_id: str
+    actor_name: str
+    credential: str
+    created_at: datetime
+    answer: str | None = None
+    answered_by_tenant_id: str | None = None
+    answered_by_name: str | None = None
+    answered_credential: str | None = None
+    answered_at: datetime | None = None
+    #: Why a person turned it down, when they said.
+    answer_note: str | None = None
+    decision_id: str | None = None
+
+
+class SuggestionAnswered(Exception):
+    """The suggestion was already answered: decided from, or turned down."""
+
+
+class SuggestionsFull(Exception):
+    """The account has already asked for ITEM_SUGGESTIONS_MAX suggestions on the item."""
 
 
 class DecisionConflict(Exception):

@@ -26,6 +26,7 @@ from .models import (
     CLOSED_STATUSES,
     IMPORT_KEPT_MONTHS,
     ITEM_DECISIONS_MAX,
+    ITEM_SUGGESTIONS_MAX,
     KEY_SCOPES,
     LAYOUTS_KEPT,
     NOTIFY_DEFAULTS,
@@ -43,6 +44,9 @@ from .models import (
     ItemGone,
     RunRecord,
     SealedCredential,
+    Suggestion,
+    SuggestionAnswered,
+    SuggestionsFull,
     SupportConversation,
     SupportTicket,
     Tenant,
@@ -89,6 +93,8 @@ class Store(Protocol):
     async def connectors_configured(self, tenant_id: str) -> dict[str, list[str]]: ...
     async def record_request(self, tenant_id: str, surface: str) -> None: ...
     async def usage_since(self, root_id: str, since) -> int: ...
+    async def surface_usage_since(self, root_id: str, since, surface: str) -> int: ...
+    async def drop_expired_imports(self, tenant_id: str, now: datetime | None = None) -> int: ...
     async def usage_buckets(
         self, root_id: str, since
     ) -> list[tuple[str, datetime, str, int]]: ...
@@ -170,6 +176,7 @@ class Store(Protocol):
         owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
         credential: str, run_id: str, reads_files: bool, idempotency_key: str,
         request_hash: str, at: datetime, terms: str = "",
+        suggestion_id: str | None = None, from_suggestion: str | None = None,
     ) -> tuple[Decision, bool]: ...
     async def decision_by_idempotency(
         self, tenant_id: str, idempotency_key: str
@@ -183,6 +190,25 @@ class Store(Protocol):
     async def decision_history(
         self, tenant_id: str, kind: str, name: str, key: str, limit: int = 200
     ) -> list[Decision]: ...
+    async def closing_decisions(
+        self, tenant_id: str, kind: str, name: str, limit: int = 10
+    ) -> list[Decision]: ...
+    async def add_suggestion(
+        self, tenant_id: str, *, kind: str, name: str, key: str, terms: str, run_id: str,
+        reads_files: bool, status: str, note: str, evidence: list, confidence: str, model: str,
+        actor_tenant_id: str, actor_name: str, credential: str, at: datetime,
+    ) -> Suggestion: ...
+    async def open_suggestion(
+        self, tenant_id: str, kind: str, name: str, key: str, terms: str, run_id: str
+    ) -> Suggestion | None: ...
+    async def get_suggestion(self, tenant_id: str, suggestion_id: str) -> Suggestion | None: ...
+    async def suggestions_of(
+        self, tenant_id: str, kind: str, name: str, key: str, limit: int = 100
+    ) -> list[Suggestion]: ...
+    async def reject_suggestion(
+        self, tenant_id: str, suggestion_id: str, *, actor_tenant_id: str, actor_name: str,
+        credential: str, note: str | None, at: datetime,
+    ) -> Suggestion: ...
     async def keys_for(self, tenant_id: str) -> list[ApiKey]: ...
     async def get_conversation(
         self, tenant_id: str, conversation_id: str
@@ -298,6 +324,7 @@ class MemoryStore:
         self._disputes: dict[str, dict] = {}
         self._runs: dict[str, RunRecord] = {}
         self._decisions: list[Decision] = []
+        self._suggestions: dict[str, Suggestion] = {}
         self._conversations: dict[str, SupportConversation] = {}
         self._tickets: dict[str, SupportTicket] = {}
         self._replies: list[dict] = []
@@ -350,6 +377,7 @@ class MemoryStore:
         self._sessions = {k: v for k, v in self._sessions.items() if v[0] not in gone}
         self._runs = {k: v for k, v in self._runs.items() if v.tenant_id not in gone}
         self._decisions = [d for d in self._decisions if d.tenant_id not in gone]
+        self._suggestions = {k: v for k, v in self._suggestions.items() if v.tenant_id not in gone}
         self._conversations = {k: v for k, v in self._conversations.items() if v.tenant_id not in gone}
         self._tickets = {k: v for k, v in self._tickets.items() if v.tenant_id not in gone}
         self._replies = [r for r in self._replies if r["tenant_id"] not in gone]
@@ -676,6 +704,11 @@ class MemoryStore:
             if tid in subtree and hour >= since
         )
 
+    async def surface_usage_since(self, root_id: str, since, surface: str) -> int:
+        subtree = self._subtree(root_id)
+        return sum(n for (tid, hour, s), n in self._usage.items()
+                   if tid in subtree and hour >= since and s == surface)
+
     async def usage_buckets(
         self, root_id: str, since
     ) -> list[tuple[str, datetime, str, int]]:
@@ -796,6 +829,7 @@ class MemoryStore:
         owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
         credential: str, run_id: str, reads_files: bool, idempotency_key: str,
         request_hash: str, at: datetime, terms: str = "",
+        suggestion_id: str | None = None, from_suggestion: str | None = None,
     ) -> tuple[Decision, bool]:
         """As PostgresStore: nothing here awaits between the read and the
         write, so one decision is recorded at a time and none is ever busy."""
@@ -815,6 +849,11 @@ class MemoryStore:
                    if d.tenant_id == tenant_id and d.key == key and d.actor_tenant_id == actor_tenant_id)
         if mine >= ITEM_DECISIONS_MAX:
             raise HistoryFull(f"this account already recorded {ITEM_DECISIONS_MAX} decisions on this item")
+        cited = self._suggestions.get(suggestion_id) if suggestion_id is not None else None
+        if suggestion_id is not None and (cited is None or cited.tenant_id != tenant_id or cited.key != key
+                                          or (cited.kind, cited.name) != (kind, name)
+                                          or cited.answer is not None):
+            raise SuggestionAnswered("the suggestion was already answered")
         dec = Decision(
             id=f"dec_{uuid.uuid4().hex[:16]}", seq=(last.seq if last else 0) + 1, tenant_id=tenant_id,
             kind=kind, name=name, key=key, status=status, prior_status=last.status if last else None,
@@ -822,8 +861,14 @@ class MemoryStore:
             credential=credential, run_id=run_id, reads_files=reads_files,
             idempotency_key=idempotency_key, request_hash=request_hash, created_at=at, terms=terms,
             closed_before=last is not None and last.status in CLOSED_STATUSES and last.terms == terms,
+            suggestion_id=suggestion_id, from_suggestion=from_suggestion if suggestion_id else None,
         )
         self._decisions.append(dec)
+        if cited is not None:
+            self._suggestions[cited.id] = replace(
+                cited, answer=from_suggestion, answered_by_tenant_id=actor_tenant_id,
+                answered_by_name=actor_name, answered_credential=credential, answered_at=at,
+                decision_id=dec.id)
         return dec, False
 
     async def decision_by_idempotency(self, tenant_id: str, idempotency_key: str) -> Decision | None:
@@ -862,6 +907,72 @@ class MemoryStore:
         found = [d for d in self._decisions if d.tenant_id == tenant_id and d.kind == kind
                  and d.name == name and d.key == key]
         return sorted(found, key=lambda d: d.seq, reverse=True)[:limit]
+
+    async def closing_decisions(
+        self, tenant_id: str, kind: str, name: str, limit: int = 10
+    ) -> list[Decision]:
+        found = [d for d in self._decisions if d.tenant_id == tenant_id and d.kind == kind
+                 and d.name == name and d.status in CLOSED_STATUSES]
+        return sorted(found, key=lambda d: (d.created_at, d.id), reverse=True)[:limit]
+
+    # ── suggestions on open items ───────────────────────────────────
+
+    async def add_suggestion(
+        self, tenant_id: str, *, kind: str, name: str, key: str, terms: str, run_id: str,
+        reads_files: bool, status: str, note: str, evidence: list, confidence: str, model: str,
+        actor_tenant_id: str, actor_name: str, credential: str, at: datetime,
+    ) -> Suggestion:
+        """As PostgresStore."""
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        run = self._runs.get(run_id)
+        if run is None or run.tenant_id != tenant_id:
+            raise ItemGone("the stored run this item was found in is no longer there")
+        mine = sum(1 for x in self._suggestions.values()
+                   if x.tenant_id == tenant_id and x.key == key and x.actor_tenant_id == actor_tenant_id)
+        if mine >= ITEM_SUGGESTIONS_MAX:
+            raise SuggestionsFull(f"this account already asked for {ITEM_SUGGESTIONS_MAX} suggestions on this item")
+        made = Suggestion(
+            id=f"sug_{uuid.uuid4().hex[:16]}", tenant_id=tenant_id, kind=kind, name=name, key=key,
+            terms=terms, run_id=run_id, reads_files=reads_files, status=status, note=note,
+            evidence=evidence, confidence=confidence, model=model, actor_tenant_id=actor_tenant_id,
+            actor_name=actor_name, credential=credential, created_at=at)
+        self._suggestions[made.id] = made
+        return made
+
+    async def open_suggestion(
+        self, tenant_id: str, kind: str, name: str, key: str, terms: str, run_id: str
+    ) -> Suggestion | None:
+        found = [x for x in self._suggestions.values() if x.tenant_id == tenant_id and x.kind == kind
+                 and x.name == name and x.key == key and x.terms == terms and x.run_id == run_id
+                 and x.answer is None]
+        return max(found, key=lambda x: (x.created_at, x.id), default=None)
+
+    async def get_suggestion(self, tenant_id: str, suggestion_id: str) -> Suggestion | None:
+        found = self._suggestions.get(suggestion_id)
+        return found if found is not None and found.tenant_id == tenant_id else None
+
+    async def suggestions_of(
+        self, tenant_id: str, kind: str, name: str, key: str, limit: int = 100
+    ) -> list[Suggestion]:
+        found = [x for x in self._suggestions.values() if x.tenant_id == tenant_id and x.kind == kind
+                 and x.name == name and x.key == key]
+        return sorted(found, key=lambda x: (x.created_at, x.id), reverse=True)[:limit]
+
+    async def reject_suggestion(
+        self, tenant_id: str, suggestion_id: str, *, actor_tenant_id: str, actor_name: str,
+        credential: str, note: str | None, at: datetime,
+    ) -> Suggestion:
+        found = await self.get_suggestion(tenant_id, suggestion_id)
+        if found is None:
+            raise KeyError(suggestion_id)
+        if found.answer is not None:
+            raise SuggestionAnswered("the suggestion was already answered")
+        done = replace(found, answer="rejected", answered_by_tenant_id=actor_tenant_id,
+                       answered_by_name=actor_name, answered_credential=credential, answered_at=at,
+                       answer_note=note)
+        self._suggestions[done.id] = done
+        return done
 
     async def set_plan(self, tenant_id: str, name: str) -> None:
         if name not in PLANS:
@@ -1167,9 +1278,12 @@ class MemoryStore:
         for run_id in [k for k, r in self._runs.items()
                        if (r.reads_files or r.name in named) and r.tenant_id in tenant_ids]:
             del self._runs[run_id]
-        # And the decisions on those checks' items, whose notes may quote them.
+        # And the decisions and suggestions on those checks' items, whose
+        # notes and evidence may quote them.
         self._decisions = [d for d in self._decisions if not (
             d.tenant_id in tenant_ids and (d.reads_files or d.name in named))]
+        self._suggestions = {k: x for k, x in self._suggestions.items() if not (
+            x.tenant_id in tenant_ids and (x.reads_files or x.name in named))}
 
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,
@@ -1233,6 +1347,17 @@ class MemoryStore:
 
     async def delete_layout(self, tenant_id: str, name: str) -> bool:
         return self._layouts.pop((tenant_id, name), None) is not None
+
+    async def drop_expired_imports(self, tenant_id: str, now: datetime | None = None) -> int:
+        """As PostgresStore: one tenant's expired files, and what quotes them."""
+        now = now or datetime.now(UTC)
+        expired = [f.id for f in self._imports.values() if f.tenant_id == tenant_id and f.expires_at <= now]
+        for file_id in expired:
+            del self._imports[file_id]
+            self._import_rows.pop(file_id, None)
+        if expired:
+            self._drop_file_runs({tenant_id})
+        return len(expired)
 
     async def sweep_imports(self, now: datetime | None = None) -> int:
         """Delete every tenant's expired files, their rows, and the stored

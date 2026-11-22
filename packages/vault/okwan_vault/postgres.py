@@ -40,6 +40,7 @@ from .models import (
     CLOSED_STATUSES,
     IMPORT_KEPT_MONTHS,
     ITEM_DECISIONS_MAX,
+    ITEM_SUGGESTIONS_MAX,
     KEY_SCOPES,
     LAYOUTS_KEPT,
     NOTIFY_DEFAULTS,
@@ -58,6 +59,9 @@ from .models import (
     ItemGone,
     RunRecord,
     SealedCredential,
+    Suggestion,
+    SuggestionAnswered,
+    SuggestionsFull,
     SupportConversation,
     SupportTicket,
     Tenant,
@@ -95,6 +99,7 @@ TENANT_TABLES = (
     "notify_settings",
     "daily_checks",
     "exception_decisions",
+    "exception_suggestions",
 )
 
 
@@ -428,6 +433,18 @@ class PostgresStore:
                 ids, since,
             )
 
+    async def surface_usage_since(self, root_id: str, since, surface: str) -> int:
+        """Requests on one surface across a tenant and everything it
+        provisioned, read as `usage_since` is."""
+        async with self.pool.acquire() as con, con.transaction():
+            ids = await _subtree(con, root_id)
+            await _enter_scope(con, ids)
+            return await con.fetchval(
+                "SELECT COALESCE(SUM(requests), 0) FROM usage "
+                "WHERE tenant_id = ANY($1::text[]) AND hour >= $2 AND surface = $3",
+                ids, since, surface,
+            )
+
     async def usage_buckets(
         self, root_id: str, since
     ) -> list[tuple[str, datetime, str, int]]:
@@ -568,6 +585,7 @@ class PostgresStore:
         owner: str | None, note: str | None, actor_tenant_id: str, actor_name: str,
         credential: str, run_id: str, reads_files: bool, idempotency_key: str,
         request_hash: str, at: datetime, terms: str = "",
+        suggestion_id: str | None = None, from_suggestion: str | None = None,
     ) -> tuple[Decision, bool]:
         """Record one decision; return it and whether it was recorded
         before, by the same Idempotency-Key for the same request (a key
@@ -581,7 +599,9 @@ class PostgresStore:
         (HistoryFull) from one account. The stored run it was found in is held while the row
         goes in: a file deletion that takes the run either comes first, and
         nothing is stored (ItemGone), or waits, and its next statement takes
-        this decision with the run."""
+        this decision with the run. A decision made from a suggestion
+        answers it in the same transaction: one already answered refuses the
+        decision (SuggestionAnswered), so a suggestion is decided from once."""
         async with self._scoped(tenant_id) as con:
             done = await _by_idempotency(con, tenant_id, idempotency_key)
             if done is not None:
@@ -613,12 +633,24 @@ class PostgresStore:
                         "INSERT INTO exception_decisions (id, seq, tenant_id, kind, name, item_key, "
                         "status, prior_status, owner, note, actor_tenant_id, actor_name, credential, "
                         "run_id, reads_files, idempotency_key, request_hash, created_at, terms, "
-                        "closed_before) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, "
-                        f"$14, $15, $16, $17, $18, $19, $20) RETURNING {_DECISION_COLS}",
+                        "closed_before, suggestion_id, from_suggestion) VALUES ($1, $2, $3, $4, $5, $6, "
+                        "$7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) "
+                        f"RETURNING {_DECISION_COLS}",
                         f"dec_{uuid.uuid4().hex[:16]}", (last["seq"] if last else 0) + 1, tenant_id,
                         kind, name, key, status, last["status"] if last else None, owner, note,
                         actor_tenant_id, actor_name, credential, run_id, reads_files,
-                        idempotency_key, request_hash, at, terms, before)
+                        idempotency_key, request_hash, at, terms, before, suggestion_id,
+                        from_suggestion if suggestion_id else None)
+                    if suggestion_id is not None:
+                        answered = await con.fetchval(
+                            "UPDATE exception_suggestions SET answer = $6, answered_by_tenant_id = $7, "
+                            "answered_by_name = $8, answered_credential = $9, answered_at = $10, "
+                            "decision_id = $11 WHERE tenant_id = $1 AND id = $2 AND item_key = $3 "
+                            "AND kind = $4 AND name = $5 AND answer IS NULL RETURNING id",
+                            tenant_id, suggestion_id, key, kind, name, from_suggestion, actor_tenant_id,
+                            actor_name, credential, at, row["id"])
+                        if answered is None:
+                            raise SuggestionAnswered("the suggestion was already answered")
             except asyncpg.UniqueViolationError:
                 # The same Idempotency-Key, for another item, at the same moment.
                 done = await _by_idempotency(con, tenant_id, idempotency_key)
@@ -677,6 +709,107 @@ class PostgresStore:
                 "AND kind = $2 AND name = $3 AND item_key = $4 ORDER BY seq DESC LIMIT $5",
                 tenant_id, kind, name, key, limit)
         return [_decision(r) for r in rows]
+
+    async def closing_decisions(
+        self, tenant_id: str, kind: str, name: str, limit: int = 10
+    ) -> list[Decision]:
+        """The newest decisions that closed an item of one check, any item."""
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                f"SELECT {_DECISION_COLS} FROM exception_decisions WHERE tenant_id = $1 AND kind = $2 "
+                "AND name = $3 AND status IN ('explained', 'resolved') ORDER BY created_at DESC, id DESC "
+                "LIMIT $4", tenant_id, kind, name, limit)
+        return [_decision(r) for r in rows]
+
+    # ── suggestions on open items ───────────────────────────────────
+
+    async def add_suggestion(
+        self, tenant_id: str, *, kind: str, name: str, key: str, terms: str, run_id: str,
+        reads_files: bool, status: str, note: str, evidence: list, confidence: str, model: str,
+        actor_tenant_id: str, actor_name: str, credential: str, at: datetime,
+    ) -> Suggestion:
+        """Keep one suggestion. Like a decision, it holds the stored run it
+        was made from while it goes in: a file deletion that takes the run
+        comes first, and nothing is kept (ItemGone), or waits and takes this
+        suggestion with it. An account asks for at most ITEM_SUGGESTIONS_MAX
+        on an item (SuggestionsFull); the item is locked for the count, tried
+        and never waited for (ItemBusy)."""
+        async with self._scoped(tenant_id) as con:
+            got = await con.fetchval("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))",
+                                     f"okwan:suggestion:{tenant_id}:{key}")
+            if not got:
+                raise ItemBusy("another suggestion on this item is being kept")
+            held = await con.fetchval(
+                "SELECT id FROM reconciliation_runs WHERE id = $2 AND tenant_id = $1 FOR KEY SHARE",
+                tenant_id, run_id)
+            if held is None:
+                raise ItemGone("the stored run this item was found in is no longer there")
+            mine = await con.fetchval(
+                "SELECT count(*) FROM exception_suggestions WHERE tenant_id = $1 AND item_key = $2 "
+                "AND actor_tenant_id = $3", tenant_id, key, actor_tenant_id)
+            if mine >= ITEM_SUGGESTIONS_MAX:
+                raise SuggestionsFull(
+                    f"this account already asked for {ITEM_SUGGESTIONS_MAX} suggestions on this item")
+            row = await con.fetchrow(
+                "INSERT INTO exception_suggestions (id, tenant_id, kind, name, item_key, terms, run_id, "
+                "reads_files, status, note, evidence, confidence, model, actor_tenant_id, actor_name, "
+                "credential, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, "
+                f"$12, $13, $14, $15, $16, $17) RETURNING {_SUGGESTION_COLS}",
+                f"sug_{uuid.uuid4().hex[:16]}", tenant_id, kind, name, key, terms, run_id, reads_files,
+                status, note, _dumps(evidence), confidence, model, actor_tenant_id, actor_name,
+                credential, at)
+        return _suggestion(row)
+
+    async def open_suggestion(
+        self, tenant_id: str, kind: str, name: str, key: str, terms: str, run_id: str
+    ) -> Suggestion | None:
+        """The newest suggestion on an item, not yet answered, made from the
+        same run on the same terms: asking again is answered with it."""
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                f"SELECT {_SUGGESTION_COLS} FROM exception_suggestions WHERE tenant_id = $1 "
+                "AND item_key = $2 AND kind = $3 AND name = $4 AND terms = $5 AND run_id = $6 "
+                "AND answer IS NULL ORDER BY created_at DESC, id DESC LIMIT 1",
+                tenant_id, key, kind, name, terms, run_id)
+        return None if row is None else _suggestion(row)
+
+    async def get_suggestion(self, tenant_id: str, suggestion_id: str) -> Suggestion | None:
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                f"SELECT {_SUGGESTION_COLS} FROM exception_suggestions WHERE tenant_id = $1 AND id = $2",
+                tenant_id, suggestion_id)
+        return None if row is None else _suggestion(row)
+
+    async def suggestions_of(
+        self, tenant_id: str, kind: str, name: str, key: str, limit: int = 100
+    ) -> list[Suggestion]:
+        """One item's suggestions, newest first."""
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                f"SELECT {_SUGGESTION_COLS} FROM exception_suggestions WHERE tenant_id = $1 "
+                "AND item_key = $2 AND kind = $3 AND name = $4 ORDER BY created_at DESC, id DESC LIMIT $5",
+                tenant_id, key, kind, name, limit)
+        return [_suggestion(r) for r in rows]
+
+    async def reject_suggestion(
+        self, tenant_id: str, suggestion_id: str, *, actor_tenant_id: str, actor_name: str,
+        credential: str, note: str | None, at: datetime,
+    ) -> Suggestion:
+        """Turn a suggestion down, once (SuggestionAnswered after)."""
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                "UPDATE exception_suggestions SET answer = 'rejected', answered_by_tenant_id = $3, "
+                "answered_by_name = $4, answered_credential = $5, answered_at = $6, answer_note = $7 "
+                f"WHERE tenant_id = $1 AND id = $2 AND answer IS NULL RETURNING {_SUGGESTION_COLS}",
+                tenant_id, suggestion_id, actor_tenant_id, actor_name, credential, at, note)
+            if row is None:
+                there = await con.fetchval(
+                    "SELECT id FROM exception_suggestions WHERE tenant_id = $1 AND id = $2",
+                    tenant_id, suggestion_id)
+                if there is None:
+                    raise KeyError(suggestion_id)
+                raise SuggestionAnswered("the suggestion was already answered")
+        return _suggestion(row)
 
     async def get_plan(self, tenant_id: str) -> tuple[str, int]:
         async with self._scoped(tenant_id) as con:
@@ -1401,6 +1534,7 @@ class PostgresStore:
                 if expired:
                     await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
                     await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
+                    await con.execute(_DROP_FILE_SUGGESTIONS, tenant_id, list(self.file_checks()))
                 same = await con.fetchval(
                     "SELECT id FROM import_files WHERE tenant_id = $1 AND kind = $2 AND sha256 = $3",
                     tenant_id, kind, sha256)
@@ -1463,7 +1597,24 @@ class PostgresStore:
             if gone is not None:
                 await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
                 await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_SUGGESTIONS, tenant_id, list(self.file_checks()))
         return gone is not None
+
+    async def drop_expired_imports(self, tenant_id: str, now: datetime | None = None) -> int:
+        """Delete one tenant's expired files, their rows, and the stored runs,
+        decisions and suggestions that may quote them, in one transaction,
+        as an upload does first: what reads a stored result for a third party
+        calls this before it reads, rather than wait for the sweep."""
+        async with self._scoped(tenant_id) as con:
+            await con.execute(_RUNS_FIRST)
+            expired = await con.fetch(
+                "DELETE FROM import_files WHERE tenant_id = $1 AND expires_at <= $2 RETURNING id",
+                tenant_id, now or datetime.now(UTC))
+            if expired:
+                await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_SUGGESTIONS, tenant_id, list(self.file_checks()))
+        return len(expired)
 
     async def imports_live(
         self, tenant_id: str, file_ids: Collection[str], now: datetime | None = None
@@ -1583,6 +1734,9 @@ class PostgresStore:
                     "AND (reads_files OR name = ANY($2::text[]))", tenants, names)
                 await con.execute(
                     "DELETE FROM exception_decisions WHERE tenant_id = ANY($1::text[]) "
+                    "AND (reads_files OR name = ANY($2::text[]))", tenants, names)
+                await con.execute(
+                    "DELETE FROM exception_suggestions WHERE tenant_id = ANY($1::text[]) "
                     "AND (reads_files OR name = ANY($2::text[]))", tenants, names)
         return len(gone)
 
@@ -1870,6 +2024,10 @@ _DROP_FILE_RUNS = ("DELETE FROM reconciliation_runs WHERE tenant_id = $1 "
 #: sees it.
 _DROP_FILE_DECISIONS = ("DELETE FROM exception_decisions WHERE tenant_id = $1 "
                         "AND (reads_files OR name = ANY($2::text[]))")
+#: And the suggestions on them, whose evidence quotes the same files. One
+#: being kept holds its run, as a decision does.
+_DROP_FILE_SUGGESTIONS = ("DELETE FROM exception_suggestions WHERE tenant_id = $1 "
+                          "AND (reads_files OR name = ANY($2::text[]))")
 
 
 def _dumps(value) -> str | None:
@@ -1905,7 +2063,7 @@ def _loads(value):
 
 _DECISION_COLS = ("id, seq, tenant_id, kind, name, item_key, status, prior_status, owner, note, "
                   "actor_tenant_id, actor_name, credential, run_id, reads_files, idempotency_key, "
-                  "request_hash, created_at, terms, closed_before")
+                  "request_hash, created_at, terms, closed_before, suggestion_id, from_suggestion")
 
 
 def _decision(row) -> Decision:
@@ -1916,7 +2074,27 @@ def _decision(row) -> Decision:
         actor_name=row["actor_name"], credential=row["credential"], run_id=row["run_id"],
         reads_files=row["reads_files"], idempotency_key=row["idempotency_key"],
         request_hash=row["request_hash"], created_at=row["created_at"], terms=row["terms"],
-        closed_before=row["closed_before"],
+        closed_before=row["closed_before"], suggestion_id=row["suggestion_id"],
+        from_suggestion=row["from_suggestion"],
+    )
+
+
+_SUGGESTION_COLS = ("id, tenant_id, kind, name, item_key, terms, run_id, reads_files, status, note, "
+                    "evidence, confidence, model, actor_tenant_id, actor_name, credential, created_at, "
+                    "answer, answered_by_tenant_id, answered_by_name, answered_credential, answered_at, "
+                    "answer_note, decision_id")
+
+
+def _suggestion(row) -> Suggestion:
+    return Suggestion(
+        id=row["id"], tenant_id=row["tenant_id"], kind=row["kind"], name=row["name"],
+        key=row["item_key"], terms=row["terms"], run_id=row["run_id"], reads_files=row["reads_files"],
+        status=row["status"], note=row["note"], evidence=_loads(row["evidence"]) or [],
+        confidence=row["confidence"], model=row["model"], actor_tenant_id=row["actor_tenant_id"],
+        actor_name=row["actor_name"], credential=row["credential"], created_at=row["created_at"],
+        answer=row["answer"], answered_by_tenant_id=row["answered_by_tenant_id"],
+        answered_by_name=row["answered_by_name"], answered_credential=row["answered_credential"],
+        answered_at=row["answered_at"], answer_note=row["answer_note"], decision_id=row["decision_id"],
     )
 
 

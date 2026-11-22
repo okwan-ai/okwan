@@ -18,6 +18,12 @@ import { formatMinor } from "./money";
  * it, resolves it or opens it again, with a reason. Each line says what was
  * last decided and where a decision about it is sent; a name or a note is
  * that person's own text and is drawn like a reference.
+ *
+ * Okwan can suggest what an open item is (C60): a suggestion, never a
+ * decision, with the records it rests on as Okwan stored them. Its note and
+ * its reasons are the model's words, drawn as text of their own like a
+ * person's; the records beside them are the merchant's, drawn like any
+ * reference. A decision made from one says so.
  */
 
 /** A decision as the API answers it. */
@@ -36,6 +42,63 @@ export type ApiDecision = {
   /** For one that closed the item: the item has other terms now, or a twin, so it is open again. */
   changed?: boolean;
   changed_why?: "alike" | "terms";
+  /** The suggestion it was made from, and whether its words were kept. */
+  suggestion?: { id: string; as: "as_suggested" | "edited" } | null;
+};
+
+/** A record a suggestion cites: the model's ref and reason, and the record as Okwan stored it. */
+export type ApiCited = { ref: string; why: string; record: Record<string, unknown> };
+
+/** A suggestion as the API answers it. */
+export type ApiSuggestion = {
+  id: string;
+  status: "explained" | "none";
+  note: string;
+  evidence: ApiCited[];
+  confidence: "high" | "medium" | "low";
+  model: string;
+  run_id: string;
+  on: ApiDecision["on"];
+  asked: { by: { tenant_id: string; name: string; credential: string }; at: string };
+  answer: null | {
+    as: "as_suggested" | "edited" | "rejected";
+    note: string | null;
+    decision_id: string | null;
+    by: { tenant_id: string | null; name: string | null; credential: string | null };
+    at: string | null;
+  };
+  /** The item has other terms now, or is no longer a finding: nothing can be decided from it. */
+  changed?: boolean;
+};
+
+/** One record a suggestion rests on, every word chosen. */
+export type CitedShown = {
+  /** What kind of record: this item, another finding, a decision. */
+  label: string;
+  /** The record as Okwan stored it, in a person's words. */
+  what: string;
+  refs: { label: string; value: string }[];
+  /** A person's note on it, for a decision. */
+  note: string | null;
+  /** Why the model cites it: its words. */
+  why: string;
+};
+
+/** A suggestion, every word chosen. */
+export type SuggestionShown = {
+  id: string;
+  status: ApiSuggestion["status"];
+  /** The suggestion's own note as sent, for a decision made from it. */
+  raw: string;
+  /** The same, with what cannot be seen spelled out, to draw. */
+  note: string;
+  said: string;
+  confidence: string;
+  cited: CitedShown[];
+  asked: string;
+  /** How it was answered, when it was. */
+  answered: string | null;
+  open: boolean;
 };
 
 /** One item as the API answers it. */
@@ -100,6 +163,11 @@ export type Line = {
   firstSeen: string;
   /** Where a decision about this item is sent, and its history read. */
   decide: string;
+  /** Where a suggestion on it is asked for, and its suggestions read. */
+  suggest: string;
+  /** The check's name and kind, for the words a suggestion's records are told in. */
+  checkName: string;
+  kind: "pair" | "across";
   /** What a person last decided about it, when anything was. */
   decision: DecisionShown | null;
   /** Set when the item cannot be decided on its own, and why. */
@@ -120,6 +188,8 @@ export type DecisionShown = {
   on: string;
   /** Set when the decision closed the item on other terms than it has now. */
   changed: string | null;
+  /** Set when it was made from one of Okwan's suggestions, and says how. */
+  from: string | null;
 };
 
 export type Notice = { merchantId: string; merchant: string; text: string; href?: string; link?: string };
@@ -231,6 +301,83 @@ export function decisionShown(d: ApiDecision, item?: Pick<ApiItem, "signed_minor
     how: howMade(d.by.credential),
     on: dayOf(d.at),
     changed: d.changed ? changedSince(d, item?.signed_minor ?? null) : null,
+    from: d.suggestion
+      ? d.suggestion.as === "as_suggested" ? "From Okwan's suggestion, in its words." : "From Okwan's suggestion, changed."
+      : null,
+  };
+}
+
+const CONFIDENCE: Record<ApiSuggestion["confidence"], string> = {
+  high: "A record shows it directly.",
+  medium: "The records make it likely.",
+  low: "The records only hint at it.",
+};
+
+const ANSWERED: Record<NonNullable<ApiSuggestion["answer"]>["as"], string> = {
+  as_suggested: "Decided from, in its words",
+  edited: "Decided from, changed",
+  rejected: "Turned down",
+};
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+function num(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+/** One cited record in a person's words, from the record as Okwan stored
+ *  it, never from the model. */
+function citedShown(c: ApiCited, check: string, kind: "pair" | "across"): CitedShown {
+  const r = c.record ?? {};
+  const why = asNote(String(c.why ?? ""));
+  if (c.ref.startsWith("F")) {
+    const finding = str(r.finding) ?? "";
+    const amount = num(r.amount_minor);
+    const day = dayOf(str(r.dated_on));
+    const facts = [what({ check, kind, finding }), amount !== null ? formatMinor(amount, str(r.currency)) : "",
+      day && `dated ${day}`].filter(Boolean).join(", ");
+    const item = { check, kind, left_ref: str(r.left_ref), right_ref: str(r.right_ref), order_ref: str(r.order_ref) };
+    const closed = r.decided === "explained" || r.decided === "resolved";
+    return { label: r.item === true ? "This item" : closed ? "Another finding, closed by a person" : "Another open finding",
+             what: facts, refs: refs(item as ApiItem), note: null, why };
+  }
+  const status = str(r.status) as ApiDecision["status"] | null;
+  const owner = str(r.owner);
+  const by = asWritten(str(r.by) ?? "");
+  // A decision made from one of Okwan's suggestions says so: its words began as Okwan's.
+  const from = r.from_suggestion === "as_suggested" ? "in Okwan's suggested words"
+    : r.from_suggestion === "edited" ? "from Okwan's suggestion, changed" : "";
+  // What the decision was made on, as stored with it: the amount and day.
+  const on = (r.on ?? {}) as { amount_minor?: unknown; currency?: unknown; dated_on?: unknown };
+  const amount = num(on.amount_minor);
+  const stake = [amount !== null ? `on ${formatMinor(Math.abs(amount), str(on.currency))}` : "",
+    str(on.dated_on) ? `dated ${dayOf(str(on.dated_on))}` : ""].filter(Boolean).join(" ");
+  const facts = [status ? SAID[status] ?? "Decided" : "Decided", stake, `by ${by}`, from, dayOf(str(r.at))]
+    .filter(Boolean).join(", ");
+  return {
+    label: c.ref.startsWith("D") ? "Decided on this item" : "How another item was closed",
+    what: facts, refs: owner ? [{ label: "Given to", value: asNote(owner) }] : [],
+    note: str(r.note) ? asNote(str(r.note)!) : null, why,
+  };
+}
+
+export function suggestionShown(s: ApiSuggestion, line: Pick<Line, "checkName" | "kind">): SuggestionShown {
+  const answered = s.answer
+    ? `${ANSWERED[s.answer.as] ?? "Answered"} by ${asWritten(s.answer.by.name ?? "")}${s.answer.at ? `, ${dayOf(s.answer.at)}` : ""}`
+    : null;
+  return {
+    id: s.id,
+    status: s.status,
+    raw: s.note,
+    note: asNote(s.note),
+    said: s.status === "explained" ? "Okwan suggests explaining it" : "Okwan found nothing in the records that explains it",
+    confidence: CONFIDENCE[s.confidence] ?? "",
+    cited: s.evidence.map((c) => citedShown(c, line.checkName, line.kind)),
+    asked: `Asked by ${asWritten(s.asked.by.name)} ${howMade(s.asked.by.credential)}, ${dayOf(s.asked.at)}`,
+    answered,
+    open: s.answer === null && s.changed !== true,
   };
 }
 
@@ -255,12 +402,13 @@ function changedSince(d: ApiDecision, now: number | null): string {
   return `${said} when it was ${terms || "something else"}. It has changed since, so it is open again.`;
 }
 
-/** The dashboard's own route for one item's decisions. Every part is the
- *  API's own value, each encoded. */
-export function decidePath(item: Pick<ApiItem, "tenant_id" | "kind" | "check" | "key">): string {
+/** The dashboard's own route for one item's decisions, or its suggestions.
+ *  Every part is the API's own value, each encoded. */
+export function decidePath(item: Pick<ApiItem, "tenant_id" | "kind" | "check" | "key">,
+                           what: "decisions" | "suggestions" = "decisions"): string {
   return [
     "/api/merchants", encodeURIComponent(item.tenant_id), "exceptions", encodeURIComponent(item.kind),
-    encodeURIComponent(item.check), encodeURIComponent(item.key), "decisions",
+    encodeURIComponent(item.check), encodeURIComponent(item.key), what,
   ].join("/");
 }
 
@@ -291,6 +439,9 @@ export function shownOf(
     days: item.open_days,
     firstSeen: item.first_seen ? dayOf(item.first_seen) : "",
     decide: decidePath(item),
+    suggest: decidePath(item, "suggestions"),
+    checkName: item.check,
+    kind: item.kind,
     decision: item.decision ? decisionShown(item.decision, item) : null,
     terms: item.terms ?? null,
     undecidable: item.alike

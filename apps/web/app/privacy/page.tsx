@@ -208,7 +208,7 @@ const parts: Part[] = [
   },
   {
     id: "assistant",
-    title: "The support assistant",
+    title: "The support assistant and suggestions",
     body: (
       <ul>
         <li>
@@ -219,6 +219,13 @@ const parts: Part[] = [
         <li>Your messages and the account information it looks up are sent to Anthropic to produce the answer, after anything that looks like a secret has been removed.</li>
         <li>AI answers can be wrong, so check important steps. A person at Okwan reviews every request the assistant hands over and writes every reply to it.</li>
         <li>Please do not paste passwords or keys into the chat. If you do, they are removed automatically.</li>
+        <li>
+          On an open item, you can ask Okwan for a suggestion of what it is. The item and what its check already
+          found (references, amounts, days and the reasons given), and the notes people wrote on it and on how
+          other items of the check were closed, are sent to Anthropic for that, after anything that looks like a
+          secret has been removed. A suggestion closes nothing: it is shown with the records it rests on, and a
+          person accepts, changes or turns it down. What they decide is recorded as theirs.
+        </li>
       </ul>
     ),
   },
@@ -235,7 +242,7 @@ const parts: Part[] = [
             ["Neon", "The database where everything above is stored", "United States (Ohio)"],
             ["Vercel", "Runs the website okwan.ai and its DNS", "Global network"],
             ["Resend", "Sends our email: your address and the message. For a daily check's email, that is merchant names, counts and amounts", "United States (Virginia)"],
-            ["Anthropic", "The support assistant: support conversations, secrets removed", "United States"],
+            ["Anthropic", "The support assistant: support conversations, secrets removed. Suggestions on an open item, when you ask: the item and its check's findings and notes, secrets removed", "United States"],
             ["Stripe", "Takes payment for Pro: your card, name, email and billing address, entered on Stripe's page", "United States"],
             ["Google Fonts", "Fonts on the website and dashboard: IP address and browser details", "Global network"],
           ]}
@@ -385,7 +392,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 21, 2026"
+      updated="November 22, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

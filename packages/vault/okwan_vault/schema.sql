@@ -220,6 +220,62 @@ CREATE UNIQUE INDEX IF NOT EXISTS exception_decisions_item
 -- The decisions made against a check's newest stored run.
 CREATE INDEX IF NOT EXISTS exception_decisions_run
     ON exception_decisions (tenant_id, run_id, item_key, seq);
+-- How a check's items were closed, newest first: what a suggestion is shown
+-- of the account's own practice.
+CREATE INDEX IF NOT EXISTS exception_decisions_check
+    ON exception_decisions (tenant_id, kind, name, created_at DESC);
+
+-- What Okwan's model suggested an open item is, and the records it rests on.
+-- A suggestion is not a decision and closes nothing: a person decides, and
+-- their decision names the suggestion it came from (`suggestion_id` below).
+-- `evidence` is [{ref, why, record}], each `record` as Okwan stored it when
+-- the suggestion was made. `answer` is set once: `as_suggested` or `edited`
+-- by the decision that cites it (`decision_id`), or `rejected` by a person
+-- turning it down, with who and when. A suggestion on a check that reads
+-- imported files quotes them, so it goes with any file of its tenant.
+CREATE TABLE IF NOT EXISTS exception_suggestions (
+    id                     text PRIMARY KEY,
+    tenant_id              text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    kind                   text NOT NULL CHECK (kind IN ('across', 'pair')),
+    name                   text NOT NULL,
+    item_key               text NOT NULL,
+    terms                  text NOT NULL,
+    run_id                 text NOT NULL,
+    reads_files            boolean NOT NULL,
+    status                 text NOT NULL CHECK (status IN ('explained', 'none')),
+    note                   text NOT NULL,
+    evidence               jsonb NOT NULL,
+    confidence             text NOT NULL CHECK (confidence IN ('high', 'medium', 'low')),
+    model                  text NOT NULL,
+    actor_tenant_id        text NOT NULL,
+    actor_name             text NOT NULL,
+    credential             text NOT NULL,
+    created_at             timestamptz NOT NULL,
+    answer                 text CHECK (answer IN ('as_suggested', 'edited', 'rejected')),
+    answered_by_tenant_id  text,
+    answered_by_name       text,
+    answered_credential    text,
+    answered_at            timestamptz,
+    answer_note            text,
+    decision_id            text
+);
+CREATE INDEX IF NOT EXISTS exception_suggestions_item
+    ON exception_suggestions (tenant_id, item_key, created_at DESC);
+
+-- A decision made from a suggestion names it, and says whether the person
+-- kept its words (`as_suggested`) or changed them (`edited`).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'exception_decisions'
+          AND column_name = 'suggestion_id'
+    ) THEN
+        ALTER TABLE exception_decisions
+            ADD COLUMN suggestion_id text,
+            ADD COLUMN from_suggestion text CHECK (from_suggestion IN ('as_suggested', 'edited'));
+    END IF;
+END $$;
 
 -- ── support ─────────────────────────────────────────────────────────
 -- The support assistant's conversations, kept for 30 days after their last
@@ -664,7 +720,7 @@ BEGIN
                              'support_conversations', 'support_tickets', 'support_replies',
                              'import_files', 'import_rows', 'import_layouts',
                              'access_log', 'access_alerts', 'notify_settings', 'daily_checks',
-                             'exception_decisions'] LOOP
+                             'exception_decisions', 'exception_suggestions'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

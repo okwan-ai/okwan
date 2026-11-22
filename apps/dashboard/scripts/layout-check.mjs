@@ -433,6 +433,144 @@ async function checkDeciding(page) {
   if (!fits) await note(page, where, "a long name is cut off at the edge of its item on a phone");
 }
 
+/** Okwan's suggestion on the seed's unpaid batch (C60, C61): asked for,
+ *  shown with the records it rests on drawn as Okwan has them, turned down
+ *  with a reason by pressing Enter, used and not used, asked again, used and
+ *  changed, its answer lost and sent again from the panel opened again, and
+ *  the decision says it came from a changed suggestion, recorded once.
+ *  Nothing is decided by asking. On a phone the panel does not scroll
+ *  sideways. The attacker's pass on the panel (2026-11-22) is p1 to p7. */
+async function checkSuggesting(page) {
+  const where = "a suggestion on an open item";
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/exceptions`, { waitUntil: "networkidle" });
+  const batch = () => page.locator("[data-exception]").filter({ has: page.locator("bdi[data-file-ref]", { hasText: /^B-2004$/ }) });
+  if ((await batch().count()) !== 1) return note(page, where, "the seed's unpaid batch is not open");
+  const href = await batch().locator("a[href^='/merchants/ten_']").getAttribute("href");
+  const merchant = href.split("/")[2].split("?")[0];
+  await batch().locator("button[data-decide]").click();
+  const panel = page.locator("[role=dialog][aria-labelledby=slideover-title]");
+  const ask = panel.locator("button[data-ask-suggestion]");
+  if (!(await ask.waitFor({ timeout: 10000 }).then(() => true, () => false))) {
+    return note(page, where, "the Decide panel offers no suggestion");
+  }
+  const history = panel.locator("ol[data-history] > li");
+  await history.first().waitFor({ timeout: 5000 }).catch(() => {});
+  const decided = await history.count();
+  await ask.click();
+  const card = panel.locator("[data-suggestion=explained]");
+  if (!(await card.waitFor({ timeout: 15000 }).then(() => true, () => false))) return note(page, where, "no suggestion is shown");
+  if ((await card.locator("bdi[data-suggested]").count()) !== 1) await note(page, where, "the suggestion's note is not drawn as text of its own");
+  const cited = card.locator("li[data-cited]");
+  if ((await cited.count()) < 1) await note(page, where, "the suggestion shows no record it rests on");
+  if ((await cited.first().locator("bdi[data-cited-ref]", { hasText: /^B-2004$/ }).count()) !== 1) {
+    await note(page, where, "the record a suggestion rests on is not drawn as the merchant's own text");
+  }
+  if (!(await cited.first().innerText()).includes("$1,238.27")) await note(page, where, "the cited record does not show its amount");
+  if ((await cited.first().locator("bdi[data-why]").count()) !== 1) await note(page, where, "the model's reason is not drawn as text of its own");
+  const wide = await panel.evaluate((el) => {
+    const box = el.querySelector("[data-suggest]") ?? el;
+    return box.scrollWidth > box.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1;
+  });
+  if (wide) await note(page, where, "the suggestion scrolls sideways on a phone");
+  // Asking decided nothing: the history holds what it held.
+  if ((await history.count()) !== decided) await note(page, where, "asking for a suggestion recorded a decision");
+  // p6: a reference beside a suggestion is drawn as the list draws it.
+  if ((await cited.first().locator("bdi[data-cited-ref]").getAttribute("dir")) !== "ltr") {
+    await note(page, where, "a reference beside the suggestion is drawn in another direction than in the list");
+  }
+  // p5: a cited decision shows what it was made on, from the record.
+  const said = cited.filter({ hasText: "Decided on this item" });
+  if ((await said.count()) !== 1 || !(await said.innerText()).includes("on $1,238.27")) {
+    await note(page, where, "a cited decision does not show the amount it was made on");
+  }
+  // The decision cited is the one checkDeciding left: a 40-line note, cut to
+  // three lines beside the suggestion.
+  const citedNote = said.locator("[data-cited-note] bdi");
+  if ((await citedNote.count()) === 1 && ((await citedNote.boundingBox())?.height ?? 0) > 90) {
+    await note(page, where, "a cited decision's long note is drawn whole beside the suggestion");
+  }
+  // p1: Enter in "Why not" turns the suggestion down and records no decision.
+  await card.locator("button[data-not-this]").click();
+  await panel.locator("input[name=refusal]").fill("Layout check: not this.");
+  await panel.locator("input[name=refusal]").press("Enter");
+  const again = panel.locator("button[data-ask-suggestion]", { hasText: "Ask again" });
+  if (!(await again.waitFor({ timeout: 10000 }).then(() => true, () => false))) return note(page, where, "Enter in Why not did not turn the suggestion down");
+  if ((await history.count()) !== decided || (await batch().count()) !== 1) {
+    return note(page, where, "Enter in Why not recorded a decision");
+  }
+  // p2: a suggestion used and then not used takes its words with it, both ways.
+  const form = panel.locator("form[data-decide-form]");
+  const noteBox = form.locator("textarea[name=note]");
+  await again.click();
+  if (!(await card.locator("bdi[data-suggested]", { hasText: "suggestion 2" }).waitFor({ timeout: 15000 }).then(() => true, () => false))) {
+    return note(page, where, "asking again after turning one down shows no new suggestion");
+  }
+  await card.locator("button[data-use-suggestion]").click();
+  // p4: the note box shows all of what Use this put in it.
+  const hidden = await noteBox.evaluate((el) => el.scrollHeight > el.clientHeight + 2);
+  if (hidden) await note(page, where, "the note box hides part of the suggestion's words");
+  await form.locator("button[data-drop-suggestion]").click();
+  if ((await noteBox.inputValue()) !== "") await note(page, where, "Don't use it leaves the suggestion's words in the note");
+  await card.locator("button[data-use-suggestion]").click();
+  await card.locator("button[data-not-this]").click();
+  await panel.locator("button[data-refuse-suggestion]").click();
+  await again.waitFor({ timeout: 10000 }).catch(() => {});
+  if ((await noteBox.inputValue()) !== "") await note(page, where, "turning a suggestion down leaves its words in the note");
+  await again.click();
+  if (!(await card.locator("bdi[data-suggested]", { hasText: "suggestion 3" }).waitFor({ timeout: 15000 }).then(() => true, () => false))) {
+    return note(page, where, "asking again shows no new suggestion");
+  }
+  // Used, then changed: the decision is the person's and says so.
+  await card.locator("button[data-use-suggestion]").click();
+  if (!(await form.locator("input[value=explained]").isChecked())) await note(page, where, "Use this does not choose Explain it");
+  const used = await noteBox.inputValue();
+  if (!used.startsWith("Layout check suggestion 3")) await note(page, where, "Use this does not put the suggestion's words in the note");
+  const mine = `${used} Checked with the processor.`;
+  await noteBox.fill(mine);
+  // p3: the answer is lost; the panel is closed and opened again, where the
+  // suggestion, now answered, is not offered; the same decision sent again
+  // is recorded once, still made from the suggestion.
+  const bodies = [];
+  await page.route("**/api/merchants/**/decisions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    bodies.push(JSON.parse(route.request().postData() ?? "{}"));
+    if (bodies.length === 1) { await route.fetch(); return route.abort("connectionreset"); }
+    return route.continue();
+  });
+  await form.locator("button[type=submit]").click();
+  await form.locator("[role=alert]").filter({ hasText: "can't tell whether" }).waitFor({ timeout: 10000 }).catch(() => {});
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await batch().locator("button[data-decide]").click();
+  await form.locator("input[value=explained]").check();
+  await noteBox.fill(mine);
+  await form.locator("button[type=submit]").click();
+  const gone = await batch().waitFor({ state: "detached", timeout: 15000 }).then(() => true, () => false);
+  await page.unroute("**/api/merchants/**/decisions");
+  if (!gone) return note(page, where, "the batch explained from a suggestion is still on the list");
+  if (!/^sug_[0-9a-f]{16}$/.test(bodies[0]?.suggestion ?? "")) await note(page, where, "the decision does not name the suggestion it was made from");
+  if (bodies[1]?.suggestion !== bodies[0]?.suggestion) await note(page, where, "the decision sent again after a lost answer does not name its suggestion");
+  await page.goto(`${BASE}/exceptions?merchant=${encodeURIComponent(merchant)}&state=closed`, { waitUntil: "networkidle" });
+  const from = batch().locator("[data-from-suggestion]");
+  if ((await from.count()) !== 1 || !(await from.innerText()).includes("changed")) {
+    await note(page, where, "the closed batch does not say its decision came from a changed suggestion");
+  }
+  await batch().locator("button[data-decide]").click();
+  await panel.locator("ol[data-history] > li").first().waitFor({ timeout: 5000 }).catch(() => {});
+  if ((await panel.locator("ol[data-history] > li").count()) !== decided + 1) {
+    await note(page, where, "one decision whose answer was lost is recorded twice");
+  }
+  await page.keyboard.press("Escape");
+  // p7: a body bigger than a change's fields is refused before it is read.
+  const big = await page.evaluate(async (path) => {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ pad: "x".repeat(1024 * 1024) }) });
+    return r.status;
+  }, `/api/merchants/${encodeURIComponent(merchant)}/exceptions/pair/batches_deposits/${"0".repeat(24)}/suggestions`);
+  if (big !== 413) await note(page, where, `a 1 MB body to a suggestion route is answered ${big}, not 413`);
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -503,6 +641,7 @@ try {
   if (merchant) slow = await checkSlowly(browser, session, merchant);
   const last = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce", storageState: session });
   await checkDeciding(await last.newPage());
+  await checkSuggesting(await last.newPage());
   await last.close();
 } finally {
   await browser.close();
@@ -514,4 +653,4 @@ if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, a suggestion on it turned down, asked again and decided from, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
