@@ -345,7 +345,11 @@ function citedShown(c: ApiCited, check: string, kind: "pair" | "across"): CitedS
   const status = str(r.status) as ApiDecision["status"] | null;
   const owner = str(r.owner);
   const by = asWritten(str(r.by) ?? "");
-  const facts = [status ? SAID[status] ?? "Decided" : "Decided", `by ${by}`, dayOf(str(r.at))].filter(Boolean).join(", ");
+  // A decision made from one of Okwan's suggestions says so: its words began as Okwan's.
+  const from = r.from_suggestion === "as_suggested" ? "in Okwan's suggested words"
+    : r.from_suggestion === "edited" ? "from Okwan's suggestion, changed" : "";
+  const facts = [status ? SAID[status] ?? "Decided" : "Decided", `by ${by}`, from, dayOf(str(r.at))]
+    .filter(Boolean).join(", ");
   return {
     label: c.ref.startsWith("D") ? "Decided on this item" : "How another item was closed",
     what: facts, refs: owner ? [{ label: "Given to", value: asNote(owner) }] : [],
