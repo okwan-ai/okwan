@@ -339,8 +339,9 @@ function citedShown(c: ApiCited, check: string, kind: "pair" | "across"): CitedS
     const facts = [what({ check, kind, finding }), amount !== null ? formatMinor(amount, str(r.currency)) : "",
       day && `dated ${day}`].filter(Boolean).join(", ");
     const item = { check, kind, left_ref: str(r.left_ref), right_ref: str(r.right_ref), order_ref: str(r.order_ref) };
-    return { label: r.item === true ? "This item" : "Another open finding", what: facts,
-             refs: refs(item as ApiItem), note: null, why };
+    const closed = r.decided === "explained" || r.decided === "resolved";
+    return { label: r.item === true ? "This item" : closed ? "Another finding, closed by a person" : "Another open finding",
+             what: facts, refs: refs(item as ApiItem), note: null, why };
   }
   const status = str(r.status) as ApiDecision["status"] | null;
   const owner = str(r.owner);
@@ -348,7 +349,12 @@ function citedShown(c: ApiCited, check: string, kind: "pair" | "across"): CitedS
   // A decision made from one of Okwan's suggestions says so: its words began as Okwan's.
   const from = r.from_suggestion === "as_suggested" ? "in Okwan's suggested words"
     : r.from_suggestion === "edited" ? "from Okwan's suggestion, changed" : "";
-  const facts = [status ? SAID[status] ?? "Decided" : "Decided", `by ${by}`, from, dayOf(str(r.at))]
+  // What the decision was made on, as stored with it: the amount and day.
+  const on = (r.on ?? {}) as { amount_minor?: unknown; currency?: unknown; dated_on?: unknown };
+  const amount = num(on.amount_minor);
+  const stake = [amount !== null ? `on ${formatMinor(Math.abs(amount), str(on.currency))}` : "",
+    str(on.dated_on) ? `dated ${dayOf(str(on.dated_on))}` : ""].filter(Boolean).join(" ");
+  const facts = [status ? SAID[status] ?? "Decided" : "Decided", stake, `by ${by}`, from, dayOf(str(r.at))]
     .filter(Boolean).join(", ");
   return {
     label: c.ref.startsWith("D") ? "Decided on this item" : "How another item was closed",

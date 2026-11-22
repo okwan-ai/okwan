@@ -189,11 +189,15 @@ class SeededModel:
             text = "This is the layout check's assistant; it answers nothing."
         else:
             self.asked += 1
+            shown = kwargs["messages"][0]["content"][0]["text"]
+            evidence = [{"ref": "F1", "why": "The batch has no deposit in the days the statement covers."}]
+            if '"ref": "D1"' in shown:
+                evidence.append({"ref": "D1", "why": "Someone already looked into it."})
             text = json.dumps({
                 "suggestion": "explained", "confidence": "medium",
                 "note": f"Layout check suggestion {self.asked}: the batch closed on a Monday and is paid in the "
                         "deposit after the last day the statement covers.",
-                "evidence": [{"ref": "F1", "why": "The batch has no deposit in the days the statement covers."}]})
+                "evidence": evidence})
         return SimpleNamespace(stop_reason="end_turn", model="claude-opus-5-5",
                                content=[{"type": "text", "text": text}])
 

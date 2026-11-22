@@ -96,7 +96,8 @@ function Suggest({ line, using, onUse, onDrop }: {
         ? { state: "shown", s: suggestionShown(data.suggestion as ApiSuggestion, line) }
         : { state: "idle", said: String(data.detail ?? "Okwan couldn't make a suggestion. Try again in a moment.") });
     } catch {
-      setAsked({ state: "idle", said: "Okwan didn't answer. Ask again: a suggestion already made is shown, never made twice." });
+      setAsked({ state: "idle", said: "Okwan didn't answer. Ask again in a moment: a suggestion already made is shown, "
+        + "and one still being made is not made twice." });
     }
   }
 
@@ -163,9 +164,9 @@ function SuggestionCard({ s, using, busy, refusing, reason, onUse, onRefusing, o
             <li key={n} className="min-w-0 [overflow-wrap:anywhere]" data-cited>
               <p className="text-ink"><span className="font-medium">{c.label}</span>{c.what && <>: {c.what}</>}</p>
               {c.refs.map((r, m) => (
-                <p key={m} className="text-ink-soft">{r.label} <bdi dir="auto" data-cited-ref className="font-medium text-ink">{r.value}</bdi></p>
+                <p key={m} className="text-ink-soft">{r.label} <bdi dir="ltr" data-cited-ref className="break-all rounded bg-canvas px-1.5 py-0.5 font-mono text-[13px] text-ink">{r.value}</bdi></p>
               ))}
-              {c.note && <p className="text-ink-soft">Note: <bdi dir="auto" className="whitespace-pre-line">{c.note}</bdi></p>}
+              {c.note && <p className="text-ink-soft" data-cited-note>Note: <bdi dir="auto" className="line-clamp-3 whitespace-pre-line">{c.note}</bdi></p>}
               <p className="text-ink-soft">Okwan: <bdi dir="auto" data-why>{c.why}</bdi></p>
             </li>
           ))}
@@ -174,17 +175,18 @@ function SuggestionCard({ s, using, busy, refusing, reason, onUse, onRefusing, o
       <p className="text-ink-soft">{s.asked}. These are Okwan&apos;s words, not a decision: check them against the records.</p>
       {s.answered && <p role="alert" className="font-medium text-danger">{s.answered}</p>}
       {refusing ? (
-        <div className="grid gap-2">
+        <form className="grid gap-2" data-refusal-form
+          onSubmit={(e) => { e.preventDefault(); if (!busy) onRefuse(); }}>
           <label className="grid gap-1.5">
             <span className="font-semibold text-ink">Why not (if you want to say)</span>
             <input name="refusal" value={reason} onChange={(e) => onReason(e.target.value)} maxLength={NOTE_MAX}
               autoComplete="off" className="min-h-11 rounded-xl border border-line bg-surface px-3" />
           </label>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={onRefuse} disabled={busy} data-refuse-suggestion>{busy ? "Turning it down…" : "Turn it down"}</Button>
+            <Button type="submit" disabled={busy} data-refuse-suggestion>{busy ? "Turning it down…" : "Turn it down"}</Button>
             <Button type="button" onClick={() => onRefusing(false)} disabled={busy}>Keep it</Button>
           </div>
-        </div>
+        </form>
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={onUse} disabled={using} data-use-suggestion>
@@ -233,17 +235,26 @@ function History({ path, reload }: { path: string; reload: number }) {
 }
 
 /** The key each decision was last sent with, by item and decision as
- *  written, for as long as the page is open: a decision sent again after a
- *  lost answer, from this panel or after closing and opening it again, goes
- *  with the same key and the API answers with the one already made. A key is
- *  forgotten once its decision is known to be recorded. */
-const KEYS = new Map<string, string>();
+ *  written, for as long as the page is open, with the suggestion it was made
+ *  from: a decision sent again after a lost answer, from this panel or after
+ *  closing and opening it again (where the suggestion, now answered, is no
+ *  longer offered), goes with the same key and the same suggestion, and the
+ *  API answers with the one already made. A key is forgotten once its
+ *  decision is known to be recorded. */
+const KEYS = new Map<string, { key: string; suggestion: string | undefined }>();
 
 /** A fresh Idempotency-Key. `randomUUID` is only there on HTTPS and
  *  localhost; random bytes are everywhere. */
 function freshKey(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Rows for the note box: enough to show what is in it, from four to sixteen,
+ *  so words put there from a suggestion are seen before they are recorded. */
+function rowsFor(text: string): number {
+  const lines = text.split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 60)), 0);
+  return Math.min(16, Math.max(4, lines));
 }
 
 function DecideForm({ line, view, onDone, onUnsure }: {
@@ -264,21 +275,22 @@ function DecideForm({ line, view, onDone, onUnsure }: {
     if (!ready || busy) return;
     // A name is part of the decision only when the item is given to someone:
     // one typed and then left for another choice is not sent.
-    const decision = {
+    const written = {
       status: choice,
       owner: needsOwner ? owner.trim() || undefined : undefined,
       note: note.trim() || undefined,
       // What the panel showed: the API refuses the decision if the item has
       // changed since, so it never closes an amount the person did not see.
       seen: line.terms ?? undefined,
-      // The suggestion the person decided from, if they did: the API records
-      // whether they kept its words.
-      suggestion: from ?? undefined,
     };
-    const text = JSON.stringify(decision);
-    const slot = `${line.decide}\n${text}`;
-    const key = KEYS.get(slot) ?? freshKey();
-    KEYS.set(slot, key);
+    const slot = `${line.decide}\n${JSON.stringify(written)}`;
+    const kept = KEYS.get(slot);
+    // The suggestion the person decided from, if they did: the API records
+    // whether they kept its words.
+    const suggestion = from ?? kept?.suggestion;
+    const key = kept?.key ?? freshKey();
+    KEYS.set(slot, { key, suggestion });
+    const text = JSON.stringify({ ...written, suggestion });
     setBusy(true);
     setError(null);
     try {
@@ -309,11 +321,18 @@ function DecideForm({ line, view, onDone, onUnsure }: {
     setFrom(s.id);
   }
 
+  /** A suggestion turned down, or no longer used: its words leave the note
+   *  with it, so nothing of Okwan's is recorded as the person's own. */
+  function drop(id: string) {
+    if (from !== id) return;
+    setFrom(null);
+    setNote("");
+  }
+
   return (
+    <div className="grid gap-5">
+      {view === "open" && <Suggest line={line} using={from} onUse={use} onDrop={drop} />}
     <form onSubmit={submit} className="grid gap-5" data-decide-form>
-      {view === "open" && (
-        <Suggest line={line} using={from} onUse={use} onDrop={(id) => setFrom((f) => (f === id ? null : f))} />
-      )}
       <fieldset className="grid gap-2">
         <legend className="mb-1 text-sm font-semibold text-ink">What do you decide?</legend>
         {choices.map((c) => (
@@ -337,7 +356,7 @@ function DecideForm({ line, view, onDone, onUnsure }: {
       <label className="grid gap-1.5 text-sm">
         <span className="font-semibold text-ink">{needsOwner ? "A note (if you want one)" : "Why"}</span>
         <textarea name="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={NOTE_MAX}
-          required={!needsOwner} rows={4} className="rounded-xl border border-line bg-surface px-3 py-2" />
+          required={!needsOwner} rows={rowsFor(note)} className="rounded-xl border border-line bg-surface px-3 py-2" />
         <span className="text-ink-soft">
           Kept with the item as you write it, with your account&apos;s name and the date. It is never changed later.
         </span>
@@ -345,7 +364,8 @@ function DecideForm({ line, view, onDone, onUnsure }: {
           <span className="text-ink-soft" data-using-suggestion>
             From Okwan&apos;s suggestion. Change it as you like: the decision is yours, and it says whether you kept
             the suggested words.{" "}
-            <button type="button" className="font-medium text-accent underline" onClick={() => setFrom(null)}>Don&apos;t use it</button>
+            <button type="button" className="font-medium text-accent underline" onClick={() => drop(from)} data-drop-suggestion>
+              Don&apos;t use it</button>
           </span>
         )}
       </label>
@@ -356,6 +376,7 @@ function DecideForm({ line, view, onDone, onUnsure }: {
         </Button>
       </div>
     </form>
+    </div>
   );
 }
 

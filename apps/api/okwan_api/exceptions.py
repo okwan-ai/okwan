@@ -64,6 +64,7 @@ from okwan_recon.exceptions import (
 from okwan_recon.registry import all_across, all_reconciliations
 from okwan_vault import (
     ITEM_DECISIONS_MAX,
+    ITEM_SUGGESTIONS_MAX,
     Decision,
     DecisionConflict,
     HistoryFull,
@@ -222,10 +223,18 @@ def _request_hash(kind: str, check: str, key: str, status: str, owner: str | Non
 
 
 
+async def _is_suggested(store, tenant_id: str, kind: str, check: str, key: str, note: str) -> bool:
+    """Whether a note is word for word one of Okwan's suggestions on the
+    item, turned down or not: such a note is never recorded as a person's
+    own words."""
+    shown = ITEM_SUGGESTIONS_MAX * (MAX_DEPTH + 1)
+    return any(s.note == note for s in await store.suggestions_of(tenant_id, kind, check, key, shown))
+
+
 async def _from_suggestion(store, tenant_id: str, kind: str, check: str, key: str, item: dict,
                            status: str, note: str | None, suggestion_id: str, run_id: str) -> str:
-    """How a decision is made from a suggestion: `as_suggested` when it
-    explains the item in the suggested words, else `edited`. Refused for
+    """How a decision is made from a suggestion: `as_suggested` when its
+    note is the suggestion's words, word for word, else `edited`. Refused for
     another item's suggestion, one already answered, or one made from
     another result than the check's newest (`run_id`): the records it rests
     on are no longer the result, even where the item's terms came back."""
@@ -240,7 +249,7 @@ async def _from_suggestion(store, tenant_id: str, kind: str, check: str, key: st
     if s.run_id != run_id or s.terms != terms(item):
         raise HTTPException(409, "this item's check has a newer result than the one the suggestion was made "
                                  "from, so the records it rests on may have changed: ask for a new one")
-    return "as_suggested" if status == s.status == "explained" and note == s.note else "edited"
+    return "as_suggested" if note == s.note else "edited"
 
 
 async def _root(store, tenant_id: str) -> str:
@@ -454,6 +463,10 @@ def build_router() -> APIRouter:
         if body.suggestion is not None:
             source = await _from_suggestion(store, tenant_id, kind, check, key, item, body.status, note,
                                             body.suggestion, g.id)
+        elif note is not None and await _is_suggested(store, tenant_id, kind, check, key, note):
+            raise HTTPException(422, "this note is one of Okwan's suggestions on this item, word for word: decide "
+                                     "from the suggestion, so the record says whose words they are, or write it in "
+                                     "your own words")
         if body.status == "assigned" and note is None:
             now_on = (await store.current_decisions([(tenant_id, key)])).get((tenant_id, kind, check, key))
             if holds(now_on, item):

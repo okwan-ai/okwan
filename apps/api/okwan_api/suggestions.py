@@ -102,6 +102,9 @@ EVIDENCE_MAX = 8
 #: A string in what the model is shown, at most; a list, at most so long.
 TEXT_MAX, LIST_MAX = 200, 20
 WHY_MAX = 300
+#: A suggestion's note: one paragraph on one line, as the model is asked.
+#: Line breaks are what a note could draw a section of its own with.
+SUGGESTED_NOTE_MAX = 600
 #: Suggestions one item's list answers with: all of them, since each account
 #: that may ask (the item's own and those above it) asks ITEM_SUGGESTIONS_MAX.
 SHOWN = ITEM_SUGGESTIONS_MAX * (MAX_DEPTH + 1)
@@ -116,6 +119,8 @@ DAILY_ACCOUNT, DAILY_MERCHANT = 300, 100
 #: JSON escapes, so nothing in the data can close or open the block it is in.
 _DATA_ESCAPES = str.maketrans({c: f"{chr(92)}u{ord(c):04x}" for c in "<>&"})
 _SUGGESTION_ID = re.compile(r"sug_[0-9a-f]{16}")
+#: The items a suggestion is being made on, in this process (one instance, G7).
+_MAKING: set[tuple[str, str, str, str]] = set()
 
 SYSTEM = """You help a person at a business settle one open item from a reconciliation check in \
 Okwan. Okwan's rules matched what they could; this item is a finding they could not settle: a \
@@ -324,6 +329,7 @@ async def brief(store, tenant_id: str, kind: str, name: str, key: str, run) -> t
         entry = {"ref": ref, **_shown(o, by_key.get(o["key"], {})), "vs_F1": _versus(item, o)}
         d = current.get((tenant_id, kind, name, o["key"]))
         if d is not None:
+            records[ref]["decided"] = d.status
             entry["decided"] = {"status": d.status, "note": _short(d.note),
                                 **_okwans(d)}
         shown_others.append(entry)
@@ -377,7 +383,7 @@ def checked(answer: Any, records: dict[str, dict]) -> tuple[str, str, list[dict]
     status, confidence = answer.get("suggestion"), answer.get("confidence")
     if status not in ("explained", "none") or confidence not in ("high", "medium", "low"):
         raise _Unbacked("the answer's suggestion or confidence is not one asked for")
-    note = _plain(answer.get("note"), "The note", lines=True, most=NOTE_MAX)
+    note = _plain(answer.get("note"), "The note", lines=False, most=SUGGESTED_NOTE_MAX)
     cited = answer.get("evidence")
     if not isinstance(cited, list) or not cited or len(cited) > EVIDENCE_MAX:
         raise _Unbacked(f"the answer cites no record, or more than {EVIDENCE_MAX}")
@@ -532,6 +538,20 @@ def build_router() -> APIRouter:
         if made is not None:
             response.status_code = 200
             return {"suggestion": suggestion_dict(made, item, g.id), "reused": True}
+        # One suggestion is made on an item at a time: asked again while it
+        # is being made (an answer lost on the way back, a second tab), it is
+        # refused rather than made twice.
+        slot = (tenant_id, kind, check, key)
+        if slot in _MAKING:
+            raise HTTPException(409, "a suggestion on this item is being made; ask again in a moment",
+                                headers={"Retry-After": "10"})
+        _MAKING.add(slot)
+        try:
+            return await _make(request, actor, store, tenant_id, kind, check, key, g, item)
+        finally:
+            _MAKING.discard(slot)
+
+    async def _make(request, actor, store, tenant_id, kind, check, key, g, item) -> dict[str, Any]:
         asked = [s for s in await store.suggestions_of(tenant_id, kind, check, key, SHOWN)
                  if s.actor_tenant_id == actor.id]
         if len(asked) >= ITEM_SUGGESTIONS_MAX:

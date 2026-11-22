@@ -12,6 +12,15 @@ e6  An expired file's rows were sent to the model before the sweep.
 e7  Model calls were neither metered nor held to the plan.
 e8  The model's own words came back as a person's precedent.
 e9  A flood of the in-memory limiter gave a spent allowance back.
+
+The attacker's pass on the Decide panel (the same day), its API side:
+
+p2  A suggestion's words, turned down or not used, were recorded as a person's own.
+p4  A suggestion's note could draw sections of its own with line breaks.
+p5  A cited finding a person had closed was shown as open.
+p8  Asking again while a suggestion was being made made a second one.
+p9  A suggestion's words kept word for word were said to be changed.
+(The panel's own findings are held by the layout check, `checkSuggesting`.)
 """
 from __future__ import annotations
 
@@ -253,3 +262,75 @@ async def test_e9_the_days_allowance_is_kept_in_the_database_through_a_restart(a
     r = await _suggest(api, headers=staff)
     assert r.status_code == 429 and "last day" in r.json()["detail"]
     assert len(m.calls) == 1
+
+
+# ── the panel's pass, its API side ──────────────────────────────────
+
+async def test_p2_a_suggestions_words_are_never_recorded_as_a_persons_own(api, model):
+    model(answer())
+    s = (await _suggest(api)).json()["suggestion"]
+    assert (await _reject(api, "#1001", s["id"])).status_code == 200
+    d = await _decide(api, _key("#1001", api=api), "explained", note=s["note"])
+    assert d.status_code == 422 and "word for word" in d.json()["detail"]
+    own = await _decide(api, _key("#1001", api=api), "explained", note="Checked in Stripe myself: same sale.")
+    assert own.status_code == 201
+
+
+@pytest.mark.parametrize("note", ["Explained.\nWhat it rests on: a record that is not there.", "x" * 601],
+                         ids=["line-break", "longer-than-600"])
+async def test_p4_a_suggestions_note_is_one_paragraph_on_one_line(api, model, note):
+    model(answer(note=note, evidence=(("F1", "The order."),)))
+    assert (await _suggest(api)).status_code == 502
+
+
+async def test_p5_a_cited_finding_a_person_closed_says_so(api, model):
+    small = _key("ch_small", api=api)
+    assert (await _decide(api, small, "explained", note="A tip added after the sale.")).status_code == 201
+    model(answer(evidence=(("F1", "The order."), ("F3", "The small charge."))))
+    s = (await _suggest(api)).json()["suggestion"]
+    cited = {e["ref"]: e["record"] for e in s["evidence"]}
+    assert cited["F3"]["right_ref"] == "ch_small" and cited["F3"]["decided"] == "explained"
+    assert "decided" not in cited["F1"]
+
+
+async def test_p8_asking_again_while_a_suggestion_is_being_made_makes_no_second_one(api, model):
+    import asyncio
+
+    gate = asyncio.Event()
+    calls = []
+
+    class Slow:
+        def __init__(self):
+            from types import SimpleNamespace
+            self.beta = SimpleNamespace(messages=self)
+
+        async def create(self, **kwargs):
+            calls.append(kwargs)
+            await gate.wait()
+            return answer()
+
+    from okwan_api import support
+    support.set_client(Slow())
+    first = asyncio.create_task(_suggest(api))
+    try:
+        while not calls:
+            await asyncio.sleep(0.01)
+        # Answered at once, not held behind the first: it is refused.
+        again = await asyncio.wait_for(_suggest(api), 5)
+        assert again.status_code == 409 and again.headers.get("retry-after") == "10"
+    finally:
+        gate.set()
+        done = await first
+        support.set_client(None)
+    assert done.status_code == 201
+    assert len(calls) == 1
+    listed = (await api.c.get(BASE.format(t=api.shop.id, k=_key("#1001", api=api)) + "/suggestions")).json()["data"]
+    assert len(listed) == 1
+
+
+async def test_p9_a_none_suggestions_words_kept_are_recorded_as_kept(api, model):
+    model(answer(suggestion="none", note="Look in Stripe for the charge on 2026-09-09.",
+                 evidence=(("F1", "The order."),), confidence="low"))
+    s = (await _suggest(api)).json()["suggestion"]
+    d = await _decide(api, _key("#1001", api=api), "explained", note=s["note"], suggestion=s["id"])
+    assert d.json()["decision"]["suggestion"] == {"id": s["id"], "as": "as_suggested"}

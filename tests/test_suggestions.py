@@ -347,7 +347,7 @@ async def test_a_person_decides_from_a_suggestion_in_its_words_and_the_decision_
 
 @pytest.mark.parametrize("status,note,owner", [
     ("explained", "The charge came the next day; same sale, checked in Stripe.", None),
-    ("resolved", "The charge came the next day; same sale.", None),
+    ("resolved", "The charge came the next day; same sale. Checked.", None),
     ("assigned", None, "Ama"),
 ])
 async def test_a_decision_that_changes_the_suggestion_is_recorded_as_edited(api, model, status, note, owner):
@@ -358,12 +358,12 @@ async def test_a_decision_that_changes_the_suggestion_is_recorded_as_edited(api,
     assert r.json()["decision"]["suggestion"] == {"id": s["id"], "as": "edited"}
 
 
-async def test_a_none_suggestion_explained_in_its_words_is_still_edited(api, model):
+async def test_a_suggestions_words_kept_word_for_word_are_recorded_as_its_words_whatever_the_choice(api, model):
     model(answer(suggestion="none", note="Look in Stripe for a charge of $38.84 on 2026-09-09.",
                  evidence=(("F1", "The order."),), confidence="low"))
     s = (await _suggest(api)).json()["suggestion"]
     r = await _decide(api, _key("#1001", api=api), "explained", note=s["note"], suggestion=s["id"])
-    assert r.json()["decision"]["suggestion"]["as"] == "edited"
+    assert r.json()["decision"]["suggestion"]["as"] == "as_suggested"
 
 
 async def test_a_suggestion_is_decided_from_once_and_a_retry_is_the_same_decision(api, model):
