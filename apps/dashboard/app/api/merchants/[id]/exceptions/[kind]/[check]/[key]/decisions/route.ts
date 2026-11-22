@@ -29,6 +29,7 @@ const SEEN_MAX = 200;
 const SUGGESTION = /^sug_[0-9a-f]{16}$/;
 
 type Params = { params: Promise<{ id: string; kind: string; check: string; key: string }> };
+type DecisionBody = { status?: unknown; owner?: unknown; note?: unknown; seen?: unknown; suggestion?: unknown } | null;
 
 function path(id: string, kind: string, check: string, key: string): string | null {
   if (!KINDS.has(kind) || !CHECK.test(check) || !KEY.test(key)) return null;
@@ -45,8 +46,7 @@ export async function POST(req: Request, { params }: Params) {
   if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
     return fail("send the decision as JSON", 415);
   }
-  const body = await readBody<{ status?: unknown; owner?: unknown; note?: unknown; seen?: unknown;
-                                suggestion?: unknown } | null>(req);
+  const body = await readBody<DecisionBody>(req);
   if (body instanceof Response) return body;
   if (body === null || typeof body !== "object" || Array.isArray(body)) return fail("expected a decision", 400);
   const token = await session();
