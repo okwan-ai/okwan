@@ -431,11 +431,17 @@ def _the_address(status: int | None) -> bool:
 #: The addresses whose queues this process is sending: each address's
 #: account and task. A round takes nothing more for them until it is done.
 _sending: dict[str, tuple[str, asyncio.Task]] = {}
+#: When each account was last given a place (monotonic seconds): of the
+#: accounts with nothing being sent, the one served longest ago goes first,
+#: so an account waiting for a place gets the next one that comes free.
+_served: dict[str, float] = {}
+SERVED_KEPT = 50_000
 
 
 async def deliver_due(at: datetime | None = None, *, wait: bool = True) -> int:
     """One round. Places are given out in turns: first one to each account
-    with deliveries due (those with nothing being sent before the rest),
+    with deliveries due (those with nothing being sent before the rest, and
+    of those the one served longest ago first),
     then a second to each, up to ACCOUNT_AT_ONCE an account and
     SENDING_AT_ONCE in all. An account given a place takes, in its own
     scope, up to ADDRESS_DELIVERIES for one of its addresses not being sent
@@ -451,7 +457,9 @@ async def deliver_due(at: datetime | None = None, *, wait: bool = True) -> int:
     for account, _ in _sending.values():
         busy[account] = busy.get(account, 0) + 1
     due = await store.webhook_due(at, ROUND_ACCOUNTS) if free > 0 else []
-    due = sorted(due, key=lambda a: busy.get(a, 0) > 0)
+    due = sorted(due, key=lambda a: (busy.get(a, 0) > 0, _served.get(a, 0.0)))
+    if len(_served) > SERVED_KEPT:
+        _served.clear()
     for turn in range(1, ACCOUNT_AT_ONCE + 1):
         for account in due:
             if free <= 0:
@@ -474,6 +482,7 @@ async def deliver_due(at: datetime | None = None, *, wait: bool = True) -> int:
             task.add_done_callback(lambda _t, a=address: _sending.pop(a, None))
             started.append(task)
             busy[account] = busy.get(account, 0) + 1
+            _served[account] = time.monotonic()
             free -= 1
     if not wait:
         return 0

@@ -151,6 +151,39 @@ async def test_f3_when_places_are_short_an_account_with_nothing_sending_goes_fir
             task.cancel()
 
 
+async def test_f3_an_account_that_was_just_served_waits_behind_one_that_was_not(receiver, monkeypatch):
+    """One place. A busy account's queue keeps coming back, its deliveries
+    older than anyone's; another account's event arrives. When the busy
+    account's turn ends, the place goes to the account that has waited."""
+    monkeypatch.setattr(wh, "SENDING_AT_ONCE", 1)
+    monkeypatch.setattr(wh, "QUEUE_SECONDS", 0.4)
+    store = MemoryStore(EnvMasterKey(new_key()))
+    data.set_store(store)
+    at = datetime.now(UTC)
+    receiver.slow["/slow"] = 0.15
+    busy = await store.create_tenant("Busy")
+    await store.add_webhook_endpoint(busy.id, url=f"https://{HOST}:{receiver.port}/slow",
+                                     secret=wh.new_secret(), created_by="s", at=at)
+    await _run(busy, [(f"B{i}", i, "2026-11-09") for i in range(40)], T0)
+    await wh.deliver_due(at + timedelta(seconds=1), wait=False)
+    victim = await store.create_tenant("Victim")
+    await store.add_webhook_endpoint(victim.id, url=f"https://{HOST}:{receiver.port}/fast",
+                                     secret=wh.new_secret(), created_by="s", at=at)
+    await _run(victim, [("V1", 1, "2026-11-09")], T0)
+    started = time.monotonic()
+    try:
+        while not any(r["path"] == "/fast" for r in receiver.requests) and time.monotonic() - started < 6:
+            await wh.deliver_due(at + timedelta(minutes=1), wait=False)
+            await asyncio.sleep(0.02)
+        paths = [r["path"] for r in receiver.requests]
+        assert "/fast" in paths, "the busy account took every place that came free"
+        assert paths.index("/fast") <= 6, "the waiting account was served after the busy one's next turn"
+    finally:
+        for value in list(wh._sending.values()):
+            task = value[1] if isinstance(value, tuple) else value
+            task.cancel()
+
+
 async def test_f3_an_addresses_turn_ends_and_the_rest_goes_back(world, receiver, monkeypatch):
     monkeypatch.setattr(wh, "QUEUE_SECONDS", 0.5)
     receiver.slow["/okwan"] = 0.3
