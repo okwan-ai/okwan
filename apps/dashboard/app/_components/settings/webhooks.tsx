@@ -8,13 +8,24 @@ import { CopyButton } from "../ui/copy-button";
 
 type Added = { id: string; url: string; secret: string };
 
+/** What a person is told when an answer never arrives: the request may have
+ *  been done all the same. */
+const LOST = "The answer did not arrive.";
+
 /**
  * Add an address for the account's events. The API checks it (HTTPS, port
  * 443, a public host) and answers its signing secret, which is shown here
- * once, as an API key is: the page keeps it only until "I've stored it".
- * The list above re-reads from the API as soon as the address is added.
+ * once, as an API key is. "I've stored it" wipes the secret and draws the
+ * form anew: React keeps a component's last state until it draws again, so
+ * the form that held the secret is thrown away rather than kept beside it.
+ * The list re-reads from the API as soon as the address is added.
  */
 export function AddWebhook({ full }: { full: boolean }) {
+  const [round, setRound] = useState(0);
+  return <AddForm key={round} full={full} focus={round > 0} onStored={() => setRound((r) => r + 1)} />;
+}
+
+function AddForm({ full, focus, onStored }: { full: boolean; focus: boolean; onStored: () => void }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState<Added | null>(null);
@@ -22,7 +33,11 @@ export function AddWebhook({ full }: { full: boolean }) {
   const panel = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const hint = useId();
-  // The secret appears where the form was: focus moves to it, and back after.
+  // Drawn anew after a secret was stored: focus goes back to the address.
+  useEffect(() => {
+    if (focus) field.current?.focus();
+  }, [focus]);
+  // The secret appears where the form was, and focus moves to it.
   useEffect(() => {
     if (added) panel.current?.focus();
   }, [added]);
@@ -33,16 +48,31 @@ export function AddWebhook({ full }: { full: boolean }) {
     if (!url) return;
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/webhooks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+    } catch {
+      // The address may have been added, with a secret no one has seen.
+      setBusy(false);
+      setError(`${LOST} If the address is now in the list below, its secret was not shown: delete it and add it again.`);
+      router.refresh();
+      return;
+    }
     const data = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setError(typeof data.detail === "string" ? data.detail : "it could not be added");
     setAdded({ id: data.id, url: data.url, secret: data.secret });
     router.refresh();
+  }
+
+  function stored() {
+    if (added) added.secret = "";  // the one object every copy of this state shares
+    setAdded(null);
+    onStored();
   }
 
   if (added) {
@@ -59,7 +89,7 @@ export function AddWebhook({ full }: { full: boolean }) {
           Events for <span className="break-all font-mono">{added.url}</span> are signed with it. Lost, it can&apos;t be
           recovered: add the address again for a new one and delete this one.
         </p>
-        <Button variant="primary" className="mt-5" onClick={() => { setAdded(null); requestAnimationFrame(() => field.current?.focus()); }}>
+        <Button variant="primary" className="mt-5" onClick={stored}>
           I&apos;ve stored it
         </Button>
       </div>
@@ -113,7 +143,15 @@ export function WebhookActions({ id, enabled }: { id: string; enabled: boolean }
     setBusy(action);
     setError(null);
     if (action === "test") setTried(null);
-    const res = await fetch(`/api/webhooks/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    let res: Response;
+    try {
+      res = await fetch(`/api/webhooks/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    } catch {
+      setBusy(null);
+      setError(action === "test" ? `${LOST} Send the test again.` : `${LOST} The list shows whether it is on.`);
+      if (action === "enable") router.refresh();
+      return;
+    }
     const data = await res.json().catch(() => ({}));
     setBusy(null);
     if (!res.ok) return setError(typeof data.detail === "string" ? data.detail : "something went wrong");

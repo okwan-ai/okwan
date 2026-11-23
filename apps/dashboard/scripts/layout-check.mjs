@@ -631,6 +631,36 @@ async function checkWebhooks(page) {
   const secret = (await panel.locator("code").first().textContent())?.trim() ?? "";
   if (!/^whsec_[A-Za-z0-9+/=]{32}$/.test(secret)) return note(page, where, `the secret reads "${secret.slice(0, 10)}…"`);
   await panel.getByRole("button", { name: "I've stored it" }).click();
+  // t1: nothing in the page holds the secret once it is stored, React's
+  // own copies of the form's state included.
+  const kept = await page.evaluate((secret) => {
+    const seen = new Set();
+    let hit = false;
+    const look = (v, depth) => {
+      if (hit || v == null || depth > 14) return;
+      if (typeof v === "string") { if (v.includes(secret)) hit = true; return; }
+      if (typeof v !== "object" || seen.has(v) || v instanceof Node) return;
+      seen.add(v);
+      for (const k of Object.keys(v)) {
+        if (["return", "child", "sibling", "alternate", "_owner", "_debugOwner", "stateNode"].includes(k)) continue;
+        try { look(v[k], depth + 1); } catch { /* a getter that throws holds nothing */ }
+      }
+    };
+    const fibers = new Set();
+    for (const el of document.querySelectorAll("*")) {
+      const key = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
+      for (let f = key ? el[key] : null; f && !fibers.has(f); f = f.return) {
+        fibers.add(f);
+        if (f.alternate) fibers.add(f.alternate);
+      }
+    }
+    for (const f of fibers) {
+      for (const part of [f.memoizedState, f.memoizedProps, f.pendingProps]) look(part, 0);
+      if (hit) break;
+    }
+    return hit;
+  }, secret);
+  if (kept) await note(page, where, "the secret is still held in the page after it was stored");
   const row = list.locator(":scope > li").filter({ hasText: url });
   // The list re-reads from the API once the address is added.
   if (!(await row.waitFor({ timeout: 10000 }).then(() => true, () => false))) return note(page, where, "the new address is not listed");
@@ -642,6 +672,33 @@ async function checkWebhooks(page) {
   await row.getByRole("button", { name: "Confirm: delete this webhook address" }).click();
   const gone = await row.waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false);
   if (!gone) return note(page, where, "the address was not deleted");
+  // t2: a character that draws as nothing is refused, in words.
+  await field.fill("https://hooks.acme-isv.example/okwan/events\u034f");
+  await add.click();
+  const ascii = await page.getByRole("alert").filter({ hasText: "ASCII" }).waitFor({ timeout: 10000 }).then(() => true, () => false);
+  if (!ascii) await note(page, where, "an address holding a character that draws as nothing was not refused");
+  // t4: a body not declared JSON is refused before it is read.
+  const plain = await page.evaluate(async () => (await fetch("/api/webhooks", {
+    method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ url: "https://plain.example/x" }) })).status);
+  if (plain !== 415) await note(page, where, `a text/plain body was answered ${plain}, not 415`);
+  // t5: an answer that never arrives frees the form and says what to do.
+  const lost = "https://lost-answer.example/okwan";
+  await page.route("**/api/webhooks", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fetch();  // the address is added ...
+    await route.abort("connectionreset");  // ... and its answer lost
+  });
+  await field.fill(lost);
+  await add.click();
+  const warned = await page.getByRole("alert").filter({ hasText: "did not arrive" }).waitFor({ timeout: 10000 }).then(() => true, () => false);
+  await page.unroute("**/api/webhooks");
+  if (!warned || (await add.isDisabled())) await note(page, where, "a lost answer to Add left the form waiting, unsaid");
+  await page.reload({ waitUntil: "networkidle" });
+  const orphan = list.locator(":scope > li").filter({ hasText: lost });
+  if (!(await orphan.waitFor({ timeout: 10000 }).then(() => true, () => false))) return note(page, where, "the address a lost answer added is not listed");
+  await orphan.getByRole("button", { name: "Delete this webhook address" }).click();
+  await orphan.getByRole("button", { name: "Confirm: delete this webhook address" }).click();
+  await orphan.waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
 }
 
 async function checkMenu(page, w, h) {
