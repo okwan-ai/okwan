@@ -6,16 +6,20 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _fresh_rate_limits():
-    """Limits and reused runs are process-wide; one test's attempts must
-    not spend another's, nor its runs answer another's queries."""
+    """Limits, reused runs and where the mail's looks stand are
+    process-wide; one test's attempts must not spend another's, its runs
+    answer another's queries, nor its quiet look keep another's mail."""
     from okwan_api.ratelimit import limiter
     from okwan_api.recon_reuse import cache
+    from okwan_api.schedule import _looks
 
     limiter.reset()
     cache.clear()
+    _looks.clear()
     yield
     limiter.reset()
     cache.clear()
+    _looks.clear()
 
 
 @pytest.fixture

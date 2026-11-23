@@ -100,6 +100,7 @@ TENANT_TABLES = (
     "daily_checks",
     "exception_decisions",
     "exception_suggestions",
+    "mail_told",
 )
 
 
@@ -1862,24 +1863,29 @@ class PostgresStore:
         made none. `unsubscribe_token` is None until a mail needs one."""
         async with self._scoped(tenant_id) as con:
             row = await con.fetchrow(
-                "SELECT daily_checks, finding_emails, unsubscribe_token, mailed_at FROM notify_settings "
-                "WHERE tenant_id = $1", tenant_id)
+                "SELECT daily_checks, finding_emails, unsubscribe_token, mailed_at, aging_days, large_amount "
+                "FROM notify_settings WHERE tenant_id = $1", tenant_id)
         return dict(row) if row else dict(NOTIFY_DEFAULTS)
 
     async def set_notify(
         self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
+        aging_days: int | None = None, large_amount: int | None = None,
     ) -> dict:
-        """Change one choice or both; what is not given keeps its value."""
+        """Change any of the choices; what is not given keeps its value."""
         try:
             async with self._scoped(tenant_id) as con:
                 row = await con.fetchrow(
-                    "INSERT INTO notify_settings (tenant_id, daily_checks, finding_emails) "
-                    "VALUES ($1, COALESCE($2, true), COALESCE($3, true)) "
+                    "INSERT INTO notify_settings (tenant_id, daily_checks, finding_emails, aging_days, large_amount) "
+                    "VALUES ($1, COALESCE($2, true), COALESCE($3, true), COALESCE($4::integer, $6::integer), "
+                    "COALESCE($5::bigint, $7::bigint)) "
                     "ON CONFLICT (tenant_id) DO UPDATE SET "
                     "daily_checks = COALESCE($2, notify_settings.daily_checks), "
-                    "finding_emails = COALESCE($3, notify_settings.finding_emails), updated_at = now() "
-                    "RETURNING daily_checks, finding_emails, unsubscribe_token, mailed_at",
-                    tenant_id, daily_checks, finding_emails)
+                    "finding_emails = COALESCE($3, notify_settings.finding_emails), "
+                    "aging_days = COALESCE($4::integer, notify_settings.aging_days), "
+                    "large_amount = COALESCE($5::bigint, notify_settings.large_amount), updated_at = now() "
+                    "RETURNING daily_checks, finding_emails, unsubscribe_token, mailed_at, aging_days, large_amount",
+                    tenant_id, daily_checks, finding_emails, aging_days, large_amount,
+                    NOTIFY_DEFAULTS["aging_days"], NOTIFY_DEFAULTS["large_amount"])
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
         return dict(row)
@@ -1910,6 +1916,30 @@ class PostgresStore:
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
 
+    # ── what the daily mail has told ──────────────────────────────────
+
+    async def mail_told(self, tenant_ids: list[str]) -> dict[str, dict]:
+        """What the daily mail has told each of these merchants' account:
+        when it last named the merchant, and through when for each check."""
+        if not tenant_ids:
+            return {}
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                "SELECT tenant_id, told FROM mail_told WHERE tenant_id = ANY($1::text[])", list(tenant_ids))
+        return {r["tenant_id"]: (_loads(r["told"]) or {}) for r in rows}
+
+    async def set_mail_told(self, tenant_id: str, record: dict) -> None:
+        """What the account has now been told of the merchant, in place of
+        what it had."""
+        try:
+            async with self._scoped(tenant_id) as con:
+                await con.execute(
+                    "INSERT INTO mail_told (tenant_id, told, updated_at) VALUES ($1, $2::jsonb, now()) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET told = EXCLUDED.told, updated_at = now()",
+                    tenant_id, _dumps(record))
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+
     # ── the daily check's own record ──────────────────────────────────
 
     async def daily_checks(self, tenant_ids: list[str]) -> dict[str, DailyCheck]:
@@ -1918,11 +1948,9 @@ class PostgresStore:
             return {}
         async with self._scoped(*tenant_ids) as con:
             rows = await con.fetch(
-                "SELECT tenant_id, checked_at, told, news FROM daily_checks "
+                "SELECT tenant_id, checked_at FROM daily_checks "
                 "WHERE tenant_id = ANY($1::text[])", list(tenant_ids))
-        return {r["tenant_id"]: DailyCheck(
-            tenant_id=r["tenant_id"], checked_at=r["checked_at"],
-            told=tuple(_loads(r["told"]) or ()), news=tuple(_loads(r["news"]) or ())) for r in rows}
+        return {r["tenant_id"]: DailyCheck(tenant_id=r["tenant_id"], checked_at=r["checked_at"]) for r in rows}
 
     async def claim_daily_check(self, tenant_id: str, at: datetime) -> None:
         """Say the merchant's check for today is taken, before it runs: a
@@ -1936,15 +1964,6 @@ class PostgresStore:
                     tenant_id, at)
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
-
-    async def settle_daily_check(
-        self, tenant_id: str, *, told: list[str], news: list[dict],
-    ) -> None:
-        """What the account has now been told of, and what is still to mail."""
-        async with self._scoped(tenant_id) as con:
-            await con.execute(
-                "UPDATE daily_checks SET told = $2::jsonb, news = $3::jsonb WHERE tenant_id = $1",
-                tenant_id, _dumps(list(told)), _dumps(list(news)))
 
     async def sweep_access(self, now: datetime | None = None) -> int:
         """Delete access rows past RETENTION and alerts past ALERT_RETENTION.

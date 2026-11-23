@@ -55,6 +55,11 @@ TOO_DEEP = (f"Merchants can be nested {MAX_DEPTH} levels below an account and no
             "account could not open them and its plan would not cover them.")
 
 
+def _selector(n: int) -> bool:
+    """A variation selector: how the character before it is drawn."""
+    return 0xFE00 <= n <= 0xFE0F or 0xE0100 <= n <= 0xE01EF
+
+
 class CreateTenantIn(BaseModel):
     name: str = Field(min_length=1, max_length=200,
                       description="Merchant or workspace name: one line of text")
@@ -67,16 +72,23 @@ class CreateTenantIn(BaseModel):
         character, and no invisible one (a zero-width space, a character that
         reorders the text around it) other than a joiner inside a word of a
         script that is written with one."""
+        from .exceptions import _IGNORABLE  # drawn as nothing: the rule a note is held to
+
         value = value.strip()
         for i, c in enumerate(value):
             kind = unicodedata.category(c)
             if kind in {"Cc", "Cs", "Zl", "Zp"} or (kind == "Cf" and c not in _JOINERS):
                 raise ValueError("a name is one line of text, with no line breaks, control or invisible characters")
+            # A variation selector is let through only where it picks how the
+            # symbol before it is drawn (a coffee cup as an emoji); every other character drawn as
+            # nothing (a Hangul filler, a blank braille cell) is refused.
+            if ord(c) in _IGNORABLE and not (_selector(ord(c)) and i and unicodedata.category(value[i - 1])[0] == "S"):
+                raise ValueError("a name is one line of text, with no line breaks, control or invisible characters")
             if c in _JOINERS:
                 around = value[i - 1:i] + value[i + 1:i + 2]
                 if len(around) < 2 or any(ord(n) < 128 or unicodedata.category(n)[0] in "CZ" for n in around):
                     raise ValueError("a name is one line of text, with no line breaks, control or invisible characters")
-        if not any(unicodedata.category(c)[0] in "LNPS" for c in value):
+        if not any(unicodedata.category(c)[0] in "LNPS" and ord(c) not in _IGNORABLE for c in value):
             raise ValueError("a name needs at least one visible character")
         return value
 

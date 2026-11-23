@@ -8,24 +8,34 @@ a dashboard run does: stored like any run, metered to the merchant like
 any run, and written to the access log as Okwan's own read (credential
 `schedule`, no address).
 
-When a check finds something the account has not been told of (an order
-collected twice, one that does not add up, one with no payment), the
-account gets a mail naming each merchant with what is new and how much is
-at stake: one mail a day at most, so a finding from a check later in the
-day is in the next day's mail. Order references, customers and payment
-records never go into it: the mail provider and the inbox see merchant
-names, counts and totals.
+Once a day at most, the account is mailed what is new on its open items
+(okwan_api.exceptions): every merchant under it, every check, the checks
+that read imported files included, and whatever ran them. An item is in
+the mail when it is new to the account, and once more when it has been
+open the account's number of days (seven unless it says); the items at or
+above the account's amount (1,000 of their own currency unless it says)
+are named again in each mail while they stay open. A mail goes only when
+something is new or has newly aged, and says nothing of an item a person
+explained or resolved. References, customers and payment records never go
+into it: the mail provider and the inbox see merchant names, the checks'
+titles, counts and totals.
 
-What the scheduler decides, it decides from its own record
+When a merchant is due, the scheduler decides from its own record
 (`daily_checks`, one row a merchant, written here and by nothing a caller
-can reach): when the merchant was last checked, which findings the account
-has been told of, and the findings not yet mailed (each as the figures its
-line in the mail needs, with no reference). None of it is read back from
-stored runs, which any key can add to and so push out of history. A run
-made with an API key, the dashboard or an agent changes none of it, so no
-key can put a check off, hide a finding from the mail or have one sent
-again. The slot is taken before the check runs, so a check that fails, or
-whose result cannot be stored, is still not due again until tomorrow.
+can reach), not from stored runs, which any key can add to: a run made
+with an API key, the dashboard or an agent cannot put a check off. The
+slot is taken before the check runs, so a check that fails, or whose
+result cannot be stored, is still not due again until tomorrow.
+
+What the mail has told an account of a merchant is the scheduler's own
+record too (`mail_told`): when it last named the merchant, and, for each
+check, when the result it read then was read from the rails. An item is
+new when it was first seen after that (a stored row carries the time its
+finding was first seen, from run to run), and newly old when it has
+passed the account's days since that mail. Times only: no item, key or
+reference is kept for the mail. What is open is the open-items list, as
+the dashboard shows it, read a few merchants at a time and within a
+budget a look; the next look starts where one stopped.
 
 Accounts take turns: each round gives every account with something due
 one check before any gets a second, the account served longest ago first,
@@ -47,7 +57,6 @@ instance would need a lock here, or a merchant could be checked twice.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import os
 import re
@@ -56,21 +65,23 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import HTTPException
 from okwan_core import get as get_connector
-from okwan_core.currency import format_minor
+from okwan_core.currency import format_minor, minor_unit_factor
 from okwan_recon.across import AcrossRails, run_across
 from okwan_recon.emitters.rest import mapped, vault_resolver
-from okwan_recon.paging import MAX_ROWS
+from okwan_recon.exceptions import holds, open_items, run_found
 from okwan_recon.registry import get_across
 from okwan_vault.authz import MAX_DEPTH
-from okwan_vault.models import DailyCheck, Tenant
+from okwan_vault.models import AGING_DAYS, LARGE_AMOUNT, DailyCheck, Tenant
 
 from . import access
 from .auth import get_store, meter, quota_for
+from .exceptions import _titles, _unseen
 from .mail import MailNotSent, dashboard_url, get_mailer, postal_address
-from .runs import record_run, run_clock
+from .runs import file_check_names, record_run, run_clock
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +104,28 @@ MAX_PER_ROUND = 200
 ROUND_BUDGET = 20 * 60.0
 #: One merchant's check, start to finish.
 RUN_TIMEOUT = 300.0
-#: The outcomes that are findings (the dashboard's ATTENTION).
-FINDINGS = ("collected_twice", "collected_inconsistent", "uncollected")
 #: How much of a tenant's name a mail shows.
 NAME_SHOWN = 60
+#: Merchants one mail names, those it told longest ago first; the others
+#: are counted, and their news waits for the next mail.
+MAIL_MERCHANTS = 25
+#: Merchants whose stored results are read at once for the mail: few, so
+#: what one read decodes is small.
+READ_CHUNK = 5
+#: What one look at an account reads at most: open items, and merchants.
+#: The next look starts where this one stopped.
+LOOK_ITEMS = 100_000
+LOOK_MERCHANTS = 2_000
+#: A look that read every merchant and found nothing to mail is not made
+#: again for this long.
+LOOK_EVERY = timedelta(hours=6)
+#: Merchants whose scheduler records are read at once.
+STATE_CHUNK = 200
+#: Where each account's next look starts, and until when it is quiet. Kept
+#: in this process (one sweeper, G7), and emptied rather than let grow
+#: past a bound.
+_looks: dict[str, Look] = {}
+LOOKS_KEPT = 50_000
 
 #: The round's clock for its time budget; a test moves it.
 monotonic = time.monotonic
@@ -123,32 +152,84 @@ def ready(need: dict[str, tuple[str, ...]], configured: dict[str, list[str]]) ->
     return all(set(fields) <= set(configured.get(name, ())) for name, fields in need.items())
 
 
-def fingerprint(row: dict[str, Any]) -> str:
-    """One finding, as the scheduler remembers it: a hash of the order's
-    reference and the outcome, so its record holds no order reference. The
-    reference is read the way a stored run keeps it (postgres `_storable`),
-    so a finding hashes the same from a fresh result and from the stored run."""
-    ref = str((row.get("order") or {}).get("ref")).replace("\x00", "\ufffd")
-    text = f"{row.get('outcome')}\x1f{ref}"
-    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:20]
-
-
-def _findings(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    return [r for r in rows or [] if r.get("outcome") in FINDINGS]
-
-
 class RecordUnavailable(RuntimeError):
     """The scheduler could not write down that a merchant's slot is taken.
     The round stops there, before any rail is read: with no record, the
     same merchants would be read again every hour for as long as it lasted."""
 
 
+class Tally:
+    """How many items, and what they put at stake by currency, in minor
+    units. A total is stated only when every item has a figure and a
+    three-letter currency code: never an undercount, and nothing a
+    merchant's systems or files sent as text but a code."""
+
+    __slots__ = ("n", "sums", "whole")
+
+    def __init__(self) -> None:
+        self.n, self.sums, self.whole = 0, {}, True
+
+    def add(self, item: dict[str, Any]) -> None:
+        self.n += 1
+        minor, currency = item.get("amount_minor"), item.get("currency")
+        if (not isinstance(minor, int) or isinstance(minor, bool) or not isinstance(currency, str)
+                or not _CURRENCY.fullmatch(currency)):
+            self.whole = False
+            return
+        self.sums[currency] = self.sums.get(currency, 0) + minor
+
+    def merge(self, other: Tally) -> None:
+        self.n += other.n
+        self.whole = self.whole and other.whole
+        for c, v in other.sums.items():
+            self.sums[c] = self.sums.get(c, 0) + v
+
+    def total(self) -> str:
+        """"$1,449.00", or "$1,449.00 and 300.00 EUR"; empty when it cannot
+        be stood behind."""
+        if not self.n or not self.whole:
+            return ""
+        return " and ".join(format_minor(v, c) for c, v in sorted(self.sums.items()))
+
+    def counted(self) -> str:
+        """"3 items, $1,449.00 at stake", or the count alone."""
+        at_stake = self.total()
+        return _plural(self.n, "item", "items") + (f", {at_stake} at stake" if at_stake else "")
+
+
 @dataclass
-class Found:
-    """What one merchant's daily check found that the account has not been told of."""
+class News:
+    """What a look found of one merchant, in figures only: what is new to
+    the account (by check, and what each finding is), what has newly been
+    open the account's days, what is at or above its amount, and how many
+    more its checks found than their stored results keep (paging.MAX_ROWS),
+    which no mail can tell apart. `through` is, for each check, when the
+    result read was read from the rails: what a mail naming the merchant
+    tells the account through."""
 
     tenant: Tenant
-    rows: list[dict[str, Any]]
+    told_at: datetime | None
+    new: Tally = field(default_factory=Tally)
+    new_by: dict[str, dict[str, int]] = field(default_factory=dict)
+    aged: Tally = field(default_factory=Tally)
+    large: Tally = field(default_factory=Tally)
+    beyond: int = 0
+    through: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def any(self) -> bool:
+        return bool(self.new.n or self.aged.n)
+
+
+@dataclass
+class Look:
+    """Where an account's next look starts; whether the looks since the
+    last one that started from the first merchant found nothing; and until
+    when the account is quiet."""
+
+    cursor: int = 0
+    clean: bool = True
+    quiet_until: datetime | None = None
 
 
 @dataclass
@@ -157,7 +238,6 @@ class Round:
     failed: int = 0
     out_of_plan: int = 0
     mailed: int = 0
-    found: list[Found] = field(default_factory=list)
 
 
 @dataclass
@@ -168,8 +248,8 @@ class _Account:
     root: Tenant
     settings: dict
     members: list[Tenant]
-    states: dict[str, DailyCheck]
-    due: list[Tenant]
+    states: dict[str, DailyCheck] = field(default_factory=dict)
+    due: list[Tenant] = field(default_factory=list)
 
     @property
     def last_served(self) -> datetime:
@@ -199,12 +279,19 @@ async def run_due(now: datetime | None = None) -> Round:
         under.setdefault(t.parent_id, []).append(t)
 
     accounts: list[_Account] = []
+    mailing: list[_Account] = []
     for root in under.get(None, []):
         settings = await store.get_notify(root.id)
+        members = _subtree(root, under)
+        # The mail is about the open items, whatever ran the checks behind
+        # them, so an account with daily checks off still hears of them; of
+        # every merchant the account can open, as the daily check is.
+        mailing.append(_Account(root, settings, members))
         if not settings["daily_checks"]:
             continue
-        members = _subtree(root, under)
-        states = await store.daily_checks([t.id for t in members])
+        states: dict[str, DailyCheck] = {}
+        for start in range(0, len(members), STATE_CHUNK):
+            states |= await store.daily_checks([t.id for t in members[start:start + STATE_CHUNK]])
         never = datetime.min.replace(tzinfo=UTC)
         due = sorted(
             (t for t in members if t.id not in states or now - states[t.id].checked_at >= DUE_AFTER),
@@ -237,43 +324,38 @@ async def run_due(now: datetime | None = None) -> Round:
                 waiting.remove(account)
                 continue
             try:
-                new = await _check(tenant, spec, account.states.get(tenant.id), now)
+                ran = await _check(tenant, spec, now)
             except RecordUnavailable:
                 raise
             except Exception as exc:  # noqa: BLE001 — one merchant must not end everyone's round
                 logger.warning("daily check failed for %s: %s", tenant.id, type(exc).__name__)
-                new = None
-            if new is None:
+                ran = False
+            if not ran:
                 out.failed += 1
                 continue
             out.checked += 1
-            if new:
-                out.found.append(Found(tenant, new))
 
-    for account in accounts:
+    for account in mailing:
         try:
             if await _mail_due(account, now):
                 out.mailed += 1
         except Exception as exc:  # noqa: BLE001 — one account must not stop the others' mail
-            logger.warning("findings for %s not mailed: %s", account.root.id, type(exc).__name__)
+            logger.warning("open items for %s not mailed: %s", account.root.id, type(exc).__name__)
     return out
 
 
-async def _check(
-    tenant: Tenant, spec: AcrossRails, state: DailyCheck | None, now: datetime,
-) -> list[dict[str, Any]] | None:
-    """Run one merchant's check as a dashboard run does. The findings the
-    account has not been told of; None when it failed (stored, as a failed
-    run) or its result could not be stored."""
+async def _check(tenant: Tenant, spec: AcrossRails, now: datetime) -> bool:
+    """Run one merchant's check as a dashboard run does. False when it
+    failed (stored, as a failed run) or its result could not be stored. What
+    it found reaches the mail through the open items, as any run's does."""
     store = get_store()
     # Before anything is read: whatever happens next, today's slot is used.
     try:
         await store.claim_daily_check(tenant.id, now)
     except KeyError:
-        return None  # deleted since the round began
+        return False  # deleted since the round began
     except Exception as exc:
         raise RecordUnavailable(f"the daily check's record could not be written: {type(exc).__name__}") from exc
-    told = set(state.told) if state else set()
     started = run_clock()
     access.remember_schedule(TARGET)
     resolver = None
@@ -283,50 +365,24 @@ async def _check(
     except HTTPException as exc:
         await record_run(tenant, spec, SURFACE, started, error=exc.detail, resolver=resolver)
         logger.info("daily check failed for %s: HTTP %s", tenant.id, exc.status_code)
-        return None
+        return False
     except TimeoutError:
         await record_run(tenant, spec, SURFACE, started, resolver=resolver,
                          error=f"the check took longer than {int(RUN_TIMEOUT // 60)} minutes and was stopped")
         logger.info("daily check timed out for %s", tenant.id)
-        return None
+        return False
     except Exception as exc:  # noqa: BLE001 — one merchant's failure must not end the round
         await record_run(tenant, spec, SURFACE, started, error=type(exc).__name__, resolver=resolver)
         logger.warning("daily check failed for %s: %s", tenant.id, type(exc).__name__)
-        return None
+        return False
     run_id = await record_run(tenant, spec, SURFACE, started, result=result)
     if run_id is None:
         # Nothing to show the account and nothing to mail from: not a check
         # it is charged for. Tomorrow's tries again.
         logger.warning("daily check for %s ran but its result could not be stored", tenant.id)
-        return None
+        return False
     await meter(tenant, f"{SURFACE}:across", target=TARGET)
-    found = _findings(result.trimmed_rows(spec.ledger_currency, limit=MAX_ROWS))
-    seen = {fingerprint(r) for r in found}
-    new = [_news(r) for r in found if fingerprint(r) not in told]
-    # A finding that has gone is forgotten, so it is news if it comes back.
-    # What is new is kept here until it is mailed, not looked up in the
-    # stored run later: any key can add runs and push that one out of history.
-    await store.settle_daily_check(tenant.id, told=sorted(told & seen), news=new)
-    return new
-
-
-def _news(row: dict[str, Any]) -> dict[str, Any]:
-    """What the mail's line needs of one finding, and nothing more: its
-    fingerprint, the outcome, a currency code and the amounts. No reference
-    and no record; and only values of the expected kind, so nothing a rail
-    sent as text is kept for the mail."""
-    currency = (row.get("order") or {}).get("currency")
-
-    def minor(value: Any) -> int | None:
-        return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-    return {
-        "mark": fingerprint(row),
-        "outcome": row.get("outcome"),
-        "order": {"currency": currency if isinstance(currency, str) and _CURRENCY.fullmatch(currency) else None},
-        "order_total_minor": minor(row.get("order_total_minor")),
-        "collected_minor": minor(row.get("collected_minor")),
-    }
+    return True
 
 
 # ── the mail ───────────────────────────────────────────────────────────
@@ -340,45 +396,178 @@ def mail_blocked() -> str | None:
     return None
 
 
+def large(item: dict[str, Any], amount: int) -> bool:
+    """An item at or above the account's amount, in whole units of the
+    item's own currency (0: no item is large). Integer arithmetic only."""
+    minor, currency = item.get("amount_minor"), item.get("currency")
+    return (bool(amount) and isinstance(minor, int) and not isinstance(minor, bool)
+            and isinstance(currency, str) and _CURRENCY.fullmatch(currency) is not None
+            and minor >= amount * minor_unit_factor(currency))
+
+
+def _told(record: Any) -> tuple[datetime | None, dict[str, datetime]]:
+    """When a mail last named the merchant, and through when it told each
+    check's result. The scheduler's own record; anything else reads as
+    never told."""
+    if not isinstance(record, dict):
+        return None, {}
+    at = _instant(record.get("at"))
+    through = record.get("through") if isinstance(record.get("through"), dict) else {}
+    return at, {k: t for k, v in through.items() if isinstance(k, str) and (t := _instant(v)) is not None}
+
+
+def _instant(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not isinstance(value, str):
+        return None
+    try:
+        at = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
+def weigh(news: News, check: str, title: str, run_at: datetime, items: list[dict[str, Any]],
+          shut: set[str], told_at: datetime | None, through: datetime | None,
+          days: int, amount: int, now: datetime) -> None:
+    """Add one check's open items to the merchant's news, by figures only.
+    An item is new when the account was never told of this check, or the
+    item was first seen after the result last told; newly old when it was
+    told and has passed the account's days since that mail; large while it
+    is open at or above the account's amount. `shut`: the keys a person
+    explained or resolved on the terms they stand on now."""
+    news.through[check] = run_at.isoformat()
+    since_told = (now.date() - told_at.date()).days if told_at is not None else None
+    for i in items:
+        if i["key"] in shut:
+            continue
+        if amount and large(i, amount):
+            news.large.add(i)
+        first = _instant(i.get("first_seen"))
+        if told_at is None or through is None or (first is not None and first > through):
+            news.new.add(i)
+            said = news.new_by.setdefault(title, {})
+            what = WHAT.get(i.get("finding"), "needs a look")
+            said[what] = said.get(what, 0) + 1
+            continue
+        open_days = i.get("open_days")
+        if isinstance(open_days, int) and open_days >= days and open_days - since_told < days:
+            news.aged.add(i)
+
+
+async def _merchant(store, tenant: Tenant, runs: list, titles: dict, record: Any,
+                    days: int, amount: int, now: datetime) -> tuple[News, int]:
+    """One merchant's news, and how many items were read for it. Its items
+    are worked out off the event loop and held only while this runs."""
+    told_at, through = _told(record)
+    news, read = News(tenant, told_at), 0
+    for run in runs:
+        title = titles.get((run.kind, run.name))
+        if title is None:  # no longer declared
+            continue
+        items = await asyncio.to_thread(open_items, tenant.id, run.name, run.kind, run.rows, now)
+        read += len(items)
+        news.beyond += max(run_found(run.kind, run.summary) - len(items), 0)
+        current = await store.current_decisions([(tenant.id, i["key"]) for i in items])
+        shut = {i["key"] for i in items if holds(current.get((tenant.id, run.kind, run.name, i["key"])), i)}
+        check = f"{run.kind}/{run.name}"
+        await asyncio.to_thread(weigh, news, check, title, run.started_at, items, shut, told_at,
+                                through.get(check), days, amount, now)
+    return news, read
+
+
+async def look(store, account: _Account, now: datetime, days: int, amount: int) -> tuple[list[News], bool]:
+    """What the account's merchants have that a mail could tell, in figures,
+    from where the last look stopped and within LOOK_ITEMS and
+    LOOK_MERCHANTS; and whether this look reached the last merchant. A
+    merchant's expired files go first, with the results that read them, as
+    before a suggestion: the mail sends what it reads to the mail provider."""
+    titles, files = _titles(), set(file_check_names())
+    members = account.members
+    state = _looks.setdefault(account.root.id, Look())
+    start = state.cursor if state.cursor < len(members) else 0
+    if start == 0:
+        state.clean = True
+    order = members[start:]
+    found: list[News] = []
+    items = merchants = 0
+    for at in range(0, len(order), READ_CHUNK):
+        if items >= LOOK_ITEMS or merchants >= LOOK_MERCHANTS:
+            break
+        chunk = order[at:at + READ_CHUNK]
+        ids = [t.id for t in chunk]
+        runs = await store.newest_runs_all(ids, ok_only=True, with_rows=True)
+        stale = sorted({r.tenant_id for r in runs if r.name in files})
+        if any([await store.drop_expired_imports(tid, now) for tid in stale]):
+            runs = await store.newest_runs_all(ids, ok_only=True, with_rows=True)
+        told = await store.mail_told(ids)
+        for t in chunk:
+            mine = [r for r in runs if r.tenant_id == t.id]
+            news, read = await _merchant(store, t, mine, titles, told.get(t.id), days, amount, now)
+            items += read
+            if news.any or news.large.n:
+                found.append(news)
+        merchants += len(chunk)
+    reached = merchants >= len(order)
+    state.cursor = 0 if reached else start + merchants
+    return found, reached
+
+
 async def _mail_due(account: _Account, now: datetime) -> bool:
-    """The account's mail for today, if it is owed one: every finding its
-    merchants' daily checks hold that it has not been told of. True when a
-    mail went."""
+    """The account's mail for today, if it is owed one and has news. True
+    when a mail went."""
     settings, root = account.settings, account.root
     if not settings["finding_emails"]:
         return False
     last = settings.get("mailed_at")
     if last is not None and now - last < MAIL_EVERY:
         return False
-    store = get_store()
-    states = await store.daily_checks([t.id for t in account.members])
-    waiting = [(t, states[t.id]) for t in account.members if t.id in states and states[t.id].news]
-    if not waiting:
-        return False
     blocked = mail_blocked()
     if blocked:
-        logger.info("findings for %s not mailed: %s", root.id, blocked)
+        logger.info("open items for %s not mailed: %s", root.id, blocked)
         return False
+    state = _looks.get(root.id)
+    if state is not None and state.quiet_until is not None and now < state.quiet_until:
+        return False
+    store = get_store()
     email = await store.account_email(root.id)
     if not email:
         return False
-
-    found = [Found(tenant, [dict(n) for n in state.news]) for tenant, state in waiting]
+    days = settings.get("aging_days") or AGING_DAYS
+    amount = settings.get("large_amount", LARGE_AMOUNT) or 0
+    if len(_looks) >= LOOKS_KEPT and root.id not in _looks:
+        _looks.clear()
+    found, reached = await look(store, account, now, days, amount)
+    news = [n for n in found if n.any]
+    never = datetime.min.replace(tzinfo=UTC)
+    listed = sorted(news, key=lambda n: (n.told_at or never, n.tenant.id))[:MAIL_MERCHANTS]
+    state = _looks.setdefault(root.id, Look())
+    state.clean = state.clean and not news
+    # Quiet only once looks from the first merchant to the last found nothing.
+    state.quiet_until = now + LOOK_EVERY if reached and state.clean else None
+    if not listed:
+        return False
+    big = sorted((n for n in found if n.large.n), key=lambda n: (-n.large.n, n.tenant.id))
     link = unsubscribe_link(await store.notify_token(root.id))
-    subject, text = message(root.name, found, link, postal_address())
+    subject, text = message(root.name, news, listed, big, link, postal_address(), days, amount)
     # Today's mail is marked as sent before it goes: whatever fails after
     # this, the account is not mailed a second time today.
     await store.notify_mailed(root.id, now)
     try:
         await get_mailer().send_notice(email, subject, text, headers={"List-Unsubscribe": f"<{link}>"})
     except Exception as e:  # noqa: BLE001 — a mail that fails must not end the round
-        logger.error("findings for %s not mailed: %s", root.id, e if isinstance(e, MailNotSent) else type(e).__name__)
+        logger.error("open items for %s not mailed: %s", root.id, e if isinstance(e, MailNotSent) else type(e).__name__)
         # It did not go: put the mark back, so the next round tries again.
         await store.notify_mailed(root.id, last)
         return False
-    for tenant, state in waiting:
-        marks = {n["mark"] for n in state.news}
-        await store.settle_daily_check(tenant.id, told=sorted(set(state.told) | marks), news=[])
+    # The merchants the mail named are told, through the results it read;
+    # the others' news waits for the next mail.
+    for n in listed:
+        try:
+            await store.set_mail_told(n.tenant.id, {"at": now.isoformat(), "through": n.through})
+        except KeyError:
+            continue  # deleted since the look
     return True
 
 
@@ -394,84 +583,125 @@ def _plural(n: int, one: str, many: str) -> str:
 
 _CURRENCY = re.compile(r"[A-Z]{3}")
 _LINK = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://|\bwww\.")
+#: A word straight before a colon with something after it: how "tel:",
+#: "mailto:" or "sms:" make the rest of a name an address to press.
+_SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}):(?=\S)")
 #: A full stop, in any of the forms a mail client reads as one, with a
 #: letter or digit straight after it: what makes "shop.example.com" a link.
-_DOT = re.compile(r"[.\uff0e\u3002\uff61](?=\w)")
+_DOT = re.compile(r"[.．。｡․﹒︒](?=\w)")
 
 
 def shown(name: str, limit: int = NAME_SHOWN, *, own: bool = False) -> str:
     """A tenant's name as a mail shows it: one line, bounded, with no
-    control or invisible character, no web address scheme, and a space
-    after any full stop that would join two words into an address a mail
-    client makes a link ("shop. example. com"). Whoever can name a merchant
-    chooses these words in the account's mail and nothing else: not a
-    line, not a header, not a link Okwan appears to give. `own` is the
-    account's own name, set at sign-up or by the operator: its full stops
-    are left alone."""
-    text = "".join(" " if unicodedata.category(c)[0] in "CZ" else c for c in str(name))
+    control or invisible character (the rule a note is held to,
+    okwan_api.exceptions), no web address scheme or "word:" one, and a
+    space after any full stop that would join two words into an address a
+    mail client makes a link ("shop. example. com"). Whoever can name a
+    merchant chooses these words in the account's mail and nothing else:
+    not a line, not a header, not a link Okwan appears to give. `own` is
+    the account's own name, set at sign-up or by the operator: its full
+    stops and colons are left alone."""
+    text = "".join(" " if unicodedata.category(c)[0] in "CZ" else "" if _unseen(c) else c for c in str(name))
     text = _LINK.sub(" ", text)
     if not own:
+        text = _SCHEME.sub(r"\1: ", text)
         text = _DOT.sub(". ", text)
     text = " ".join(text.split())
     if len(text) > limit:
         text = text[: limit - 1].rstrip() + "…"
-    return text or "(no name)"
+    return text if any(unicodedata.category(c)[0] in "LNPS" for c in text) else "(no name)"
 
 
-def _sum(rows: list[dict[str, Any]], amount) -> str:
-    """Amounts by currency, as "$1,449.00" or "$1,449.00 and 300.00 EUR";
-    empty when any row lacks a figure, so a total is never an undercount,
-    or when a currency is not three letters: it comes from the merchant's
-    own store, and only a currency code is let into the mail."""
-    totals: dict[str, int] = {}
-    for r in rows:
-        value, currency = amount(r), (r.get("order") or {}).get("currency")
-        if value is None or not isinstance(currency, str) or not _CURRENCY.fullmatch(currency):
-            return ""
-        totals[currency] = totals.get(currency, 0) + value
-    return " and ".join(format_minor(v, c) for c, v in sorted(totals.items()))
+def total(items: list[dict[str, Any]]) -> str:
+    """What items put at stake, by currency (Tally.total)."""
+    t = Tally()
+    for i in items:
+        t.add(i)
+    return t.total()
 
 
-def _owed(row: dict[str, Any]) -> int | None:
-    total, taken = row.get("order_total_minor"), row.get("collected_minor")
-    return None if total is None or taken is None else taken - total
+def _counted(items: list[dict[str, Any]]) -> str:
+    t = Tally()
+    for i in items:
+        t.add(i)
+    return t.counted()
 
 
-def lines(rows: list[dict[str, Any]]) -> list[str]:
-    """What is new at one merchant, one line an outcome."""
-    by = {o: [r for r in rows if r.get("outcome") == o] for o in FINDINGS}
-    out = []
-    if twice := by["collected_twice"]:
-        owed = _sum(twice, _owed)
-        out.append(f"{_plural(len(twice), 'order', 'orders')} collected twice" + (f": {owed} owed back" if owed else ""))
-    if odd := by["collected_inconsistent"]:
-        out.append(f"{_plural(len(odd), 'order', 'orders')} where the payments don't add up to the order")
-    if unpaid := by["uncollected"]:
-        due = _sum(unpaid, lambda r: r.get("order_total_minor"))
-        out.append(f"{_plural(len(unpaid), 'order', 'orders')} with no payment found" + (f": {due} unpaid" if due else ""))
+#: What each kind of finding is, in words that name no reference.
+WHAT = {
+    "collected_twice": "collected twice",
+    "collected_inconsistent": "payments don't add up",
+    "uncollected": "no payment found",
+    "matched_discrepant": "amounts differ",
+    "unmatched_left": "no match found",
+    "unmatched_right": "no match found",
+    "ambiguous": "more than one match fits",
+}
+
+
+def _kinds(items: list[dict[str, Any]]) -> str:
+    """"2 collected twice, 1 no payment found", in a fixed order."""
+    count: dict[str, int] = {}
+    for i in items:
+        said = WHAT.get(i.get("finding"), "needs a look")
+        count[said] = count.get(said, 0) + 1
+    return _said(count)
+
+
+def _said(count: dict[str, int]) -> str:
+    return ", ".join(f"{n} {said}" for said, n in sorted(count.items(), key=lambda c: (-c[1], c[0])))
+
+
+def lines(n: News, days: int) -> list[str]:
+    """One merchant's part of the mail. A check is named by its title,
+    which is Okwan's own words, as is what each finding is."""
+    out: list[str] = []
+    if n.new.n:
+        out.append(f"New: {n.new.counted()}")
+        out += [f"  {title}: {_said(count)}" for title, count in sorted(n.new_by.items())]
+    if n.aged.n:
+        out.append(f"Now open {days} days or more: {n.aged.counted()}")
+    if n.beyond:
+        out.append(f"And {n.beyond:,} more found than a stored result keeps: Open items counts them")
     return out
 
 
-def message(account: str, found: list[Found], unsubscribe: str, address: str) -> tuple[str, str]:
-    """The subject and plain text of the account's mail. The subject is
-    Okwan's words only; a name appears in the body, cleaned (`shown`)."""
-    total = sum(len(f.rows) for f in found)
-    what = _plural(total, "new finding", "new findings")
-    subject = f"Okwan: {what}" + (f" across {len(found)} merchants" if len(found) > 1 else "")
+def message(account: str, news: list[News], listed: list[News], big: list[News], unsubscribe: str,
+            address: str, days: int = AGING_DAYS, amount: int = LARGE_AMOUNT) -> tuple[str, str]:
+    """The subject and plain text of the account's mail: every merchant's
+    news counted in the subject, those `listed` named in the body, and the
+    merchants with open items at or above the account's amount after them.
+    The subject is Okwan's words and figures only; a name appears in the
+    body, cleaned (`shown`)."""
+    new = sum(n.new.n for n in news)
+    aged = sum(n.aged.n for n in news)
+    said = [x for x in (_plural(new, "new open item", "new open items") if new else "",
+                        f"{aged} now open {days} days or more" if aged else "") if x]
+    subject = "Okwan: " + " and ".join(said) + (f" across {len(news)} merchants" if len(news) > 1 else "")
     base = dashboard_url()
     account = shown(account, own=True)
-    parts = [f"Okwan's daily check found something new for {account}.", ""]
-    for f in found:
-        parts.append(shown(f.tenant.name))
-        parts += [f"  {line}" for line in lines(f.rows)]
-        parts += [f"  {base}/merchants/{f.tenant.id}?tab=findings", ""]
+    parts = [f"What is new on the open items for {account}.", ""]
+    for n in listed:
+        parts.append(shown(n.tenant.name))
+        parts += [f"  {line}" for line in lines(n, days)]
+        parts += [f"  {base}/exceptions?merchant={quote(n.tenant.id, safe='')}", ""]
+    more = len(news) - len(listed)
+    if more:
+        said_more = _plural(more, "more merchant has", "more merchants have")
+        parts += [f"{said_more} something new, in the next email and on Open items: {base}/exceptions", ""]
+    if big:
+        parts.append(f"Still open at {amount:,} or more of their currency:")
+        parts += [f"  {shown(n.tenant.name)}: {n.large.counted()}" for n in big[:MAIL_MERCHANTS]]
+        if len(big) > MAIL_MERCHANTS:
+            parts.append(f"  and {_plural(len(big) - MAIL_MERCHANTS, 'more merchant', 'more merchants')}")
+        parts.append("")
     parts += [
-        "Okwan only reads. Any refund is made in PayPal or Stripe, by a person.",
+        "Okwan only reads. What is done about an item is done by a person, where it started.",
         "",
         "--",
-        f"You get this because daily checks are on for {account}.",
+        f"You get this because emails about open items are on for {account}.",
         f"Turn these emails off: {unsubscribe}",
-        f"Change what runs: {base}/settings#daily-checks",
+        f"Change what is sent: {base}/settings#daily-checks",
         f"Okwan · {address}",
     ]
     return subject, "\n".join(parts) + "\n"

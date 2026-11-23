@@ -381,22 +381,25 @@ class SealedCredential:
         }
 
 
+#: What the daily mail calls aged and large, before an account says: an
+#: item open this many days (the dashboard's red), and one that puts this
+#: much at stake, in whole units of its own currency (0: none is).
+AGING_DAYS, LARGE_AMOUNT = 7, 1000
+AGING_DAYS_RANGE, LARGE_AMOUNT_MAX = (1, 365), 10**12
+
 #: An account's choices about the daily check, before it has made any.
-NOTIFY_DEFAULTS = {"daily_checks": True, "finding_emails": True, "unsubscribe_token": None, "mailed_at": None}
+NOTIFY_DEFAULTS = {"daily_checks": True, "finding_emails": True, "unsubscribe_token": None, "mailed_at": None,
+                   "aging_days": AGING_DAYS, "large_amount": LARGE_AMOUNT}
 
 
 @dataclass(frozen=True)
 class DailyCheck:
     """What the daily check keeps about one merchant, and nothing else may
-    write: when it last tried, the findings the account has been told of
-    (as fingerprints, never the order reference), and the findings not yet
-    mailed (each one's fingerprint, outcome, currency code and amounts:
-    what the mail's line is made of, and no reference)."""
+    write: when it last tried. What its mail has told the account is
+    `mail_told`, about the open items whatever ran the checks."""
 
     tenant_id: str
     checked_at: datetime
-    told: tuple[str, ...] = ()
-    news: tuple[dict, ...] = ()
 
 
 #: `unsub_<tenant id>.<random>`: the tenant is named so the token is looked

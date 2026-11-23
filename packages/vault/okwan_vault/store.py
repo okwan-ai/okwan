@@ -10,6 +10,7 @@ credentials exist only inside a single function's stack frame.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable, Collection
 from dataclasses import replace
@@ -274,14 +275,14 @@ class Store(Protocol):
     async def get_notify(self, tenant_id: str) -> dict: ...
     async def set_notify(
         self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
+        aging_days: int | None = None, large_amount: int | None = None,
     ) -> dict: ...
+    async def mail_told(self, tenant_ids: list[str]) -> dict[str, dict]: ...
+    async def set_mail_told(self, tenant_id: str, record: dict) -> None: ...
     async def notify_token(self, tenant_id: str) -> str: ...
     async def notify_mailed(self, tenant_id: str, at: datetime | None) -> None: ...
     async def daily_checks(self, tenant_ids: list[str]) -> dict[str, DailyCheck]: ...
     async def claim_daily_check(self, tenant_id: str, at: datetime) -> None: ...
-    async def settle_daily_check(
-        self, tenant_id: str, *, told: list[str], news: list[dict],
-    ) -> None: ...
     async def add_access_alert(
         self, tenant_id: str, *, kind: str, credential: str, detail: dict, at: datetime | None = None,
     ) -> dict: ...
@@ -340,6 +341,8 @@ class MemoryStore:
         self._access: list[dict] = []
         self._alerts: dict[str, dict] = {}
         self._notify: dict[str, dict] = {}
+        #: tenant id → what the daily mail has told its account of it.
+        self._mail_told: dict[str, dict] = {}
         self._daily: dict[str, DailyCheck] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
@@ -395,6 +398,7 @@ class MemoryStore:
         self._access = [r for r in self._access if r["tenant_id"] not in gone]
         self._alerts = {k: v for k, v in self._alerts.items() if v["tenant_id"] not in gone}
         self._notify = {k: v for k, v in self._notify.items() if k not in gone}
+        self._mail_told = {k: v for k, v in self._mail_told.items() if k not in gone}
         self._daily = {k: v for k, v in self._daily.items() if k not in gone}
         return sorted(gone)
 
@@ -1442,20 +1446,29 @@ class MemoryStore:
     # ── the daily check's settings ────────────────────────────────────
 
     async def get_notify(self, tenant_id: str) -> dict:
-        return dict(self._notify.get(tenant_id, NOTIFY_DEFAULTS))
+        return {**NOTIFY_DEFAULTS, **self._notify.get(tenant_id, {})}
 
     async def set_notify(
         self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
+        aging_days: int | None = None, large_amount: int | None = None,
     ) -> dict:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
-        row = dict(self._notify.get(tenant_id, NOTIFY_DEFAULTS))
-        if daily_checks is not None:
-            row["daily_checks"] = daily_checks
-        if finding_emails is not None:
-            row["finding_emails"] = finding_emails
+        row = {**NOTIFY_DEFAULTS, **self._notify.get(tenant_id, {})}
+        for name, value in (("daily_checks", daily_checks), ("finding_emails", finding_emails),
+                            ("aging_days", aging_days), ("large_amount", large_amount)):
+            if value is not None:
+                row[name] = value
         self._notify[tenant_id] = row
         return dict(row)
+
+    async def mail_told(self, tenant_ids: list[str]) -> dict[str, dict]:
+        return {t: json.loads(self._mail_told[t]) for t in tenant_ids if t in self._mail_told}
+
+    async def set_mail_told(self, tenant_id: str, record: dict) -> None:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        self._mail_told[tenant_id] = json.dumps(record)
 
     async def notify_token(self, tenant_id: str) -> str:
         if tenant_id not in self._tenants:
@@ -1478,16 +1491,7 @@ class MemoryStore:
     async def claim_daily_check(self, tenant_id: str, at: datetime) -> None:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
-        held = self._daily.get(tenant_id)
-        self._daily[tenant_id] = (
-            replace(held, checked_at=at) if held else DailyCheck(tenant_id=tenant_id, checked_at=at))
-
-    async def settle_daily_check(
-        self, tenant_id: str, *, told: list[str], news: list[dict],
-    ) -> None:
-        held = self._daily.get(tenant_id)
-        if held is not None:
-            self._daily[tenant_id] = replace(held, told=tuple(told), news=tuple(dict(n) for n in news))
+        self._daily[tenant_id] = DailyCheck(tenant_id=tenant_id, checked_at=at)
 
     async def sweep_access(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)

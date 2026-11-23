@@ -18,6 +18,13 @@ for whatever reason, can hold up a round.
 6. A merchant nested out of the account's sight was checked past its plan.
 7. One merchant's slow check held up everyone after it in the round.
 8. An order's currency wrote a line into the mail.
+
+On 2026-11-23 the mail was rebuilt on the open items (the exception queue,
+step 4): what is open is each check's newest good result, as Open items
+shows it, and what the account was told is the scheduler's own record
+(`mail_told`). The exploits for 2 and 4 are kept against that design: a
+read key's runs, however many, cannot keep an item out of the mail or make
+one news again.
 """
 from __future__ import annotations
 
@@ -116,6 +123,9 @@ def make_world(monkeypatch, store):
     async def account(name: str, email: str):
         root = await store.create_tenant(name)
         await store.add_account(root.id, email, accounts.hash_password("correct horse battery"))
+        # These attacks run for days: only new items are counted here, and
+        # an item mailed again as it ages is tests/test_daily_checks.py's.
+        await store.set_notify(root.id, aging_days=365)
         return root
 
     async def connect(tenant_id: str, rows=None) -> None:
@@ -244,8 +254,8 @@ async def test_a_read_key_cannot_keep_a_finding_out_of_the_accounts_mail(world, 
         await schedule.run_due(now)
     text = "\n".join(m["text"] for m in world.outbox.sent)
     assert text.count("Control Store") == 2 and text.count("Kofi's Store") == 2, "day one, and the new finding"
-    assert [m["subject"] for m in world.outbox.sent] == ["Okwan: 4 new findings across 2 merchants",
-                                                         "Okwan: 2 new findings across 2 merchants"]
+    assert [m["subject"] for m in world.outbox.sent] == ["Okwan: 4 new open items across 2 merchants",
+                                                         "Okwan: 2 new open items across 2 merchants"]
     surfaces = [r.surface for r in await world.store.list_runs(kofi.id)]
     assert surfaces.count("schedule") == 5 and surfaces.count("rest") == 5, "Okwan's check ran every day"
 
@@ -287,26 +297,24 @@ async def test_a_read_key_cannot_push_a_waiting_finding_out_of_reach(world, clie
             assert await world.store.get_run(kofi.id, stored.id) is None, "the run is out of history"
     told_of_kofi = [m["text"] for m in world.outbox.sent if "Kofi's Store" in m["text"]]
     assert len(told_of_kofi) == 1, "the day after it appeared, once"
-    assert "2 orders collected twice: $501.99 owed back" in told_of_kofi[0]
+    assert "Kofi's Store\n  New: 3 items, $599.39 at stake\n" in told_of_kofi[0]
     assert world.outbox.sent.index(next(m for m in world.outbox.sent if "Kofi's Store" in m["text"])) == 2
 
 
-async def test_only_the_scheduler_writes_what_waits_for_the_mail(world, client):
-    """No route reads or writes the scheduler's record: a caller's own run,
-    whatever it holds, puts nothing in the account's mail."""
-    kofi = await world.merchant("Kofi's Store", rows=week(without=("#2043", "#2046", "#2047")), parent=world.root)
-    await schedule.run_due(NOW)
-    await world.store.add_run(
-        kofi.id, kind="across", name="rails", surface="schedule", status="ok", started_at=NOW, finished_at=NOW,
-        summary={}, error=None,
-        rows=[{"outcome": "collected_twice", "order": {"ref": "#9", "currency": "USD"},
-               "order_total_minor": 100, "collected_minor": 980100}])
-    for hour in range(1, 30):
-        await schedule.run_due(NOW + timedelta(hours=hour))
-    assert world.outbox.sent == [], "a stored run is not where the mail is made from"
+async def test_only_the_scheduler_writes_what_the_mail_has_told(world, client):
+    """No route reads or writes what the mail has told an account, so no
+    caller can keep an item out of the mail or have it mailed again. What
+    is open is each check's newest stored result, as Open items shows it,
+    and a caller stores one only by running the check on the rails: the
+    two attacks above, on this version, are that."""
+    import pathlib
+
     from okwan_api.main import app
 
-    assert not any("daily" in path for path in app.openapi()["paths"]), "and no route names the record"
+    assert not any("daily" in path or "told" in path for path in app.openapi()["paths"]), "no route names it"
+    api = pathlib.Path(schedule.__file__).parent
+    writers = sorted(f.name for f in api.glob("*.py") if "set_mail_told(" in f.read_text())
+    assert writers == ["schedule.py"]
 
 
 # ── 3. a name is words on one line, and nothing else ─────────────────
@@ -353,11 +361,11 @@ async def test_a_name_stored_before_the_rule_reaches_the_mail_as_one_line(world,
 
     set_mailer(ResendMailer("re_test", "Okwan <alerts@okwan.test>", transport=httpx.MockTransport(resend)))
     assert (await schedule.run_due(NOW)).mailed == 1
-    assert seen["subject"] == "Okwan: 3 new findings", "the subject is Okwan's words only"
+    assert seen["subject"] == "Okwan: 3 new open items", "the subject is Okwan's words only"
     lines = seen["text"].split("\n")
     assert "\r" not in seen["text"] and "://okwan-app.evil.example" not in seen["text"]
     assert lines[2] == schedule.shown(name) and len(lines[2]) <= schedule.NAME_SHOWN
-    assert lines[3].startswith("  2 orders collected twice: $501.99"), "the next line is Okwan's own"
+    assert lines[3] == "  New: 3 items, $599.39 at stake", "the next line is Okwan's own"
     assert not any(line.startswith(("ACTION NEEDED", "Bcc:", "X-Injected", "https://okwan-app")) for line in lines)
     assert "  1 order collected twice: $9,800.00 owed back" not in lines, "a figure no check produced"
 
@@ -394,8 +402,8 @@ async def test_an_account_is_mailed_once_a_day_however_its_merchants_fall_due(wo
     world.clock(NOW + timedelta(hours=24))
     await schedule.run_due(NOW + timedelta(hours=24))
     first, second = world.outbox.sent
-    assert first["subject"] == "Okwan: 3 new findings" and "Store 00" in first["text"]
-    assert second["subject"] == "Okwan: 69 new findings across 23 merchants"
+    assert first["subject"] == "Okwan: 3 new open items" and "Store 00" in first["text"]
+    assert second["subject"] == "Okwan: 69 new open items across 23 merchants"
     assert all(f"Store {h:02d}" in second["text"] for h in range(1, 24)), "none of the day's findings was lost"
     assert "Store 00" not in second["text"], "the first store's were told on day one"
 
@@ -423,7 +431,7 @@ async def test_failed_runs_never_make_a_finding_news_again(world, client, failed
         world.clock(at)
         got = await schedule.run_due(at)
         assert (got.checked, got.mailed) == (1, 0)
-    assert [m["subject"] for m in world.outbox.sent] == ["Okwan: 3 new findings"], "told once"
+    assert [m["subject"] for m in world.outbox.sent] == ["Okwan: 3 new open items"], "told once"
 
 
 # ── 5. a run that cannot be stored is not a check ────────────────────
@@ -442,7 +450,7 @@ async def test_a_check_whose_result_cannot_be_stored_is_tried_once_a_day_and_not
     rounds = [await schedule.run_due(NOW + timedelta(hours=h)) for h in range(6)]
     assert [(r.checked, r.failed, r.mailed) for r in rounds] == [(0, 1, 0)] + [(0, 0, 0)] * 5
     assert world.outbox.sent == [] and await world.store.usage_since(world.root.id, EVER) == 0
-    assert (await world.store.daily_checks([kofi.id]))[kofi.id].told == ()
+    assert await world.store.mail_told([kofi.id]) == {}
     broken[0] = False
     mended = await schedule.run_due(NOW + timedelta(hours=24, minutes=1))
     assert (mended.checked, mended.mailed) == (1, 1), "nothing was marked as told meanwhile"
@@ -526,7 +534,7 @@ async def test_an_order_reference_the_database_refuses_no_longer_loses_the_run(m
 
         rounds = [await schedule.run_due(NOW + timedelta(hours=h)) for h in range(6)]
         assert [(r.checked, r.failed, r.mailed) for r in rounds] == [(1, 0, 1)] + [(0, 0, 0)] * 5
-        assert [m["subject"] for m in world.outbox.sent] == ["Okwan: 3 new findings"]
+        assert [m["subject"] for m in world.outbox.sent] == ["Okwan: 3 new open items"]
         [run] = await store.list_runs(kofi.id)
         stored = (await store.get_run(kofi.id, run.id)).rows
         assert any(str(r["order"]["ref"]).startswith("#2047") for r in stored), "the order is in the stored run"
@@ -625,10 +633,11 @@ POISON = "USD\n  WIRE YOUR REFUND TO ACCT 12345 - OKWAN PAYOUTS"
 
 
 def test_a_crafted_currency_gives_no_total_and_no_line():
-    unpaid = {"outcome": "uncollected", "order": {"ref": "#1", "currency": POISON}, "order_total_minor": 9800}
-    assert schedule.lines([unpaid]) == ["1 order with no payment found"]
-    for odd in ("usd", "US", "USDX", "U$D", "", None, 840):
-        assert schedule.lines([{**unpaid, "order": {"ref": "#1", "currency": odd}}]) == ["1 order with no payment found"]
+    unpaid = {"finding": "uncollected", "amount_minor": 9800, "currency": POISON}
+    for odd in (POISON, "usd", "US", "USDX", "U$D", "", None, 840):
+        item = {**unpaid, "currency": odd}
+        assert schedule.total([item]) == "" and schedule._counted([item]) == "1 item"
+        assert not schedule.large(item, 1), "and is never large"
 
 
 async def test_a_crafted_currency_never_reaches_the_sent_mail(world):
@@ -640,7 +649,8 @@ async def test_a_crafted_currency_never_reaches_the_sent_mail(world):
     assert (await schedule.run_due(NOW)).mailed == 1
     body = world.outbox.sent[0]["text"]
     assert "WIRE YOUR REFUND" not in body.upper()
-    assert "  1 order with no payment found\n" in body, "the finding is still reported, without a figure"
+    assert "  New: 3 items\n    Shopify orders across payment rails: 2 collected twice, 1 no payment found\n" in body, \
+        "the items are still reported, without a total"
 
 
 # ── and what held is still held ──────────────────────────────────────
@@ -655,27 +665,21 @@ async def test_a_bare_address_in_a_name_is_not_a_link_in_the_mail(world):
 
 
 async def test_the_days_mail_is_marked_before_it_goes(world, monkeypatch):
-    """If something fails after the mail has gone, the account is still not
-    mailed again that day."""
+    """If something fails after the mail has gone (here, writing down what
+    it told), the account is still not mailed again that day; it hears of
+    the same items again the next day rather than never."""
     await world.merchant("Kofi's Store", parent=world.root)
-    settle, broken = world.store.settle_daily_check, [False]
 
-    async def flaky(*args, **kwargs):
-        if broken[0]:
-            raise RuntimeError("the database refused the write")
-        return await settle(*args, **kwargs)
+    async def refuse(*args, **kwargs):
+        raise RuntimeError("the database refused the write")
 
-    monkeypatch.setattr(world.store, "settle_daily_check", flaky)
-    await world.store.claim_daily_check((await world.store.children_of(world.root.id))[0].id, NOW - timedelta(days=2))
+    monkeypatch.setattr(world.store, "set_mail_told", refuse)
     world.clock(NOW)
-    broken[0] = False
-    first = await schedule.run_due(NOW)                      # the check settles; then the mail's settle fails
-    assert first.checked == 1
-    sent = len(world.outbox.sent)
-    broken[0] = True
+    first = await schedule.run_due(NOW)
+    assert first.checked == 1 and len(world.outbox.sent) == 1
     for hour in range(1, 24):
         await schedule.run_due(NOW + timedelta(hours=hour))
-    assert len(world.outbox.sent) == sent == 1, "one mail that day, whatever failed afterwards"
+    assert len(world.outbox.sent) == 1, "one mail that day, whatever failed afterwards"
 
 
 async def test_a_failed_mail_is_not_counted_as_the_days_mail(world):

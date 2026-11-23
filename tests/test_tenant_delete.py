@@ -74,6 +74,7 @@ async def _fill(store, name: str) -> dict:
     await store.notify_token(root.id)
     await store.notify_mailed(root.id, NOW)
     await store.claim_daily_check(shop.id, NOW)
+    await store.set_mail_told(shop.id, {"at": NOW.isoformat(), "through": {}})
     return {"root": root, "shop": shop, "email": email, "token_hash": token_hash,
             "key": key, "conv": conv, "ticket": ticket}
 
@@ -90,6 +91,7 @@ async def _gone(store, w: dict) -> None:
     assert await store.list_layouts(shop) == []
     assert await store.list_runs(shop) == []
     assert await store.daily_checks([root, shop]) == {}
+    assert await store.mail_told([root, shop]) == {}
     assert await store.get_conversation(root, w["conv"]) is None
     assert await store.get_ticket(w["ticket"].id) is None
     assert await store.replies_for(root, w["ticket"].id) == []

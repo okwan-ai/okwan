@@ -1,9 +1,12 @@
-"""An account's choices about the daily check, and the way out of its mail.
+"""An account's choices about the daily check and its mail, and the way
+out of the mail.
 
 `GET` and `PUT /v1/tenants/{id}/notify` read and set whether the account's
-merchants are checked once a day and whether a new finding is mailed
-(schedule.py). They are the account's own settings: a merchant under it
-has none.
+merchants are checked once a day, whether what is new on its open items
+is mailed (schedule.py), after how many days an item open that long is
+mailed once more, and the amount from which an open item is named in
+every mail. They are the account's own settings: a merchant under it has
+none.
 
 `POST /v1/unsubscribe` turns the mail off with the token from a mail's
 link and nothing else, because a person must be able to stop mail without
@@ -19,8 +22,8 @@ import hmac
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from okwan_vault.models import unsubscribe_tenant
-from pydantic import BaseModel, Field
+from okwan_vault.models import AGING_DAYS_RANGE, LARGE_AMOUNT_MAX, unsubscribe_tenant
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from .admin import _guard
 from .auth import admin_actor, get_store
@@ -31,8 +34,18 @@ NOT_VALID = "This unsubscribe link isn't valid."
 
 
 class NotifyIn(BaseModel):
-    daily_checks: bool | None = Field(None, description="Check every connected merchant once a day")
-    finding_emails: bool | None = Field(None, description="Mail the account when a daily check finds something new")
+    model_config = ConfigDict(extra="forbid")
+
+    daily_checks: StrictBool | None = Field(None, description="Check every connected merchant once a day")
+    finding_emails: StrictBool | None = Field(
+        None, description="Mail the account, once a day at most, what is new on its open items")
+    aging_days: StrictInt | None = Field(
+        None, ge=AGING_DAYS_RANGE[0], le=AGING_DAYS_RANGE[1],
+        description="An item open this many days is mailed once more (1 to 365; 7 unless set)")
+    large_amount: StrictInt | None = Field(
+        None, ge=0, le=LARGE_AMOUNT_MAX,
+        description="An open item at or above this many whole units of its own currency is named in "
+                    "every mail while it is open (0: none; 1,000 unless set)")
 
 
 class UnsubscribeIn(BaseModel):
@@ -58,6 +71,8 @@ async def _view(tenant_id: str, settings: dict) -> dict[str, Any]:
     return {
         "daily_checks": settings["daily_checks"],
         "finding_emails": settings["finding_emails"],
+        "aging_days": settings["aging_days"],
+        "large_amount": settings["large_amount"],
         # Where the mail goes, and whether this server can send it at all.
         "email": await get_store().account_email(tenant_id),
         "emails_blocked": mail_blocked(),
@@ -72,17 +87,21 @@ def build_router() -> APIRouter:
 
     @router.get("/tenants/{tenant_id}/notify")
     async def get_notify(tenant_id: str, actor=Depends(admin_actor)) -> dict[str, Any]:
-        """Whether the account's merchants are checked daily, and whether a
-        new finding is mailed. Both are on until the account turns them off."""
+        """Whether the account's merchants are checked daily, whether what
+        is new on its open items is mailed, and the days and amount the mail
+        goes by. Both are on until the account turns them off."""
         await _account(actor, tenant_id)
         return await _view(tenant_id, await get_store().get_notify(tenant_id))
 
     @router.put("/tenants/{tenant_id}/notify")
     async def put_notify(tenant_id: str, body: NotifyIn, actor=Depends(admin_actor)) -> dict[str, Any]:
-        """Turn the daily check, or only its mail, on or off for the account."""
+        """Turn the daily check, or only its mail, on or off for the
+        account, or change the days and amount the mail goes by. What is
+        left out stays as it is."""
         await _account(actor, tenant_id)
         settings = await get_store().set_notify(
-            tenant_id, daily_checks=body.daily_checks, finding_emails=body.finding_emails)
+            tenant_id, daily_checks=body.daily_checks, finding_emails=body.finding_emails,
+            aging_days=body.aging_days, large_amount=body.large_amount)
         return await _view(tenant_id, settings)
 
     @router.post("/unsubscribe", status_code=204, tags=["accounts"])
