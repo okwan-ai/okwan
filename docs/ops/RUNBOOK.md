@@ -431,7 +431,10 @@ neither.
   while they are open. Nothing about an item someone explained or
   resolved. One mail a day at most, and only when something is new or
   newly old: an item found later that day is in the next day's mail. A
-  mail names 25 merchants at most and says how many more are waiting.
+  mail names 25 merchants at most, those told longest ago first, and says
+  how many more are waiting. The mail reads stored results five merchants
+  at a time, at most 100,000 items a look, and goes on from there the next
+  round; an account where nothing is new is looked at every six hours.
   It needs `RESEND_API_KEY`,
   `OKWAN_MAIL_FROM` and `OKWAN_MAIL_POSTAL_ADDRESS` on the `okwan` Render
   service; without the address the checks run and no mail goes

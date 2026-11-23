@@ -126,9 +126,9 @@ const parts: Part[] = [
             payment record or a note someone wrote, and says nothing about an item someone has explained or
             resolved. Every such email carries a link that turns them off without signing in. We keep your
             choices (daily checks, their email, the days and the amount), the token in that link, when you were
-            last emailed, and for each merchant when it was last checked and a fingerprint of each open item you
-            have been told of. A fingerprint is a one-way hash: it lets us not tell you twice and does not contain
-            a reference.
+            last emailed, and for each merchant when it was last checked, when we last emailed you about it, and
+            which results of its checks that email covered. That is times and the checks&rsquo; names only, so we
+            do not tell you twice, and nothing about any item.
           </li>
           <li>
             <strong>Access records.</strong> Each time your data is read, through the API, the MCP server or the
@@ -295,7 +295,7 @@ const parts: Part[] = [
             ["Usage counts", "As long as your account exists"],
             ["Access records: when, the API key's prefix, the IP address and network, what was read", "90 days, then deleted within the hour; at once with your account"],
             ["Alerts about how your keys were used", "400 days, or until your account is deleted"],
-            ["Your choices about daily checks and their email, the token in the unsubscribe link, when each merchant was last checked, and fingerprints of the open items you have been told of", "As long as your account exists"],
+            ["Your choices about daily checks and their email, the token in the unsubscribe link, when each merchant was last checked, and when we last emailed you about it and which results that covered", "As long as your account exists"],
             ["Support conversations", "30 days after the last message"],
             ["Support tickets and our replies", "As long as your account exists"],
             ["The log of staff actions in our console", "Permanently, as a security record. It names which account or ticket was opened, not what it contains"],

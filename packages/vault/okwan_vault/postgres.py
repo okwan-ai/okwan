@@ -1918,24 +1918,25 @@ class PostgresStore:
 
     # ── what the daily mail has told ──────────────────────────────────
 
-    async def mail_told(self, tenant_ids: list[str]) -> dict[str, frozenset[str]]:
-        """What the daily mail has told each of these merchants' account of."""
+    async def mail_told(self, tenant_ids: list[str]) -> dict[str, dict]:
+        """What the daily mail has told each of these merchants' account:
+        when it last named the merchant, and through when for each check."""
         if not tenant_ids:
             return {}
         async with self._scoped(*tenant_ids) as con:
             rows = await con.fetch(
-                "SELECT tenant_id, marks FROM mail_told WHERE tenant_id = ANY($1::text[])", list(tenant_ids))
-        return {r["tenant_id"]: frozenset(_loads(r["marks"]) or ()) for r in rows}
+                "SELECT tenant_id, told FROM mail_told WHERE tenant_id = ANY($1::text[])", list(tenant_ids))
+        return {r["tenant_id"]: (_loads(r["told"]) or {}) for r in rows}
 
-    async def set_mail_told(self, tenant_id: str, marks: list[str]) -> None:
+    async def set_mail_told(self, tenant_id: str, record: dict) -> None:
         """What the account has now been told of the merchant, in place of
-        what it had: marks of items no longer open are dropped with it."""
+        what it had."""
         try:
             async with self._scoped(tenant_id) as con:
                 await con.execute(
-                    "INSERT INTO mail_told (tenant_id, marks, updated_at) VALUES ($1, $2::jsonb, now()) "
-                    "ON CONFLICT (tenant_id) DO UPDATE SET marks = EXCLUDED.marks, updated_at = now()",
-                    tenant_id, _dumps(sorted(marks)))
+                    "INSERT INTO mail_told (tenant_id, told, updated_at) VALUES ($1, $2::jsonb, now()) "
+                    "ON CONFLICT (tenant_id) DO UPDATE SET told = EXCLUDED.told, updated_at = now()",
+                    tenant_id, _dumps(record))
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
 

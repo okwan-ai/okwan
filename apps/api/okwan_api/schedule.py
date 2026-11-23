@@ -25,11 +25,17 @@ When a merchant is due, the scheduler decides from its own record
 can reach), not from stored runs, which any key can add to: a run made
 with an API key, the dashboard or an agent cannot put a check off. The
 slot is taken before the check runs, so a check that fails, or whose
-result cannot be stored, is still not due again until tomorrow. What the
-mail has told an account is the scheduler's own record too (`mail_told`:
-a hash of each item, never a reference), so no caller can have an item
-mailed again or kept out; what is open is the open-items list, as the
-dashboard shows it.
+result cannot be stored, is still not due again until tomorrow.
+
+What the mail has told an account of a merchant is the scheduler's own
+record too (`mail_told`): when it last named the merchant, and, for each
+check, when the result it read then was read from the rails. An item is
+new when it was first seen after that (a stored row carries the time its
+finding was first seen, from run to run), and newly old when it has
+passed the account's days since that mail. Times only: no item, key or
+reference is kept for the mail. What is open is the open-items list, as
+the dashboard shows it, read a few merchants at a time and within a
+budget a look; the next look starts where one stopped.
 
 Accounts take turns: each round gives every account with something due
 one check before any gets a second, the account served longest ago first,
@@ -73,7 +79,7 @@ from okwan_vault.models import AGING_DAYS, LARGE_AMOUNT, DailyCheck, Tenant
 
 from . import access
 from .auth import get_store, meter, quota_for
-from .exceptions import _titles
+from .exceptions import _titles, _unseen
 from .mail import MailNotSent, dashboard_url, get_mailer, postal_address
 from .runs import file_check_names, record_run, run_clock
 
@@ -100,18 +106,26 @@ ROUND_BUDGET = 20 * 60.0
 RUN_TIMEOUT = 300.0
 #: How much of a tenant's name a mail shows.
 NAME_SHOWN = 60
-#: Merchants one mail names, those with the most news first; the others
+#: Merchants one mail names, those it told longest ago first; the others
 #: are counted, and their news waits for the next mail.
 MAIL_MERCHANTS = 25
-#: Merchants whose stored results are read at once for the mail.
-READ_CHUNK = 25
-#: Accounts whose last look found nothing to mail, with what that look
-#: saw: the day, the account's days and its merchants' newest good
-#: results. The same again is the same answer, so no rows are read; a new
-#: day or a new result reads them again. Kept in this process (one sweeper,
-#: G7), and emptied rather than let grow past a bound.
-_quiet: dict[str, tuple] = {}
-QUIET_KEPT = 50_000
+#: Merchants whose stored results are read at once for the mail: few, so
+#: what one read decodes is small.
+READ_CHUNK = 5
+#: What one look at an account reads at most: open items, and merchants.
+#: The next look starts where this one stopped.
+LOOK_ITEMS = 100_000
+LOOK_MERCHANTS = 2_000
+#: A look that read every merchant and found nothing to mail is not made
+#: again for this long.
+LOOK_EVERY = timedelta(hours=6)
+#: Merchants whose scheduler records are read at once.
+STATE_CHUNK = 200
+#: Where each account's next look starts, and until when it is quiet. Kept
+#: in this process (one sweeper, G7), and emptied rather than let grow
+#: past a bound.
+_looks: dict[str, Look] = {}
+LOOKS_KEPT = 50_000
 
 #: The round's clock for its time budget; a test moves it.
 monotonic = time.monotonic
@@ -144,28 +158,78 @@ class RecordUnavailable(RuntimeError):
     same merchants would be read again every hour for as long as it lasted."""
 
 
-@dataclass
-class Open:
-    """A merchant's open items, and how many more its checks found than
-    their stored results keep (paging.MAX_ROWS), which no mail can tell
-    apart: Open items counts them."""
+class Tally:
+    """How many items, and what they put at stake by currency, in minor
+    units. A total is stated only when every item has a figure and a
+    three-letter currency code: never an undercount, and nothing a
+    merchant's systems or files sent as text but a code."""
 
-    items: list[dict[str, Any]] = field(default_factory=list)
-    beyond: int = 0
+    __slots__ = ("n", "sums", "whole")
+
+    def __init__(self) -> None:
+        self.n, self.sums, self.whole = 0, {}, True
+
+    def add(self, item: dict[str, Any]) -> None:
+        self.n += 1
+        minor, currency = item.get("amount_minor"), item.get("currency")
+        if (not isinstance(minor, int) or isinstance(minor, bool) or not isinstance(currency, str)
+                or not _CURRENCY.fullmatch(currency)):
+            self.whole = False
+            return
+        self.sums[currency] = self.sums.get(currency, 0) + minor
+
+    def merge(self, other: Tally) -> None:
+        self.n += other.n
+        self.whole = self.whole and other.whole
+        for c, v in other.sums.items():
+            self.sums[c] = self.sums.get(c, 0) + v
+
+    def total(self) -> str:
+        """"$1,449.00", or "$1,449.00 and 300.00 EUR"; empty when it cannot
+        be stood behind."""
+        if not self.n or not self.whole:
+            return ""
+        return " and ".join(format_minor(v, c) for c, v in sorted(self.sums.items()))
+
+    def counted(self) -> str:
+        """"3 items, $1,449.00 at stake", or the count alone."""
+        at_stake = self.total()
+        return _plural(self.n, "item", "items") + (f", {at_stake} at stake" if at_stake else "")
 
 
 @dataclass
 class News:
-    """One merchant's part of the day's mail: its open items, those new to
-    the account, those newly past the account's days, and those at or above
-    its amount."""
+    """What a look found of one merchant, in figures only: what is new to
+    the account (by check, and what each finding is), what has newly been
+    open the account's days, what is at or above its amount, and how many
+    more its checks found than their stored results keep (paging.MAX_ROWS),
+    which no mail can tell apart. `through` is, for each check, when the
+    result read was read from the rails: what a mail naming the merchant
+    tells the account through."""
 
     tenant: Tenant
-    open: list[dict[str, Any]]
-    new: list[dict[str, Any]]
-    aged: list[dict[str, Any]]
-    large: list[dict[str, Any]]
+    told_at: datetime | None
+    new: Tally = field(default_factory=Tally)
+    new_by: dict[str, dict[str, int]] = field(default_factory=dict)
+    aged: Tally = field(default_factory=Tally)
+    large: Tally = field(default_factory=Tally)
     beyond: int = 0
+    through: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def any(self) -> bool:
+        return bool(self.new.n or self.aged.n)
+
+
+@dataclass
+class Look:
+    """Where an account's next look starts; whether the looks since the
+    last one that started from the first merchant found nothing; and until
+    when the account is quiet."""
+
+    cursor: int = 0
+    clean: bool = True
+    quiet_until: datetime | None = None
 
 
 @dataclass
@@ -225,7 +289,9 @@ async def run_due(now: datetime | None = None) -> Round:
         mailing.append(_Account(root, settings, members))
         if not settings["daily_checks"]:
             continue
-        states = await store.daily_checks([t.id for t in members])
+        states: dict[str, DailyCheck] = {}
+        for start in range(0, len(members), STATE_CHUNK):
+            states |= await store.daily_checks([t.id for t in members[start:start + STATE_CHUNK]])
         never = datetime.min.replace(tzinfo=UTC)
         due = sorted(
             (t for t in members if t.id not in states or now - states[t.id].checked_at >= DUE_AFTER),
@@ -330,41 +396,6 @@ def mail_blocked() -> str | None:
     return None
 
 
-async def open_items_of(store, members: list[Tenant], at: datetime) -> dict[str, Open]:
-    """Every open item of these merchants, as a merchant's own Open items
-    list has them: each check's newest good result, read from its rows,
-    less what a person explained or resolved on the terms it stands on now.
-    A merchant's expired files go first, with the results that read them,
-    as before a suggestion: the mail sends what it reads to the mail
-    provider. A few merchants are read at a time, off the event loop."""
-    titles = _titles()
-    files = set(file_check_names())
-    out: dict[str, Open] = {}
-    for start in range(0, len(members), READ_CHUNK):
-        ids = [t.id for t in members[start:start + READ_CHUNK]]
-        runs = await store.newest_runs_all(ids, ok_only=True, with_rows=True)
-        stale = sorted({r.tenant_id for r in runs if r.name in files})
-        dropped = [await store.drop_expired_imports(tid, at) for tid in stale]
-        if any(dropped):
-            runs = await store.newest_runs_all(ids, ok_only=True, with_rows=True)
-        found: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-        for run in runs:
-            if (run.kind, run.name) not in titles:  # no longer declared
-                continue
-            items = await asyncio.to_thread(open_items, run.tenant_id, run.name, run.kind, run.rows, at)
-            found[(run.tenant_id, run.kind, run.name)] = items
-            beyond = max(run_found(run.kind, run.summary) - len(items), 0)
-            if beyond:
-                out.setdefault(run.tenant_id, Open()).beyond += beyond
-        current = await store.current_decisions(
-            [(tid, i["key"]) for (tid, _, _), items in found.items() for i in items])
-        for (tid, kind, name), items in found.items():
-            for i in items:
-                if not holds(current.get((tid, kind, name, i["key"])), i):
-                    out.setdefault(tid, Open()).items.append({**i, "kind": kind, "title": titles[(kind, name)]})
-    return out
-
-
 def large(item: dict[str, Any], amount: int) -> bool:
     """An item at or above the account's amount, in whole units of the
     item's own currency (0: no item is large). Integer arithmetic only."""
@@ -374,31 +405,113 @@ def large(item: dict[str, Any], amount: int) -> bool:
             and minor >= amount * minor_unit_factor(currency))
 
 
-def _aged(item: dict[str, Any], days: int) -> bool:
-    open_days = item.get("open_days")
-    return isinstance(open_days, int) and open_days >= days
+def _told(record: Any) -> tuple[datetime | None, dict[str, datetime]]:
+    """When a mail last named the merchant, and through when it told each
+    check's result. The scheduler's own record; anything else reads as
+    never told."""
+    if not isinstance(record, dict):
+        return None, {}
+    at = _instant(record.get("at"))
+    through = record.get("through") if isinstance(record.get("through"), dict) else {}
+    return at, {k: t for k, v in through.items() if isinstance(k, str) and (t := _instant(v)) is not None}
 
 
-def marks_for(items: list[dict[str, Any]], days: int) -> list[str]:
-    """What the account has been told of a merchant once a mail names it:
-    each open item as new, and each past the account's days as aged."""
-    out = {f"n:{i['key']}" for i in items}
-    out |= {f"a:{i['key']}" for i in items if _aged(i, days)}
-    return sorted(out)
-
-
-def news_of(tenant: Tenant, opened: Open, told: frozenset[str], days: int, amount: int) -> News | None:
-    """A merchant's news for the mail, or None when it has none: an item
-    the account has not been told of is new; one told of as new that has
-    since passed the account's days is newly aged. Large items are named
-    with the news, never as news themselves."""
-    items = opened.items
-    new = [i for i in items if f"n:{i['key']}" not in told]
-    aged = [i for i in items
-            if f"n:{i['key']}" in told and f"a:{i['key']}" not in told and _aged(i, days)]
-    if not new and not aged:
+def _instant(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not isinstance(value, str):
         return None
-    return News(tenant, items, new, aged, [i for i in items if large(i, amount)], opened.beyond)
+    try:
+        at = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
+def weigh(news: News, check: str, title: str, run_at: datetime, items: list[dict[str, Any]],
+          shut: set[str], told_at: datetime | None, through: datetime | None,
+          days: int, amount: int, now: datetime) -> None:
+    """Add one check's open items to the merchant's news, by figures only.
+    An item is new when the account was never told of this check, or the
+    item was first seen after the result last told; newly old when it was
+    told and has passed the account's days since that mail; large while it
+    is open at or above the account's amount. `shut`: the keys a person
+    explained or resolved on the terms they stand on now."""
+    news.through[check] = run_at.isoformat()
+    since_told = (now.date() - told_at.date()).days if told_at is not None else None
+    for i in items:
+        if i["key"] in shut:
+            continue
+        if amount and large(i, amount):
+            news.large.add(i)
+        first = _instant(i.get("first_seen"))
+        if told_at is None or through is None or (first is not None and first > through):
+            news.new.add(i)
+            said = news.new_by.setdefault(title, {})
+            what = WHAT.get(i.get("finding"), "needs a look")
+            said[what] = said.get(what, 0) + 1
+            continue
+        open_days = i.get("open_days")
+        if isinstance(open_days, int) and open_days >= days and open_days - since_told < days:
+            news.aged.add(i)
+
+
+async def _merchant(store, tenant: Tenant, runs: list, titles: dict, record: Any,
+                    days: int, amount: int, now: datetime) -> tuple[News, int]:
+    """One merchant's news, and how many items were read for it. Its items
+    are worked out off the event loop and held only while this runs."""
+    told_at, through = _told(record)
+    news, read = News(tenant, told_at), 0
+    for run in runs:
+        title = titles.get((run.kind, run.name))
+        if title is None:  # no longer declared
+            continue
+        items = await asyncio.to_thread(open_items, tenant.id, run.name, run.kind, run.rows, now)
+        read += len(items)
+        news.beyond += max(run_found(run.kind, run.summary) - len(items), 0)
+        current = await store.current_decisions([(tenant.id, i["key"]) for i in items])
+        shut = {i["key"] for i in items if holds(current.get((tenant.id, run.kind, run.name, i["key"])), i)}
+        check = f"{run.kind}/{run.name}"
+        await asyncio.to_thread(weigh, news, check, title, run.started_at, items, shut, told_at,
+                                through.get(check), days, amount, now)
+    return news, read
+
+
+async def look(store, account: _Account, now: datetime, days: int, amount: int) -> tuple[list[News], bool]:
+    """What the account's merchants have that a mail could tell, in figures,
+    from where the last look stopped and within LOOK_ITEMS and
+    LOOK_MERCHANTS; and whether this look reached the last merchant. A
+    merchant's expired files go first, with the results that read them, as
+    before a suggestion: the mail sends what it reads to the mail provider."""
+    titles, files = _titles(), set(file_check_names())
+    members = account.members
+    state = _looks.setdefault(account.root.id, Look())
+    start = state.cursor if state.cursor < len(members) else 0
+    if start == 0:
+        state.clean = True
+    order = members[start:]
+    found: list[News] = []
+    items = merchants = 0
+    for at in range(0, len(order), READ_CHUNK):
+        if items >= LOOK_ITEMS or merchants >= LOOK_MERCHANTS:
+            break
+        chunk = order[at:at + READ_CHUNK]
+        ids = [t.id for t in chunk]
+        runs = await store.newest_runs_all(ids, ok_only=True, with_rows=True)
+        stale = sorted({r.tenant_id for r in runs if r.name in files})
+        if any([await store.drop_expired_imports(tid, now) for tid in stale]):
+            runs = await store.newest_runs_all(ids, ok_only=True, with_rows=True)
+        told = await store.mail_told(ids)
+        for t in chunk:
+            mine = [r for r in runs if r.tenant_id == t.id]
+            news, read = await _merchant(store, t, mine, titles, told.get(t.id), days, amount, now)
+            items += read
+            if news.any or news.large.n:
+                found.append(news)
+        merchants += len(chunk)
+    reached = merchants >= len(order)
+    state.cursor = 0 if reached else start + merchants
+    return found, reached
 
 
 async def _mail_due(account: _Account, now: datetime) -> bool:
@@ -414,31 +527,30 @@ async def _mail_due(account: _Account, now: datetime) -> bool:
     if blocked:
         logger.info("open items for %s not mailed: %s", root.id, blocked)
         return False
+    state = _looks.get(root.id)
+    if state is not None and state.quiet_until is not None and now < state.quiet_until:
+        return False
     store = get_store()
     email = await store.account_email(root.id)
     if not email:
         return False
     days = settings.get("aging_days") or AGING_DAYS
     amount = settings.get("large_amount", LARGE_AMOUNT) or 0
-    ids = [t.id for t in account.members]
-    seen = (now.date(), days, frozenset(r.id for r in await store.newest_runs_all(ids, ok_only=True)))
-    if _quiet.get(root.id) == seen:
-        return False
-    open_by = await open_items_of(store, account.members, now)
-    told = await store.mail_told(ids)
-    news = [n for t in account.members
-            if (n := news_of(t, open_by.get(t.id, Open()), told.get(t.id, frozenset()), days, amount))
-            is not None]
-    listed = sorted(news, key=lambda n: (-(len(n.new) + len(n.aged)), n.tenant.id))[:MAIL_MERCHANTS]
+    if len(_looks) >= LOOKS_KEPT and root.id not in _looks:
+        _looks.clear()
+    found, reached = await look(store, account, now, days, amount)
+    news = [n for n in found if n.any]
+    never = datetime.min.replace(tzinfo=UTC)
+    listed = sorted(news, key=lambda n: (n.told_at or never, n.tenant.id))[:MAIL_MERCHANTS]
+    state = _looks.setdefault(root.id, Look())
+    state.clean = state.clean and not news
+    # Quiet only once looks from the first merchant to the last found nothing.
+    state.quiet_until = now + LOOK_EVERY if reached and state.clean else None
     if not listed:
-        await _forget_closed(store, open_by, told, days)
-        if len(_quiet) >= QUIET_KEPT:
-            _quiet.clear()
-        _quiet[root.id] = seen
         return False
-    _quiet.pop(root.id, None)
+    big = sorted((n for n in found if n.large.n), key=lambda n: (-n.large.n, n.tenant.id))
     link = unsubscribe_link(await store.notify_token(root.id))
-    subject, text = message(root.name, listed, len(news) - len(listed), link, postal_address(), days, amount)
+    subject, text = message(root.name, news, listed, big, link, postal_address(), days, amount)
     # Today's mail is marked as sent before it goes: whatever fails after
     # this, the account is not mailed a second time today.
     await store.notify_mailed(root.id, now)
@@ -449,24 +561,14 @@ async def _mail_due(account: _Account, now: datetime) -> bool:
         # It did not go: put the mark back, so the next round tries again.
         await store.notify_mailed(root.id, last)
         return False
-    # The merchants the mail named are told of everything they have open;
+    # The merchants the mail named are told, through the results it read;
     # the others' news waits for the next mail.
-    named = {n.tenant.id for n in listed}
     for n in listed:
-        await store.set_mail_told(n.tenant.id, marks_for(n.open, days))
-    await _forget_closed(store, {k: v for k, v in open_by.items() if k not in named},
-                         {k: v for k, v in told.items() if k not in named}, days)
+        try:
+            await store.set_mail_told(n.tenant.id, {"at": now.isoformat(), "through": n.through})
+        except KeyError:
+            continue  # deleted since the look
     return True
-
-
-async def _forget_closed(store, open_by: dict[str, Open], told: dict[str, frozenset[str]], days: int) -> None:
-    """Forget what the account was told of items that are no longer open,
-    so one that opens again is news again. Nothing is added here: only a
-    mail that names a merchant tells the account of its items."""
-    for tid, marks in told.items():
-        still = marks & frozenset(marks_for(open_by.get(tid, Open()).items, days))
-        if still != marks:
-            await store.set_mail_told(tid, sorted(still))
 
 
 def unsubscribe_link(token: str) -> str:
@@ -481,51 +583,48 @@ def _plural(n: int, one: str, many: str) -> str:
 
 _CURRENCY = re.compile(r"[A-Z]{3}")
 _LINK = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://|\bwww\.")
+#: A word straight before a colon with something after it: how "tel:",
+#: "mailto:" or "sms:" make the rest of a name an address to press.
+_SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}):(?=\S)")
 #: A full stop, in any of the forms a mail client reads as one, with a
 #: letter or digit straight after it: what makes "shop.example.com" a link.
-_DOT = re.compile(r"[.\uff0e\u3002\uff61](?=\w)")
+_DOT = re.compile(r"[.．。｡․﹒︒](?=\w)")
 
 
 def shown(name: str, limit: int = NAME_SHOWN, *, own: bool = False) -> str:
     """A tenant's name as a mail shows it: one line, bounded, with no
-    control or invisible character, no web address scheme, and a space
-    after any full stop that would join two words into an address a mail
-    client makes a link ("shop. example. com"). Whoever can name a merchant
-    chooses these words in the account's mail and nothing else: not a
-    line, not a header, not a link Okwan appears to give. `own` is the
-    account's own name, set at sign-up or by the operator: its full stops
-    are left alone."""
-    text = "".join(" " if unicodedata.category(c)[0] in "CZ" else c for c in str(name))
+    control or invisible character (the rule a note is held to,
+    okwan_api.exceptions), no web address scheme or "word:" one, and a
+    space after any full stop that would join two words into an address a
+    mail client makes a link ("shop. example. com"). Whoever can name a
+    merchant chooses these words in the account's mail and nothing else:
+    not a line, not a header, not a link Okwan appears to give. `own` is
+    the account's own name, set at sign-up or by the operator: its full
+    stops and colons are left alone."""
+    text = "".join(" " if unicodedata.category(c)[0] in "CZ" else "" if _unseen(c) else c for c in str(name))
     text = _LINK.sub(" ", text)
     if not own:
+        text = _SCHEME.sub(r"\1: ", text)
         text = _DOT.sub(". ", text)
     text = " ".join(text.split())
     if len(text) > limit:
         text = text[: limit - 1].rstrip() + "…"
-    return text or "(no name)"
+    return text if any(unicodedata.category(c)[0] in "LNPS" for c in text) else "(no name)"
 
 
 def total(items: list[dict[str, Any]]) -> str:
-    """What items put at stake, by currency, as "$1,449.00" or "$1,449.00
-    and 300.00 EUR"; empty when any item lacks a figure, so a total is
-    never an undercount, or when a currency is not three letters: it comes
-    from the merchant's own systems and files, and only a code reaches the
-    mail."""
-    totals: dict[str, int] = {}
+    """What items put at stake, by currency (Tally.total)."""
+    t = Tally()
     for i in items:
-        minor, currency = i.get("amount_minor"), i.get("currency")
-        if (not isinstance(minor, int) or isinstance(minor, bool) or not isinstance(currency, str)
-                or not _CURRENCY.fullmatch(currency)):
-            return ""
-        totals[currency] = totals.get(currency, 0) + minor
-    return " and ".join(format_minor(v, c) for c, v in sorted(totals.items()))
+        t.add(i)
+    return t.total()
 
 
 def _counted(items: list[dict[str, Any]]) -> str:
-    """"3 items, $1,449.00 at stake", or the count alone when a total cannot
-    be stood behind."""
-    at_stake = total(items)
-    return _plural(len(items), "item", "items") + (f", {at_stake} at stake" if at_stake else "")
+    t = Tally()
+    for i in items:
+        t.add(i)
+    return t.counted()
 
 
 #: What each kind of finding is, in words that name no reference.
@@ -546,48 +645,56 @@ def _kinds(items: list[dict[str, Any]]) -> str:
     for i in items:
         said = WHAT.get(i.get("finding"), "needs a look")
         count[said] = count.get(said, 0) + 1
+    return _said(count)
+
+
+def _said(count: dict[str, int]) -> str:
     return ", ".join(f"{n} {said}" for said, n in sorted(count.items(), key=lambda c: (-c[1], c[0])))
 
 
-def lines(n: News, days: int, amount: int) -> list[str]:
+def lines(n: News, days: int) -> list[str]:
     """One merchant's part of the mail. A check is named by its title,
     which is Okwan's own words, as is what each finding is."""
     out: list[str] = []
-    if n.new:
-        out.append(f"New: {_counted(n.new)}")
-        by_check: dict[str, list[dict[str, Any]]] = {}
-        for i in n.new:
-            by_check.setdefault(i["title"], []).append(i)
-        out += [f"  {title}: {_kinds(items)}" for title, items in sorted(by_check.items())]
-    if n.aged:
-        out.append(f"Now open {days} days or more: {_counted(n.aged)}")
-    if n.large:
-        out.append(f"Still open at {amount:,} or more of their currency: {_counted(n.large)}")
+    if n.new.n:
+        out.append(f"New: {n.new.counted()}")
+        out += [f"  {title}: {_said(count)}" for title, count in sorted(n.new_by.items())]
+    if n.aged.n:
+        out.append(f"Now open {days} days or more: {n.aged.counted()}")
     if n.beyond:
         out.append(f"And {n.beyond:,} more found than a stored result keeps: Open items counts them")
     return out
 
 
-def message(account: str, news: list[News], more: int, unsubscribe: str, address: str,
-            days: int = AGING_DAYS, amount: int = LARGE_AMOUNT) -> tuple[str, str]:
-    """The subject and plain text of the account's mail. The subject is
-    Okwan's words and figures only; a name appears in the body, cleaned
-    (`shown`)."""
-    new = sum(len(n.new) for n in news)
-    aged = sum(len(n.aged) for n in news)
+def message(account: str, news: list[News], listed: list[News], big: list[News], unsubscribe: str,
+            address: str, days: int = AGING_DAYS, amount: int = LARGE_AMOUNT) -> tuple[str, str]:
+    """The subject and plain text of the account's mail: every merchant's
+    news counted in the subject, those `listed` named in the body, and the
+    merchants with open items at or above the account's amount after them.
+    The subject is Okwan's words and figures only; a name appears in the
+    body, cleaned (`shown`)."""
+    new = sum(n.new.n for n in news)
+    aged = sum(n.aged.n for n in news)
     said = [x for x in (_plural(new, "new open item", "new open items") if new else "",
                         f"{aged} now open {days} days or more" if aged else "") if x]
     subject = "Okwan: " + " and ".join(said) + (f" across {len(news)} merchants" if len(news) > 1 else "")
     base = dashboard_url()
     account = shown(account, own=True)
     parts = [f"What is new on the open items for {account}.", ""]
-    for n in news:
+    for n in listed:
         parts.append(shown(n.tenant.name))
-        parts += [f"  {line}" for line in lines(n, days, amount)]
+        parts += [f"  {line}" for line in lines(n, days)]
         parts += [f"  {base}/exceptions?merchant={quote(n.tenant.id, safe='')}", ""]
+    more = len(news) - len(listed)
     if more:
         said_more = _plural(more, "more merchant has", "more merchants have")
         parts += [f"{said_more} something new, in the next email and on Open items: {base}/exceptions", ""]
+    if big:
+        parts.append(f"Still open at {amount:,} or more of their currency:")
+        parts += [f"  {shown(n.tenant.name)}: {n.large.counted()}" for n in big[:MAIL_MERCHANTS]]
+        if len(big) > MAIL_MERCHANTS:
+            parts.append(f"  and {_plural(len(big) - MAIL_MERCHANTS, 'more merchant', 'more merchants')}")
+        parts.append("")
     parts += [
         "Okwan only reads. What is done about an item is done by a person, where it started.",
         "",

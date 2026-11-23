@@ -10,6 +10,7 @@ credentials exist only inside a single function's stack frame.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable, Collection
 from dataclasses import replace
@@ -276,8 +277,8 @@ class Store(Protocol):
         self, tenant_id: str, *, daily_checks: bool | None = None, finding_emails: bool | None = None,
         aging_days: int | None = None, large_amount: int | None = None,
     ) -> dict: ...
-    async def mail_told(self, tenant_ids: list[str]) -> dict[str, frozenset[str]]: ...
-    async def set_mail_told(self, tenant_id: str, marks: list[str]) -> None: ...
+    async def mail_told(self, tenant_ids: list[str]) -> dict[str, dict]: ...
+    async def set_mail_told(self, tenant_id: str, record: dict) -> None: ...
     async def notify_token(self, tenant_id: str) -> str: ...
     async def notify_mailed(self, tenant_id: str, at: datetime | None) -> None: ...
     async def daily_checks(self, tenant_ids: list[str]) -> dict[str, DailyCheck]: ...
@@ -341,7 +342,7 @@ class MemoryStore:
         self._alerts: dict[str, dict] = {}
         self._notify: dict[str, dict] = {}
         #: tenant id → what the daily mail has told its account of it.
-        self._mail_told: dict[str, frozenset[str]] = {}
+        self._mail_told: dict[str, dict] = {}
         self._daily: dict[str, DailyCheck] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
@@ -1461,13 +1462,13 @@ class MemoryStore:
         self._notify[tenant_id] = row
         return dict(row)
 
-    async def mail_told(self, tenant_ids: list[str]) -> dict[str, frozenset[str]]:
-        return {t: self._mail_told[t] for t in tenant_ids if t in self._mail_told}
+    async def mail_told(self, tenant_ids: list[str]) -> dict[str, dict]:
+        return {t: json.loads(self._mail_told[t]) for t in tenant_ids if t in self._mail_told}
 
-    async def set_mail_told(self, tenant_id: str, marks: list[str]) -> None:
+    async def set_mail_told(self, tenant_id: str, record: dict) -> None:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
-        self._mail_told[tenant_id] = frozenset(marks)
+        self._mail_told[tenant_id] = json.dumps(record)
 
     async def notify_token(self, tenant_id: str) -> str:
         if tenant_id not in self._tenants:

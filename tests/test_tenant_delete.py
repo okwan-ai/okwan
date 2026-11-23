@@ -74,7 +74,7 @@ async def _fill(store, name: str) -> dict:
     await store.notify_token(root.id)
     await store.notify_mailed(root.id, NOW)
     await store.claim_daily_check(shop.id, NOW)
-    await store.set_mail_told(shop.id, ["n:abc"])
+    await store.set_mail_told(shop.id, {"at": NOW.isoformat(), "through": {}})
     return {"root": root, "shop": shop, "email": email, "token_hash": token_hash,
             "key": key, "conv": conv, "ticket": ticket}
 

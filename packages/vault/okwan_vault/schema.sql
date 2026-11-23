@@ -555,18 +555,30 @@ BEGIN
             ADD COLUMN aging_days integer NOT NULL DEFAULT 7 CHECK (aging_days BETWEEN 1 AND 365),
             ADD COLUMN large_amount bigint NOT NULL DEFAULT 1000
                 CHECK (large_amount BETWEEN 0 AND 1000000000000);
+        -- Once, with the columns: until now the mail was the daily check's,
+        -- and Settings held its switch off while daily checks were off. An
+        -- account that turned daily checks off never chose the mail on its
+        -- own, so it is off for that account until the account turns it on.
+        UPDATE notify_settings SET finding_emails = false WHERE NOT daily_checks AND finding_emails;
     END IF;
 END $$;
 
--- What the daily mail has told an account of one merchant's open items,
--- written by the scheduler and by nothing a caller can reach: `marks` is
--- "n:<item key>" for an item told as new, "a:<item key>" for one told as
--- past the account's age. An item key is a hash, never a reference. Marks
--- of items no longer open are dropped each time it is written, so an item
--- that closes and opens again is news again. Tenant data.
+-- What the daily mail has told an account of one merchant, written by the
+-- scheduler and by nothing a caller can reach: `told` is when a mail last
+-- named the merchant (`at`) and, for each check, when the result it read
+-- then was read from the rails (`through`). Times and check names only:
+-- no item, key or reference. Tenant data.
+-- A first form of this table, never released, kept item keys: it goes.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+               AND table_name = 'mail_told' AND column_name = 'marks') THEN
+        DROP TABLE mail_told;
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS mail_told (
     tenant_id   text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-    marks       jsonb NOT NULL DEFAULT '[]',
+    told        jsonb NOT NULL DEFAULT '{}',
     updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
@@ -576,18 +588,34 @@ CREATE TABLE IF NOT EXISTS mail_told (
 -- stored runs, which any key can add to and so push out of history.
 CREATE TABLE IF NOT EXISTS daily_checks (
     tenant_id   text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-    checked_at  timestamptz NOT NULL
+    checked_at  timestamptz NOT NULL,
+    told        jsonb NOT NULL DEFAULT '[]',
+    news        jsonb NOT NULL DEFAULT '[]'
 );
 -- Until 2026-11-23 the mail was made from the fold's findings alone, kept
 -- here as fingerprints (`told`) and as figures waiting to be mailed
--- (`news`). The mail is made from the open items now (`mail_told`): what
--- was kept for the old one goes.
--- Checked first, so a start against a current database takes no lock.
+-- (`news`). The mail is made from the open items now (`mail_told`), and
+-- nothing reads these. They are emptied, and kept for one release, so a
+-- release still serving while the next starts, or one rolled back to,
+-- reads the table it knows; the next release drops them.
+-- Looked at first, so a start against a current database writes nothing.
 DO $$
+DECLARE
+    held boolean;
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
-               AND table_name = 'daily_checks' AND column_name IN ('told', 'news')) THEN
-        ALTER TABLE daily_checks DROP COLUMN IF EXISTS told, DROP COLUMN IF EXISTS news;
+    -- A database a build of this change dropped them on (never released)
+    -- gets them back, so every database has the table the last release reads.
+    IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
+        AND table_name = 'daily_checks' AND column_name IN ('told', 'news')) < 2 THEN
+        ALTER TABLE daily_checks ADD COLUMN IF NOT EXISTS told jsonb NOT NULL DEFAULT '[]',
+                                 ADD COLUMN IF NOT EXISTS news jsonb NOT NULL DEFAULT '[]';
+    END IF;
+    IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema()
+        AND table_name = 'daily_checks' AND column_name IN ('told', 'news')) = 2 THEN
+        EXECUTE 'SELECT EXISTS (SELECT 1 FROM daily_checks WHERE told <> ''[]'' OR news <> ''[]'')' INTO held;
+        IF held THEN
+            EXECUTE 'UPDATE daily_checks SET told = ''[]'', news = ''[]'' WHERE told <> ''[]'' OR news <> ''[]''';
+        END IF;
     END IF;
 END $$;
 

@@ -13,8 +13,9 @@ type NotifyBody = { daily_checks?: unknown; finding_emails?: unknown; aging_days
  *  the days and amount the mail goes by. Always the signed-in account's
  *  own: there is no id to pass. */
 export async function PUT(req: Request) {
-  const body = await readBody<NotifyBody>(req);
+  const body = await readBody<NotifyBody | null>(req);
   if (body instanceof Response) return body;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return fail("expected a JSON object", 400);
   const [token, account] = await Promise.all([session(), me()]);
   if (!token || !account) return fail("signed out — sign in again", 401);
   const change: { daily_checks?: boolean; finding_emails?: boolean; aging_days?: number; large_amount?: number } = {};

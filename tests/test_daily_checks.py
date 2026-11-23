@@ -273,11 +273,10 @@ KOFI_NEW = ("Kofi's Store\n"
 
 async def _explain(world, tenant, ref: str, status: str = "explained") -> None:
     """A person explains (or resolves) the open item about order `ref`."""
-    from okwan_recon.exceptions import terms
+    from okwan_recon.exceptions import open_items, terms
 
     [run] = [r for r in await world.store.newest_runs_all([tenant.id], ok_only=True, with_rows=True)]
-    got = await schedule.open_items_of(world.store, [tenant], NOW)
-    [item] = [i for i in got[tenant.id].items if i["order_ref"] == ref]
+    [item] = [i for i in open_items(tenant.id, run.name, run.kind, run.rows, NOW) if i["order_ref"] == ref]
     n = uuid.uuid4().hex[:8]
     await world.store.add_decision(
         tenant.id, kind="across", name="rails", key=item["key"], status=status, owner=None, note="known",
@@ -386,13 +385,14 @@ async def test_an_item_at_the_accounts_amount_is_named_in_each_mail_while_open(w
     kofi = await world.merchant("Kofi's Store", rows=_week(without=("#2047",)))
     await schedule.run_due(NOW)
     first = world.outbox.sent[0]["text"]
-    assert "  Still open at 300 or more of their currency: 1 item, $312.00 at stake\n" in first
+    assert "Still open at 300 or more of their currency:\n  Kofi's Store: 1 item, $312.00 at stake\n" in first
     for hour in range(1, 49):                                  # standing large items are not news
         await schedule.run_due(NOW + timedelta(hours=hour))
     assert len(world.outbox.sent) == 1
     world.set_rows(kofi, _week())                              # something new: the large item is named again
     await schedule.run_due(NOW + timedelta(days=3))
-    assert "Still open at 300 or more of their currency: 1 item, $312.00 at stake" in world.outbox.sent[1]["text"]
+    assert "Still open at 300 or more of their currency:\n  Kofi's Store: 1 item, $312.00 at stake\n" \
+        in world.outbox.sent[1]["text"]
 
 
 async def test_an_amount_of_zero_names_no_item_as_large(world):
@@ -438,7 +438,8 @@ async def test_the_checks_that_read_files_are_mailed_too(world):
     text = world.outbox.sent[0]["text"]
     assert ("File Shop\n  New: 2 items, $1,238.84 at stake\n"
             "    Processor batches vs bank deposits: 2 no match found\n"
-            "  Still open at 1,000 or more of their currency: 1 item, $1,200.00 at stake\n") in text
+            "  https://app.okwan.test/exceptions?merchant=") in text
+    assert "Still open at 1,000 or more of their currency:\n  File Shop: 1 item, $1,200.00 at stake\n" in text
     assert "B-5" not in text and "B-6" not in text
 
 
@@ -462,7 +463,7 @@ async def test_every_merchant_with_news_is_in_one_mail_and_the_quiet_ones_are_no
     assert (r.checked, r.mailed) == (3, 1)
     [mail] = world.outbox.sent
     assert mail["subject"] == "Okwan: 4 new open items across 2 merchants"
-    assert mail["text"].index("Kofi's Store") < mail["text"].index("Accra Coffee Co."), "the most news first"
+    assert "Kofi's Store\n  New: 3 items" in mail["text"] and "Accra Coffee Co.\n  New: 1 item" in mail["text"]
     assert "Quiet Store" not in mail["text"], "a merchant with nothing new is not named"
 
 
@@ -488,7 +489,7 @@ async def test_a_mail_names_at_most_its_share_of_merchants_and_the_rest_wait(wor
         await world.merchant(name)
     await schedule.run_due(NOW)
     first = world.outbox.sent[0]
-    assert first["subject"] == "Okwan: 6 new open items across 2 merchants"
+    assert first["subject"] == "Okwan: 9 new open items across 3 merchants", "the subject counts every merchant"
     assert "1 more merchant has something new, in the next email and on Open items: " \
            "https://app.okwan.test/exceptions\n" in first["text"]
     await schedule.run_due(NOW + timedelta(days=1, minutes=1))
@@ -542,25 +543,20 @@ async def test_a_mail_that_failed_is_tried_again_next_round_and_tells_nothing(wo
     assert (await schedule.run_due(NOW + timedelta(hours=2))).mailed == 0
 
 
-async def test_what_the_mail_keeps_is_item_keys_and_no_reference(world):
+async def test_what_the_mail_keeps_is_times_and_no_item(world):
+    """What the account was told of a merchant: when the mail named it, and
+    through which result of each check. No item, key or reference."""
     kofi = await world.merchant("Kofi's Store")
     await schedule.run_due(NOW)
-    marks = (await world.store.mail_told([kofi.id]))[kofi.id]
-    assert len(marks) == 3 and all(re.fullmatch(r"n:[0-9a-f]{24}", m) for m in marks), "a hash, not a reference"
-    got = await schedule.open_items_of(world.store, [kofi], NOW)
-    assert marks == {f"n:{i['key']}" for i in got[kofi.id].items}, "each one an open item's key"
-    # A key is hex, so a run of digits like "2043" may turn up in one by chance:
-    # what must not is the reference as the rail wrote it.
-    assert not any("#20" in m for m in marks)
-    for day in range(1, 8):
-        await schedule.run_due(NOW + timedelta(days=day, minutes=day))
-    marks = (await world.store.mail_told([kofi.id]))[kofi.id]
-    assert sorted(m[0] for m in marks) == ["a", "a", "a", "n", "n", "n"], "each told new, then aged"
+    [run] = await world.store.newest_runs_all([kofi.id], ok_only=True)
+    told = (await world.store.mail_told([kofi.id]))[kofi.id]
+    assert told == {"at": NOW.isoformat(), "through": {"across/rails": run.started_at.isoformat()}}
 
 
-async def test_a_look_that_found_nothing_is_not_repeated_until_something_changes(world, monkeypatch):
-    """The mail reads stored rows when a new result or a new day could give
-    it something to say, not every hour."""
+async def test_a_quiet_look_is_not_made_again_for_hours(world, monkeypatch):
+    """A look that read every merchant and found nothing to mail is not made
+    again for LOOK_EVERY: the mail reads stored rows a few times a day at
+    most, whatever an account holds."""
     await world.store.set_notify(world.root.id, aging_days=365)
     kofi = await world.merchant("Kofi's Store")
     await schedule.run_due(NOW)                                # the first mail
@@ -574,16 +570,16 @@ async def test_a_look_that_found_nothing_is_not_repeated_until_something_changes
 
     monkeypatch.setattr(world.store, "newest_runs_all", counted)
     day = NOW + timedelta(days=1, minutes=1)
-    await schedule.run_due(day)                                # a new run: read, nothing new
+    await schedule.run_due(day)                                # read, nothing new
     assert len(reads) == 1
-    for hour in range(1, 6):
-        await schedule.run_due(day + timedelta(hours=hour))
-    assert len(reads) == 1, "nothing changed, nothing read"
-    later = datetime.now(UTC) + timedelta(hours=1)            # newer than the check's own run
+    later = datetime.now(UTC) + timedelta(hours=1)
     await world.store.add_run(kofi.id, kind="across", name="rails", surface="rest", status="ok",
                               started_at=later, finished_at=later, summary={}, rows=[], error=None)
-    await schedule.run_due(day + timedelta(hours=7))
-    assert len(reads) == 2, "a new result is read"
+    for hour in range(1, 6):
+        await schedule.run_due(day + timedelta(hours=hour))
+    assert len(reads) == 1, "not before LOOK_EVERY, whatever was stored meanwhile"
+    await schedule.run_due(day + timedelta(hours=6, minutes=1))
+    assert len(reads) == 2
 
 
 async def test_another_account_never_appears_in_the_mail(world):
@@ -841,21 +837,24 @@ async def test_postgres_keeps_the_schedulers_record_one_row_a_merchant():
             later = NOW + timedelta(days=1)
             await store.claim_daily_check(a.id, later)
             assert await store.daily_checks([a.id, b.id]) == {a.id: DailyCheck(a.id, later)}
-            columns = {r["column_name"] for r in await store.pool.fetch(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = current_schema() AND table_name = 'daily_checks'")}
-            assert columns == {"tenant_id", "checked_at"}, "what the fold's own mail kept is gone"
+            # What the fold's own mail kept is emptied on every start, and its
+            # columns kept one release for a release still serving.
+            await store.pool.execute("UPDATE daily_checks SET told = '[\"aa\"]' WHERE tenant_id = $1", a.id)
+            await store._migrate()
+            assert await store.pool.fetchval("SELECT told FROM daily_checks WHERE tenant_id = $1", a.id) == "[]"
             with pytest.raises(KeyError):
                 await store.claim_daily_check(f"ten_{'0' * 16}", NOW)
             # What the mail has told, one row a merchant, replaced each time.
             assert await store.mail_told([a.id, b.id]) == {} and await store.mail_told([]) == {}
-            await store.set_mail_told(a.id, ["n:bb", "a:bb", "n:aa"])
-            await store.set_mail_told(b.id, ["n:zz"])
-            assert await store.mail_told([a.id]) == {a.id: frozenset({"n:aa", "n:bb", "a:bb"})}
-            await store.set_mail_told(a.id, ["n:aa"])
-            assert await store.mail_told([a.id, b.id]) == {a.id: frozenset({"n:aa"}), b.id: frozenset({"n:zz"})}
+            told = {"at": NOW.isoformat(), "through": {"across/rails": NOW.isoformat()}}
+            await store.set_mail_told(a.id, told)
+            await store.set_mail_told(b.id, {"at": NOW.isoformat(), "through": {}})
+            assert await store.mail_told([a.id]) == {a.id: told}
+            again = {"at": later.isoformat(), "through": {"pair/batches_deposits": later.isoformat()}}
+            await store.set_mail_told(a.id, again)
+            assert await store.mail_told([a.id, b.id]) == {a.id: again, b.id: {"at": NOW.isoformat(), "through": {}}}
             with pytest.raises(KeyError):
-                await store.set_mail_told(f"ten_{'0' * 16}", ["n:aa"])
+                await store.set_mail_told(f"ten_{'0' * 16}", told)
             await store.delete_tenant(a.id)
             for table in ("daily_checks", "mail_told"):
                 assert await store.pool.fetchval(f"SELECT count(*) FROM {table} WHERE tenant_id = $1", a.id) == 0
