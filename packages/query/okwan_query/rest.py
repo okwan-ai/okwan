@@ -87,11 +87,16 @@ def sql_run_admit(tenant):
     return admit
 
 
-def sql_session(tenant, resolver, *, max_records: int, fresh: bool) -> QuerySession:
+def sql_session(tenant, resolver, *, max_records: int, fresh: bool, surface: str = "rest:query") -> QuerySession:
+    """A query session as `tenant`. Reading `exceptions.open_items` is
+    written to the access log as `surface` when it is read, whatever the
+    query then does."""
+    from okwan_api.open_items import sql_reader
+
     return QuerySession(
         resolver=resolver, max_records=max_records, fresh=fresh,
         on_run=sql_run_recorder(tenant, resolver), reuse=sql_run_reuse(tenant),
-        admit=sql_run_admit(tenant),
+        admit=sql_run_admit(tenant), items=sql_reader(tenant, surface),
     )
 
 
@@ -111,12 +116,7 @@ def build_router() -> APIRouter:
         resolver = await _tenant_resolver(tenant)
         session = sql_session(tenant, resolver, max_records=body.limit, fresh=body.fresh)
         try:
-            result = await session.query(body.sql)
-            # Reading a recent run is reading a result, which is free
-            # (§3.4); a query counts when it read a provider.
-            if session.upstream_reads:
-                await meter(tenant, "rest:query")
-            return result
+            return await session.query(body.sql)
         except TooManyRuns as exc:
             import math
 
@@ -134,6 +134,11 @@ def build_router() -> APIRouter:
         except OkwanError as exc:
             raise HTTPException(502, str(exc)) from exc
         finally:
+            # Reading a recent run is reading a result, which is free
+            # (§3.4); a query counts when it read a provider, whether or not
+            # the statement then succeeded: a failing one has still read.
+            if session.upstream_reads:
+                await meter(tenant, "rest:query")
             session.close()
 
     return router

@@ -404,6 +404,22 @@ and then "A key or password leaked" below.
    straight to `okwan.onrender.com` can set itself
    ([known-gaps.md](../audit/known-gaps.md) G17).
 
+### Open items read with an API key
+
+Any API key, a read-only one included, reads the open items of its tenant
+and those below it: `GET /v1/exceptions`, the SQL table
+`exceptions.open_items` (through `POST /v1/query` and `okwan_query`), and
+the MCP tool `okwan_open_items` (`okwan_api/open_items.py`). They read
+stored results, never a rail, and decide nothing: deciding stays in the
+dashboard and on admin routes. Reads are not metered; each is in the access
+log (`rest:exceptions`, `rest:query`/`mcp:query` naming
+`exceptions.open_items`, `mcp:open_items`), and an account, its merchants'
+keys included, may read 30 times a minute across the three, one read at a
+time (429 past that, saying which). One read covers 20,000 items or 2,000
+merchants at most and says how many merchants it left out
+(`merchants_not_read`); reading one merchant by `merchant` covers the rest.
+`not_kept` counts findings a check found beyond the 1,000 its result keeps.
+
 ### Daily checks and their mail
 
 Once an hour the API looks for merchants whose Shopify, PayPal and Stripe

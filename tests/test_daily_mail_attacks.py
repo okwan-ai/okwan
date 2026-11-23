@@ -99,12 +99,19 @@ async def test_the_mails_read_holds_one_merchant_at_a_time_and_never_the_event_l
                 peak[0] = max(peak[0], _rss_mb())
                 last = now
 
+        # As the API does once it has started (main.py): what lives as long as
+        # the process is frozen, so a full collection walks only what this
+        # round makes, not every test before it.
         gc.collect()
+        gc.freeze()
         before = _rss_mb()
         tick = asyncio.create_task(ticker())
-        r = await schedule.run_due(NOW)
-        done = True
-        await tick
+        try:
+            r = await schedule.run_due(NOW)
+        finally:
+            done = True
+            await tick
+            gc.unfreeze()
         assert r.mailed == 1
         assert max(gaps) < 0.2, f"the event loop waited {max(gaps):.3f}s"
         assert peak[0] - before < 120, f"memory grew {peak[0] - before} MB"

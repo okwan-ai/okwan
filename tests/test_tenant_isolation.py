@@ -282,6 +282,9 @@ KEY_DATA = {
     ("GET", "/v1/reconciliations"), ("GET", "/v1/reconciliations/{name}"),
     ("GET", "/v1/reconciliations/across/{name}"),
     ("GET", "/v1/query/tables"), ("POST", "/v1/query"),
+    # The open items as data, read from stored results of the key's tenant
+    # and below, never a rail (tests/test_open_items_data.py).
+    ("GET", "/v1/exceptions"),
 }
 INTRUDER_UPLOAD = {
     "filename": "intruder.csv",
@@ -367,7 +370,9 @@ OPERATOR = {
 #: Mounted apps. /mcp is the hosted MCP server; its tools are listed next.
 MOUNTS = {("MOUNT", "/mcp")}
 #: The hosted MCP server's tools, each run as every tenant in layer 3.
-MCP_TOOLS = {"okwan_list_reconciliations", "okwan_reconcile", "okwan_describe_tables", "okwan_query"}
+MCP_TOOLS = {"okwan_list_reconciliations", "okwan_reconcile", "okwan_describe_tables", "okwan_query",
+             # Reads the key's tenant and below from stored results (tests/test_open_items_data.py).
+             "okwan_open_items"}
 
 
 def _connector_routes() -> set[tuple[str, str]]:

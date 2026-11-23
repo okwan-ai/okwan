@@ -11,6 +11,7 @@ everything flows from the SDK definition.
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
 import os
 from contextlib import asynccontextmanager
@@ -49,6 +50,7 @@ from okwan_api.connect import build_router as build_connect_router
 from okwan_api.imports import sweeper as imports_sweeper
 from okwan_api.access import sweeper as access_sweeper
 from okwan_api.notify import build_router as build_notify_router
+from okwan_api.open_items import build_router as build_open_items_router
 from okwan_api.schedule import sweeper as schedule_sweeper
 from okwan_api.billing import sweeper as billing_sweeper
 from okwan_api.disputes import sweeper as disputes_sweeper
@@ -106,6 +108,12 @@ async def lifespan(_: FastAPI):
     connected merchant (schedule.py).
     """
     await open_store()
+    # Everything made while starting (the app, its routes, the connectors'
+    # declarations, the drivers) lives as long as the process. Frozen, a full
+    # collection no longer walks it: on Python 3.12 one took 130-140 ms and
+    # held every request while it ran (tests/test_daily_mail_attacks.py).
+    gc.collect()
+    gc.freeze()
     sweeps = [asyncio.create_task(imports_sweeper()), asyncio.create_task(access_sweeper()),
               asyncio.create_task(schedule_sweeper()), asyncio.create_task(billing_sweeper()),
               asyncio.create_task(disputes_sweeper())]
@@ -242,6 +250,7 @@ app.include_router(build_router())
 app.include_router(build_query_router())
 app.include_router(build_admin_router())
 app.include_router(build_exceptions_router())
+app.include_router(build_open_items_router())
 app.include_router(build_suggestions_router())
 app.include_router(build_signup_router())
 app.include_router(build_support_router())

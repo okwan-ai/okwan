@@ -48,6 +48,12 @@ STATIC_TAGS: list[tuple[str, str, str]] = [
      ("The check, finished, over a made-up store's week: the same matching, the same response, "
       "no key and no account. Use it to see what a check returns and to build your parser before "
       "you connect anything. Nothing is read from any account, stored or metered.")),
+    ("exceptions", "Open items",
+     ("What the checks found that still needs a look, across your merchants: each item with what it "
+      "puts at stake, how long it has been open, what a person last decided and what Okwan last "
+      "suggested. Any API key reads them, a read-only one included; deciding is a person's, in the "
+      "dashboard. The same rows are the SQL table `exceptions.open_items` and the MCP tool "
+      "`okwan_open_items`. Read from stored results: not metered.")),
     ("query", "SQL",
      "Read-only SQL over the tables the connectors generate. One request per statement."),
     ("tenants", "Merchants & keys",
@@ -176,7 +182,7 @@ def tags() -> list[dict[str, Any]]:
 def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     connector_tags = [t["name"] for t in tag_list if t["name"] not in {s[0] for s in STATIC_TAGS}]
     return [
-        {"name": "Start here", "tags": ["sample", "reconciliations"]},
+        {"name": "Start here", "tags": ["sample", "reconciliations", "exceptions"]},
         {"name": "Connectors", "tags": connector_tags},
         {"name": "SQL", "tags": ["query"]},
         {"name": "Your workspace", "tags": ["tenants", "imports", "accounts", "support"]},
@@ -188,6 +194,7 @@ def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
 #: operations get theirs from their declaration (`operation_title`).
 TITLES: dict[tuple[str, str], str] = {
     ("get", "/v1/connectors"): "List connectors",
+    ("get", "/v1/exceptions"): "List open items",
     ("get", "/v1/reconciliations"): "List checks",
     ("get", "/v1/reconciliations/across/{name}"): "Run the check",
     ("get", "/v1/sample/reconciliations/across/{name}"): "Run the sample check",

@@ -78,6 +78,7 @@ class Store(Protocol):
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
     async def get_tenant(self, tenant_id: str) -> Tenant | None: ...
     async def children_of(self, tenant_id: str) -> list[Tenant]: ...
+    async def subtree(self, tenant_id: str, depth: int) -> list[Tenant]: ...
     async def issue_key(self, tenant_id: str, *, scope: str) -> tuple[str, ApiKey]: ...
     async def revoke_key(self, key_id: str) -> None: ...
     async def tenant_for_key(self, full_key: str) -> Tenant | None: ...
@@ -206,6 +207,9 @@ class Store(Protocol):
     async def suggestions_of(
         self, tenant_id: str, kind: str, name: str, key: str, limit: int = 100
     ) -> list[Suggestion]: ...
+    async def newest_suggestions(
+        self, items: Collection[tuple[str, str]]
+    ) -> dict[tuple[str, str, str, str], Suggestion]: ...
     async def reject_suggestion(
         self, tenant_id: str, suggestion_id: str, *, actor_tenant_id: str, actor_name: str,
         credential: str, note: str | None, at: datetime,
@@ -359,6 +363,15 @@ class MemoryStore:
 
     async def children_of(self, tenant_id: str) -> list[Tenant]:
         return [t for t in self._tenants.values() if t.parent_id == tenant_id]
+
+    async def subtree(self, tenant_id: str, depth: int) -> list[Tenant]:
+        if tenant_id not in self._tenants:
+            return []
+        out, level = [self._tenants[tenant_id]], [tenant_id]
+        for _ in range(depth):
+            level = sorted(t.id for t in self._tenants.values() if t.parent_id in level)
+            out += [self._tenants[i] for i in level]
+        return out
 
     async def list_tenants(self) -> list[Tenant]:
         return list(self._tenants.values())
@@ -962,6 +975,18 @@ class MemoryStore:
         found = [x for x in self._suggestions.values() if x.tenant_id == tenant_id and x.kind == kind
                  and x.name == name and x.key == key]
         return sorted(found, key=lambda x: (x.created_at, x.id), reverse=True)[:limit]
+
+    async def newest_suggestions(
+        self, items: Collection[tuple[str, str]]
+    ) -> dict[tuple[str, str, str, str], Suggestion]:
+        wanted = set(items)
+        out: dict[tuple[str, str, str, str], Suggestion] = {}
+        for x in self._suggestions.values():
+            if (x.tenant_id, x.key) in wanted:
+                k = (x.tenant_id, x.kind, x.name, x.key)
+                if k not in out or (x.created_at, x.id) > (out[k].created_at, out[k].id):
+                    out[k] = x
+        return out
 
     async def reject_suggestion(
         self, tenant_id: str, suggestion_id: str, *, actor_tenant_id: str, actor_name: str,
