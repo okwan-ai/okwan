@@ -571,6 +571,39 @@ async function checkSuggesting(page) {
   if (big !== 413) await note(page, where, `a 1 MB body to a suggestion route is answered ${big}, not 413`);
 }
 
+async function checkDailyMail(page) {
+  const where = "the daily mail's days and amount";
+  await page.goto(`${BASE}/settings`, { waitUntil: "networkidle" });
+  const days = page.getByLabel("Email an item again once it's open");
+  const amount = page.getByLabel("Name in every email while open, from");
+  if ((await days.count()) !== 1 || (await amount.count()) !== 1) return note(page, where, "the two fields are not in Settings");
+  if ((await days.inputValue()) !== "7" || (await amount.inputValue()) !== "1,000") {
+    return note(page, where, `the defaults read ${await days.inputValue()} days and ${await amount.inputValue()}`);
+  }
+  const saved = async (field, value) => {
+    const put = page.waitForResponse((r) => r.url().endsWith("/api/notify") && r.request().method() === "PUT");
+    await field.fill(value);
+    await field.press("Enter");
+    return (await put).status();
+  };
+  if ((await saved(days, "3")) !== 200 || (await saved(amount, "2,500")) !== 200) return note(page, where, "a change did not save");
+  // A value out of range is refused in the page and sends nothing.
+  let sent = 0;
+  const count = (r) => { if (r.url().endsWith("/api/notify") && r.method() === "PUT") sent += 1; };
+  page.on("request", count);
+  await days.fill("0");
+  await days.press("Enter");
+  const refused = await page.locator("#daily-checks [role=alert]").filter({ hasText: "from 1 to 365" })
+    .waitFor({ timeout: 5000 }).then(() => true, () => false);
+  page.off("request", count);
+  if (!refused || sent) return note(page, where, `0 days was ${refused ? "" : "not refused, "}${sent ? "sent" : "kept in the page"}`);
+  await page.reload({ waitUntil: "networkidle" });
+  if ((await days.inputValue()) !== "3" || (await amount.inputValue()) !== "2,500") {
+    return note(page, where, `after a reload: ${await days.inputValue()} days and ${await amount.inputValue()}`);
+  }
+  if ((await saved(days, "7")) !== 200 || (await saved(amount, "1000")) !== 200) return note(page, where, "putting them back did not save");
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -642,6 +675,7 @@ try {
   const last = await browser.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: "reduce", storageState: session });
   await checkDeciding(await last.newPage());
   await checkSuggesting(await last.newPage());
+  await checkDailyMail(await last.newPage());
   await last.close();
 } finally {
   await browser.close();
@@ -653,4 +687,4 @@ if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, a suggestion on it turned down, asked again and decided from, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, a suggestion on it turned down, asked again and decided from, the daily mail's days and amount saved and kept, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);

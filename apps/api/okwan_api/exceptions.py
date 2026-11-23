@@ -369,7 +369,13 @@ def build_router() -> APIRouter:
         tenants = [target, *sorted(await store.children_of(tenant_id), key=lambda t: t.id)]
         names = {t.id: t.name for t in tenants}
         if merchant is not None and merchant not in names:
-            raise HTTPException(404, f"no such tenant: {merchant}")
+            # A merchant further down, as far as the account can open
+            # (authz.MAX_DEPTH), is listed on its own: the daily mail links
+            # to every merchant it names. Anything else reads as missing.
+            deeper = await store.get_tenant(merchant)
+            if deeper is None or tenant_id not in await ancestors(store, merchant):
+                raise HTTPException(404, f"no such tenant: {merchant}")
+            names[merchant] = deeper.name
         if merchant is not None:
             ids, nxt = [merchant], None
         else:

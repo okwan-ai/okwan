@@ -28,7 +28,7 @@ that matters comes from somewhere else. Three layers do that
 | The dashboard's session and its changes | `apps/dashboard/lib/api.ts`, `apps/dashboard/lib/respond.ts`, `apps/dashboard/app/**/route.ts` |
 | The operator console | `apps/api/okwan_api/ops.py` |
 | Okwan's own billing (who may pay or manage it, the signed webhook that sets the plan, the record of what a customer was shown, disputes and the evidence sent to a bank) | `apps/api/okwan_api/billing.py`, `apps/api/okwan_api/policy.py`, `apps/api/okwan_api/disputes.py` |
-| The daily check and its mail (Okwan reads rails and sends mail unasked) | `apps/api/okwan_api/schedule.py`, `apps/api/okwan_api/notify.py`, `apps/dashboard/app/unsubscribe/` |
+| The daily check and its mail (Okwan reads rails and sends mail unasked, made from the open items) | `apps/api/okwan_api/schedule.py`, `apps/api/okwan_api/notify.py`, `apps/dashboard/app/unsubscribe/`, `apps/dashboard/app/api/notify/` |
 | A person's decisions on open items, and the model's suggestions beside them (what the model is shown, what it may say, and that only a person's decision closes an item) | `apps/api/okwan_api/exceptions.py` (`decide`), `apps/api/okwan_api/suggestions.py`, `packages/recon/okwan_recon/exceptions.py`, `apps/dashboard/app/_components/decide-item.tsx` |
 
 ## How to run it (owner, about ten minutes)

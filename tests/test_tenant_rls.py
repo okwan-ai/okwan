@@ -169,7 +169,7 @@ async def two(store):
                                      detail={"network": "203.0.113.0/24"})
         await store.set_notify(t.id, finding_emails=False)
         await store.claim_daily_check(t.id, now)
-        await store.settle_daily_check(t.id, told=[f"{name}-told"], news=[])
+        await store.set_mail_told(t.id, [f"n:{name}-told"])
         out.append(t)
     return out
 
@@ -312,6 +312,8 @@ def _insert(table: str, tenant_id: str) -> tuple:
                              "ON CONFLICT (tenant_id) DO UPDATE SET finding_emails = false"), tenant_id),
         "daily_checks": (("INSERT INTO daily_checks (tenant_id, checked_at) VALUES ($1, now()) "
                           "ON CONFLICT (tenant_id) DO UPDATE SET checked_at = now()"), tenant_id),
+        "mail_told": (("INSERT INTO mail_told (tenant_id, marks) VALUES ($1, '[\"n:rlsprobe\"]') "
+                       "ON CONFLICT (tenant_id) DO UPDATE SET marks = '[\"n:rlsprobe\"]'"), tenant_id),
         "exception_decisions": (("INSERT INTO exception_decisions (id, seq, tenant_id, kind, name, "
                                  "item_key, status, actor_tenant_id, actor_name, credential, run_id, "
                                  "idempotency_key, request_hash, created_at) VALUES ('dec_rls_probe_' || $1, "

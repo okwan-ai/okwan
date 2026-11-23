@@ -543,20 +543,53 @@ CREATE TABLE IF NOT EXISTS notify_settings (
     updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
+-- What the daily mail calls aged (days open) and large (whole units of the
+-- item's own currency, 0 for none): the account's choice, defaults here.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'notify_settings' AND column_name = 'aging_days'
+    ) THEN
+        ALTER TABLE notify_settings
+            ADD COLUMN aging_days integer NOT NULL DEFAULT 7 CHECK (aging_days BETWEEN 1 AND 365),
+            ADD COLUMN large_amount bigint NOT NULL DEFAULT 1000
+                CHECK (large_amount BETWEEN 0 AND 1000000000000);
+    END IF;
+END $$;
+
+-- What the daily mail has told an account of one merchant's open items,
+-- written by the scheduler and by nothing a caller can reach: `marks` is
+-- "n:<item key>" for an item told as new, "a:<item key>" for one told as
+-- past the account's age. An item key is a hash, never a reference. Marks
+-- of items no longer open are dropped each time it is written, so an item
+-- that closes and opens again is news again. Tenant data.
+CREATE TABLE IF NOT EXISTS mail_told (
+    tenant_id   text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    marks       jsonb NOT NULL DEFAULT '[]',
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
 -- What the daily check keeps about one merchant, written by the scheduler
--- and by nothing a caller can reach: when it last tried (so a merchant is
--- due once a day whatever else runs a check), the findings the account has
--- been told of, and the findings not yet mailed. `told` is fingerprints (a
--- hash of the order reference and the outcome); `news` is, per finding, its
--- fingerprint, outcome, currency code and amounts in minor units. No order
--- reference is kept here, and nothing here is read back from stored runs,
--- which any key can add to and so push out of history.
+-- and by nothing a caller can reach: when it last tried, so a merchant is
+-- due once a day whatever else runs a check. Nothing here is read back from
+-- stored runs, which any key can add to and so push out of history.
 CREATE TABLE IF NOT EXISTS daily_checks (
     tenant_id   text PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-    checked_at  timestamptz NOT NULL,
-    told        jsonb NOT NULL DEFAULT '[]',
-    news        jsonb NOT NULL DEFAULT '[]'
+    checked_at  timestamptz NOT NULL
 );
+-- Until 2026-11-23 the mail was made from the fold's findings alone, kept
+-- here as fingerprints (`told`) and as figures waiting to be mailed
+-- (`news`). The mail is made from the open items now (`mail_told`): what
+-- was kept for the old one goes.
+-- Checked first, so a start against a current database takes no lock.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()
+               AND table_name = 'daily_checks' AND column_name IN ('told', 'news')) THEN
+        ALTER TABLE daily_checks DROP COLUMN IF EXISTS told, DROP COLUMN IF EXISTS news;
+    END IF;
+END $$;
 
 -- ── row-level security: the database keeps tenants apart too ────────
 -- Every read and write of a tenant's own data (credentials, usage, plans,
@@ -720,7 +753,7 @@ BEGIN
                              'support_conversations', 'support_tickets', 'support_replies',
                              'import_files', 'import_rows', 'import_layouts',
                              'access_log', 'access_alerts', 'notify_settings', 'daily_checks',
-                             'exception_decisions', 'exception_suggestions'] LOOP
+                             'exception_decisions', 'exception_suggestions', 'mail_told'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

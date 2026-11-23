@@ -75,7 +75,7 @@ export default async function SettingsPage({ searchParams }: {
             <Section
               id="daily-checks"
               title="Daily checks"
-              description="Okwan checks your connected merchants once a day and tells you what is new."
+              description="Okwan checks your connected merchants once a day, and emails you what is new on Open items."
             >
               <DailyChecksCard accountId={tree.self.id} />
             </Section>

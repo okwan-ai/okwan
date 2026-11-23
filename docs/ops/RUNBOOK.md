@@ -413,22 +413,29 @@ starts two minutes after the server does. A daily check is stored (surface
 *Daily check*), metered to the merchant, and shown in the access log as
 *Okwan's daily check* from *Okwan's servers*.
 
-When a merchant is due, what its account has been told and what is still
-to mail are the scheduler's own record (the `daily_checks` table, one row
-a merchant). A check run from the dashboard, a key or an agent changes
-none of it.
+When a merchant is due is the scheduler's own record (the `daily_checks`
+table, one row a merchant), and so is what the mail has told its account
+(`mail_told`). A check run from the dashboard, a key or an agent changes
+neither.
 
 - **A round.** Accounts take turns, one check each a turn, the account
   served longest ago first. A round starts no check past 200 or past
   twenty minutes; the rest are due the next hour. A merchant's slot is
   taken before its rails are read, so a check that fails is tried again a
   day later, not an hour later.
-- **Mail.** When a check finds something the account has not been told
-  of, the account gets a mail, one a day at most: a finding from a check
-  later that day is in the next day's mail. It needs `RESEND_API_KEY`,
+- **Mail.** The mail is about the account's open items, the same list as
+  *Open items*, whatever ran the checks behind them, files included: an
+  item that is new to the account, and once more one that has been open
+  the account's days (seven unless set in *Settings › Daily checks*), with
+  the open items at or above its amount (1,000 unless set) named again
+  while they are open. Nothing about an item someone explained or
+  resolved. One mail a day at most, and only when something is new or
+  newly old: an item found later that day is in the next day's mail. A
+  mail names 25 merchants at most and says how many more are waiting.
+  It needs `RESEND_API_KEY`,
   `OKWAN_MAIL_FROM` and `OKWAN_MAIL_POSTAL_ADDRESS` on the `okwan` Render
   service; without the address the checks run and no mail goes
-  (`findings for ten_… not mailed: OKWAN_MAIL_POSTAL_ADDRESS is not set`),
+  (`open items for ten_… not mailed: OKWAN_MAIL_POSTAL_ADDRESS is not set`),
   and nothing is marked as told, so the first mail after the address is
   set says what is there. The address is one line: the company's name and
   postal address. A mail the provider refuses is tried again next round.
@@ -442,11 +449,11 @@ none of it.
   holds a merchant's name or a figure. `daily checks round failed` with a
   database error means the scheduler could not write its record and
   stopped before reading any rail; the next round tries again.
-- **"Why didn't I get a mail?"** Nothing was new; today's mail already
-  went, and the finding is in tomorrow's (G18); the account's mail is off
-  (Settings, or it pressed the link); the plan was used up, so no check
-  ran; or a rail is not connected. The finding is in the dashboard either
-  way, marked *New*.
+- **"Why didn't I get a mail?"** Nothing was new or newly old; today's
+  mail already went, and the item is in tomorrow's (G18); someone
+  explained or resolved the item; the account's mail is off (Settings, or
+  it pressed the link); the plan was used up, so no check ran; or a rail
+  is not connected. The item is on *Open items* either way.
 - **A check that is slow.** A check's matching is bounded (a second or two
   at most, whatever the merchant's rows hold), so a slow check is a slow
   rail. The log shows the round running long and fewer checks than were
