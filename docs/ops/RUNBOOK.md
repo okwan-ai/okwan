@@ -420,6 +420,32 @@ merchants at most and says how many merchants it left out
 (`merchants_not_read`); reading one merchant by `merchant` covers the rest.
 `not_kept` counts findings a check found beyond the 1,000 its result keeps.
 
+### Webhooks
+
+An account adds an address with `POST /v1/webhooks` (an admin key or a
+dashboard session) and gets its signing secret once. Okwan then POSTs an
+event there for each open item that opens, ages, clears, closes or opens
+again (`okwan_api/webhooks.py`); a round runs every five seconds in the API
+process. What to look at when a customer says events stopped:
+
+1. `GET /v1/webhooks` as the account: `enabled`, `failing_since`,
+   `last_ok_at`, `pending`. An address that failed every delivery for three
+   days is off (`disabled_why`) and the account was mailed; `POST
+   /v1/webhooks/{id}/enable` turns it back on. What was made while it was
+   off is at `GET /v1/events` (30 days), not re-sent.
+2. `GET /v1/events` shows each delivery: `state`, `attempts`,
+   `last_status`, `next_at`. A 4xx is the receiver refusing that event
+   (often a signature check over a re-serialised body: verify the raw
+   bytes); a 5xx, 408, 429 or no answer holds the address's whole queue
+   until the next try.
+3. `POST /v1/webhooks/{id}/test` sends a signed ping now and says what came
+   back. "refused" means the host resolves to an address that is not
+   public (an IPv6 form of a private IPv4 address included): Okwan does not
+   send there, whatever the customer says, and `OKWAN_EGRESS_ALLOW`, the
+   database connector's exceptions, does not apply to webhooks.
+4. The log names an address by its id (`webhook … turned off`); nothing
+   of an event is logged.
+
 ### Daily checks and their mail
 
 Once an hour the API looks for merchants whose Shopify, PayPal and Stripe

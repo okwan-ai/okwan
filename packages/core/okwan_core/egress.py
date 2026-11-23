@@ -13,8 +13,11 @@ which a second DNS answer can point somewhere else (DNS rebinding);
 `PinnedLoop` closes it by dialing the checked address while TLS still
 presents the original name for SNI and verification.
 
-`OKWAN_EGRESS_ALLOW` names deliberate exceptions, comma-separated: exact
-hostnames (`localhost`, `db.internal`) or CIDR blocks (`10.20.0.0/16`).
+`OKWAN_EGRESS_ALLOW` names deliberate exceptions for a database a
+credential names, comma-separated: exact hostnames (`localhost`,
+`db.internal`) or CIDR blocks (`10.20.0.0/16`). They are a database's
+only: a webhook address, which any account names, has none
+(`resolve_public(..., exceptions=False)`).
 """
 from __future__ import annotations
 
@@ -50,27 +53,48 @@ def allowlist() -> tuple[frozenset[str], tuple[ipaddress._BaseNetwork, ...]]:
     return frozenset(hosts), tuple(nets)
 
 
+#: NAT64's well-known prefix (RFC 6052): a translator on the way takes the
+#: packet to the IPv4 address in the last 32 bits, so that is what is judged.
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+#: IPv6 forms that carry an IPv4 address to somewhere this check cannot see
+#: whole: refused, whatever they carry. Local-use NAT64 (RFC 8215) is a
+#: translator in someone's own network; IPv4-compatible (::a.b.c.d, which
+#: holds :: and ::1 too) and IPv4-translated (::ffff:0:a.b.c.d, SIIT) are
+#: read as their IPv4 by some stacks and translators; 6to4 and Teredo
+#: reach the IPv4 they carry through a relay. `is_global` calls several of
+#: them public.
+_CARRIES_IPV4 = tuple(ipaddress.ip_network(n) for n in (
+    "64:ff9b:1::/48", "::/96", "::ffff:0:0:0/96", "2002::/16", "2001::/32"))
+
+
 def is_public(ip: _Address) -> bool:
     """Globally routable unicast, judged on what the packet will reach.
 
     `is_global` already excludes private, loopback, link-local (and so
     169.254.169.254, the metadata service), CGNAT 100.64/10 and reserved
-    ranges. An IPv4-mapped IPv6 address is judged as the IPv4 address it
-    carries, since that is where the connection lands.
+    ranges. An IPv6 address that carries an IPv4 one is judged as the IPv4
+    address it lands on (IPv4-mapped, NAT64's well-known prefix) or refused
+    (the other forms in `_CARRIES_IPV4`).
     """
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        elif ip in _NAT64:
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        elif any(ip in n for n in _CARRIES_IPV4):
+            return False
     return ip.is_global and not ip.is_multicast
 
 
-async def resolve_public(host: str, port: int) -> str:
+async def resolve_public(host: str, port: int, *, exceptions: bool = True) -> str:
     """Resolve `host` and return one address that may be dialed, or raise.
 
     Every address in the answer must pass, not just the one returned: a
     name answering with one public and one private address is refused
-    rather than raced.
+    rather than raced. `exceptions=False`: OKWAN_EGRESS_ALLOW does not
+    apply, for an address any account may name (a webhook's).
     """
-    allowed_hosts, allowed_nets = allowlist()
+    allowed_hosts, allowed_nets = allowlist() if exceptions else (frozenset(), ())
     loop = asyncio.get_running_loop()
     try:
         infos = await asyncio.wait_for(
@@ -86,8 +110,8 @@ async def resolve_public(host: str, port: int) -> str:
         for ip in addresses:
             if not is_public(ip) and not any(ip in n for n in allowed_nets):
                 raise EgressRefused(
-                    f"{host} resolves to {ip}, which is not a public address; "
-                    "add it to OKWAN_EGRESS_ALLOW if this is deliberate"
+                    f"{host} resolves to {ip}, which is not a public address"
+                    + ("; add it to OKWAN_EGRESS_ALLOW if this is deliberate" if exceptions else "")
                 )
     return str(addresses[0])
 

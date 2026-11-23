@@ -285,6 +285,10 @@ KEY_DATA = {
     # The open items as data, read from stored results of the key's tenant
     # and below, never a rail (tests/test_open_items_data.py).
     ("GET", "/v1/exceptions"),
+    # The account's own webhook events, by its key's tenant only: another
+    # account's events, and another's event id as a cursor, list nothing
+    # (tests/test_webhooks.py).
+    ("GET", "/v1/events"),
 }
 INTRUDER_UPLOAD = {
     "filename": "intruder.csv",
@@ -355,6 +359,10 @@ ADMIN_OTHER = {
     # Billing: the signed-in account's own plan only. No route takes a tenant
     # id; a merchant's session and any API key are refused (tests/test_billing.py).
     ("GET", "/v1/billing"), ("POST", "/v1/billing/checkout"), ("POST", "/v1/billing/portal"),
+    # Webhook addresses: the caller's own only; no route takes a tenant id, and
+    # another account's address id reads as missing (tests/test_webhooks.py).
+    ("GET", "/v1/webhooks"), ("POST", "/v1/webhooks"), ("DELETE", "/v1/webhooks/{endpoint_id}"),
+    ("POST", "/v1/webhooks/{endpoint_id}/enable"), ("POST", "/v1/webhooks/{endpoint_id}/test"),
 }
 #: The operator console: Okwan's own staff, across accounts by design. Every
 #: route answers a plain 404 to anyone but an allowlisted operator whose

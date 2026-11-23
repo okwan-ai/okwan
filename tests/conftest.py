@@ -6,20 +6,25 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _fresh_rate_limits():
-    """Limits, reused runs and where the mail's looks stand are
-    process-wide; one test's attempts must not spend another's, its runs
-    answer another's queries, nor its quiet look keep another's mail."""
+    """Limits, reused runs, where the mail's looks stand and which webhook
+    addresses are being sent to are process-wide; one test's attempts must
+    not spend another's, its runs answer another's queries, its quiet look
+    keep another's mail, nor its deliveries hold another's places."""
+    from okwan_api import webhooks
     from okwan_api.ratelimit import limiter
     from okwan_api.recon_reuse import cache
     from okwan_api.schedule import _looks
 
+    # Read by name, so the regression tests also run against the commits
+    # they were written to fail on.
+    states = [cache, _looks, *(getattr(webhooks, n) for n in ("_sending", "_served") if hasattr(webhooks, n))]
+    for state in states:
+        state.clear()
     limiter.reset()
-    cache.clear()
-    _looks.clear()
     yield
     limiter.reset()
-    cache.clear()
-    _looks.clear()
+    for state in states:
+        state.clear()
 
 
 @pytest.fixture

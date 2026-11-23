@@ -47,11 +47,13 @@ from .models import (
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
+    WEBHOOK_ENDPOINTS_MAX,
     ApiKey,
     DailyCheck,
     Decision,
     DecisionConflict,
     DuplicateImport,
+    EndpointsFull,
     FilesGone,
     HistoryFull,
     ImportFile,
@@ -65,6 +67,9 @@ from .models import (
     SupportConversation,
     SupportTicket,
     Tenant,
+    WebhookClaim,
+    WebhookEndpoint,
+    WebhookEvent,
     add_months,
     new_unsubscribe_token,
 )
@@ -101,6 +106,9 @@ TENANT_TABLES = (
     "exception_decisions",
     "exception_suggestions",
     "mail_told",
+    "webhook_endpoints",
+    "webhook_events",
+    "webhook_deliveries",
 )
 
 
@@ -1633,6 +1641,7 @@ class PostgresStore:
                 await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
                 await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
                 await con.execute(_DROP_FILE_SUGGESTIONS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_EVENTS, tenant_id, list(self.file_checks()))
         return gone is not None
 
     async def drop_expired_imports(self, tenant_id: str, now: datetime | None = None) -> int:
@@ -1649,6 +1658,7 @@ class PostgresStore:
                 await con.execute(_DROP_FILE_RUNS, tenant_id, list(self.file_checks()))
                 await con.execute(_DROP_FILE_DECISIONS, tenant_id, list(self.file_checks()))
                 await con.execute(_DROP_FILE_SUGGESTIONS, tenant_id, list(self.file_checks()))
+                await con.execute(_DROP_FILE_EVENTS, tenant_id, list(self.file_checks()))
         return len(expired)
 
     async def imports_live(
@@ -1773,6 +1783,9 @@ class PostgresStore:
                 await con.execute(
                     "DELETE FROM exception_suggestions WHERE tenant_id = ANY($1::text[]) "
                     "AND (reads_files OR name = ANY($2::text[]))", tenants, names)
+                await con.execute(
+                    "DELETE FROM webhook_events WHERE merchant_id = ANY($1::text[]) "
+                    "AND (reads_files OR check_name = ANY($2::text[]))", tenants, names)
         return len(gone)
 
     # ── access log ──────────────────────────────────────────────────
@@ -2012,6 +2025,250 @@ class PostgresStore:
             "DELETE FROM access_alerts WHERE at < $1", now - access_rules.ALERT_RETENTION)
         return int(status.split()[-1])
 
+    # ── webhooks ────────────────────────────────────────────────────
+
+    def _webhook_secret(self, row) -> str:
+        record = SealedCredential(tenant_id=row["tenant_id"], connector="webhook", field_name=row["id"],
+                                  ciphertext=bytes(row["ciphertext"]), wrapped_key=bytes(row["wrapped_key"]),
+                                  key_id=row["key_id"])
+        data_key = self._master.unwrap(record.wrapped_key)
+        return open_sealed(data_key, record.ciphertext, aad=record.aad).decode()
+
+    async def add_webhook_endpoint(
+        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime,
+    ) -> WebhookEndpoint:
+        """A new address, its secret sealed for this account and this address
+        alone. At most WEBHOOK_ENDPOINTS_MAX an account, counted under a lock
+        on the account's addresses so two at once cannot both pass."""
+        endpoint_id = f"whe_{uuid.uuid4().hex[:16]}"
+        data_key = new_key()
+        record = SealedCredential(tenant_id=tenant_id, connector="webhook", field_name=endpoint_id,
+                                  ciphertext=b"", wrapped_key=b"", key_id=self._master.key_id)
+        try:
+            async with self._scoped(tenant_id) as con:
+                await con.execute("SELECT pg_advisory_xact_lock(hashtext('webhook_endpoints:' || $1))", tenant_id)
+                count = await con.fetchval("SELECT count(*) FROM webhook_endpoints WHERE tenant_id = $1", tenant_id)
+                if count >= WEBHOOK_ENDPOINTS_MAX:
+                    raise EndpointsFull(tenant_id)
+                row = await con.fetchrow(
+                    "INSERT INTO webhook_endpoints AS p (id, tenant_id, url, ciphertext, wrapped_key, key_id, hint, "
+                    "created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+                    f"RETURNING {_ENDPOINT_COLS}, 0 AS pending",
+                    endpoint_id, tenant_id, url, seal(data_key, secret.encode(), aad=record.aad),
+                    self._master.wrap(data_key), self._master.key_id, secret[:10], at, created_by)
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {tenant_id!r}") from None
+        return _endpoint(row)
+
+    async def webhook_endpoints(self, tenant_ids: list[str], *, enabled_only: bool = False) -> list[WebhookEndpoint]:
+        if not tenant_ids:
+            return []
+        async with self._scoped(*tenant_ids) as con:
+            rows = await con.fetch(
+                f"SELECT {_ENDPOINT_COLS}, (SELECT count(*) FROM webhook_deliveries d "
+                "WHERE d.endpoint_id = p.id AND d.state = 'pending') AS pending "
+                "FROM webhook_endpoints p WHERE p.tenant_id = ANY($1::text[]) "
+                "AND (NOT $2 OR p.disabled_at IS NULL) ORDER BY p.created_at, p.id",
+                list(tenant_ids), enabled_only)
+        return [_endpoint(r) for r in rows]
+
+    async def delete_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> bool:
+        async with self._scoped(tenant_id) as con:
+            gone = await con.fetchval(
+                "DELETE FROM webhook_endpoints WHERE tenant_id = $1 AND id = $2 RETURNING id", tenant_id, endpoint_id)
+        return gone is not None
+
+    async def enable_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> WebhookEndpoint | None:
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                "UPDATE webhook_endpoints p SET disabled_at = NULL, disabled_why = NULL, failing_since = NULL "
+                f"WHERE p.tenant_id = $1 AND p.id = $2 RETURNING {_ENDPOINT_COLS}, 0 AS pending",
+                tenant_id, endpoint_id)
+        return None if row is None else _endpoint(row)
+
+    async def disable_webhook_endpoint(self, tenant_id: str, endpoint_id: str, at: datetime, why: str) -> bool:
+        async with self._scoped(tenant_id) as con:
+            done = await con.fetchval(
+                "UPDATE webhook_endpoints SET disabled_at = $3, disabled_why = $4 "
+                "WHERE tenant_id = $1 AND id = $2 AND disabled_at IS NULL RETURNING id",
+                tenant_id, endpoint_id, at, why)
+            if done is not None:
+                await con.execute(
+                    "UPDATE webhook_deliveries SET state = 'failed', next_at = NULL, claimed_until = NULL "
+                    "WHERE tenant_id = $1 AND endpoint_id = $2 AND state = 'pending'", tenant_id, endpoint_id)
+        return done is not None
+
+    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str] | None:
+        async with self._scoped(tenant_id) as con:
+            row = await con.fetchrow(
+                "SELECT id, tenant_id, url, ciphertext, wrapped_key, key_id FROM webhook_endpoints "
+                "WHERE tenant_id = $1 AND id = $2", tenant_id, endpoint_id)
+        return None if row is None else (row["url"], self._webhook_secret(row))
+
+    async def add_webhook_events(self, merchant_id: str, run_id: str | None, events: list[dict],
+                                 at: datetime) -> int:
+        """Store events about one merchant, each for the account it is sent
+        to, and a delivery of each to every address of that account that is
+        on. Made from a stored run (`run_id`), they are stored only while it
+        is: the run is held until they are, so a file deletion that takes
+        the run waits, and then takes them too."""
+        if not events:
+            return 0
+        receivers = sorted({e["tenant_id"] for e in events})
+        ids = [e["id"] for e in events]
+        async with self._scoped(merchant_id, *receivers) as con:
+            if run_id is not None:
+                held = await con.fetchval(
+                    "SELECT id FROM reconciliation_runs WHERE id = $1 AND tenant_id = $2 FOR KEY SHARE",
+                    run_id, merchant_id)
+                if held is None:
+                    return 0
+            await con.execute(
+                "INSERT INTO webhook_events (id, tenant_id, merchant_id, type, kind, check_name, item_key, "
+                "run_id, reads_files, created_at, body) "
+                "SELECT i, t, $3::text, ty, k, c, ik, $4::text, rf, $5::timestamptz, b FROM unnest($1::text[], $2::text[], $6::text[], "
+                "$7::text[], $8::text[], $9::text[], $10::boolean[], $11::text[]) AS x(i, t, ty, k, c, ik, rf, b)",
+                ids, [e["tenant_id"] for e in events], merchant_id, run_id, at,
+                [e["type"] for e in events], [e.get("kind") for e in events],
+                [e.get("check_name") for e in events], [e.get("item_key") for e in events],
+                [bool(e.get("reads_files")) for e in events], [e["body"] for e in events])
+            await con.execute(
+                "INSERT INTO webhook_deliveries (endpoint_id, event_id, tenant_id, event_at, next_at) "
+                "SELECT p.id, e.id, e.tenant_id, e.created_at, e.created_at FROM webhook_events e "
+                "JOIN webhook_endpoints p ON p.tenant_id = e.tenant_id AND p.disabled_at IS NULL "
+                "WHERE e.id = ANY($1::text[])", ids)
+        return len(events)
+
+    async def webhook_due(self, now: datetime, limit: int = 100) -> list[str]:
+        """The accounts with a delivery due. Across accounts on purpose, as the
+        login role, like the sweeps: it reads which accounts, nothing of them;
+        each account's deliveries are then claimed in its own scope."""
+        rows = await self.pool.fetch(
+            "SELECT tenant_id FROM webhook_deliveries WHERE state = 'pending' AND next_at <= $1 "
+            "AND (claimed_until IS NULL OR claimed_until < $1) GROUP BY tenant_id "
+            "ORDER BY min(next_at) LIMIT $2", now, limit)
+        return [r["tenant_id"] for r in rows]
+
+    async def claim_webhooks(self, tenant_id: str, now: datetime, until: datetime, limit: int, *,
+                             per_address: int | None = None, skip: Collection[str] = ()) -> list[WebhookClaim]:
+        """Up to `limit` of an account's due deliveries, oldest due first, at
+        most `per_address` an address and none for an address in `skip`,
+        held by this round until `until`; one another round holds is skipped."""
+        async with self._scoped(tenant_id) as con:
+            rows = await con.fetch(
+                "WITH ranked AS (SELECT d.endpoint_id, d.event_id, row_number() OVER ("
+                " PARTITION BY d.endpoint_id ORDER BY d.next_at, d.event_at, d.event_id) AS n "
+                "FROM webhook_deliveries d JOIN webhook_endpoints p ON p.id = d.endpoint_id AND p.disabled_at IS NULL "
+                "WHERE d.tenant_id = $1 AND d.state = 'pending' AND d.next_at <= $2 "
+                "AND (d.claimed_until IS NULL OR d.claimed_until < $2) AND NOT (d.endpoint_id = ANY($5::text[]))), "
+                "due AS (SELECT d.endpoint_id, d.event_id FROM webhook_deliveries d "
+                "JOIN ranked r ON r.endpoint_id = d.endpoint_id AND r.event_id = d.event_id "
+                "WHERE r.n <= $6 AND (d.claimed_until IS NULL OR d.claimed_until < $2) "
+                "ORDER BY d.next_at, d.event_at, d.event_id LIMIT $4 FOR UPDATE OF d SKIP LOCKED) "
+                "UPDATE webhook_deliveries d SET claimed_until = $3 FROM due "
+                "WHERE d.endpoint_id = due.endpoint_id AND d.event_id = due.event_id "
+                "RETURNING d.endpoint_id, d.event_id, d.attempts, d.event_at, d.next_at",
+                tenant_id, now, until, limit, list(skip), per_address or limit)
+            if not rows:
+                return []
+            bodies = {r["id"]: r["body"] for r in await con.fetch(
+                "SELECT id, body FROM webhook_events WHERE id = ANY($1::text[])", [r["event_id"] for r in rows])}
+            ends = {r["id"]: r for r in await con.fetch(
+                "SELECT id, tenant_id, url, ciphertext, wrapped_key, key_id FROM webhook_endpoints "
+                "WHERE id = ANY($1::text[])", list({r["endpoint_id"] for r in rows}))}
+        secrets = {k: self._webhook_secret(v) for k, v in ends.items()}
+        rows = sorted(rows, key=lambda r: (r["next_at"], r["event_at"], r["event_id"]))
+        return [WebhookClaim(endpoint_id=r["endpoint_id"], event_id=r["event_id"], tenant_id=tenant_id,
+                             url=ends[r["endpoint_id"]]["url"], secret=secrets[r["endpoint_id"]],
+                             body=bodies[r["event_id"]], attempts=r["attempts"], event_at=r["event_at"])
+                for r in rows if r["event_id"] in bodies and r["endpoint_id"] in ends]
+
+    async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None:
+        """Give back deliveries a round took and will not send: due again at
+        the next round, as they were."""
+        if not deliveries:
+            return
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "UPDATE webhook_deliveries d SET claimed_until = NULL FROM unnest($2::text[], $3::text[]) AS x(e, v) "
+                "WHERE d.tenant_id = $1 AND d.endpoint_id = x.e AND d.event_id = x.v AND d.state = 'pending'",
+                tenant_id, [e for e, _ in deliveries], [v for _, v in deliveries])
+
+    async def webhook_delivered(self, tenant_id: str, endpoint_id: str, event_id: str, *,
+                                at: datetime, status: int) -> None:
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "UPDATE webhook_deliveries SET state = 'delivered', attempts = attempts + 1, next_at = NULL, "
+                "claimed_until = NULL, last_at = $4, last_status = $5, last_error = NULL "
+                "WHERE tenant_id = $1 AND endpoint_id = $2 AND event_id = $3", tenant_id, endpoint_id, event_id,
+                at, status)
+            await con.execute(
+                "UPDATE webhook_endpoints SET last_ok_at = $3, failing_since = NULL "
+                "WHERE tenant_id = $1 AND id = $2", tenant_id, endpoint_id, at)
+
+    async def webhook_failed(
+        self, tenant_id: str, endpoint_id: str, event_id: str, *, at: datetime, status: int | None,
+        error: str | None, next_at: datetime | None, hold_until: datetime | None,
+    ) -> datetime | None:
+        """One failed attempt: tried again at `next_at`, or given up when it is
+        None. The address is failing since its first failure after its last
+        success; `hold_until` holds its other deliveries back too, when the
+        failure was the address's and not this event's."""
+        async with self._scoped(tenant_id) as con:
+            done = await con.fetchval(
+                "UPDATE webhook_deliveries SET state = CASE WHEN $4::timestamptz IS NULL THEN 'failed' "
+                "ELSE 'pending' END, attempts = attempts + 1, next_at = $4, claimed_until = NULL, last_at = $5, "
+                "last_status = $6, last_error = $7 WHERE tenant_id = $1 AND endpoint_id = $2 AND event_id = $3 "
+                "RETURNING event_id", tenant_id, endpoint_id, event_id, next_at, at, status, error)
+            if done is None:
+                return None
+            since = await con.fetchval(
+                "UPDATE webhook_endpoints SET failing_since = COALESCE(failing_since, $3) "
+                "WHERE tenant_id = $1 AND id = $2 RETURNING failing_since", tenant_id, endpoint_id, at)
+            if hold_until is not None:
+                await con.execute(
+                    "UPDATE webhook_deliveries SET next_at = GREATEST(next_at, $4), claimed_until = NULL "
+                    "WHERE tenant_id = $1 AND endpoint_id = $2 AND event_id <> $3 AND state = 'pending'",
+                    tenant_id, endpoint_id, event_id, hold_until)
+        return since
+
+    async def webhook_events(self, tenant_id: str, *, after: str | None, since: datetime,
+                             limit: int, types: Collection[str] | None = None) -> list[WebhookEvent]:
+        """The account's events, oldest first, from `since` and after the
+        event `after` (one of its own; another's lists nothing)."""
+        async with self._scoped(tenant_id) as con:
+            cursor = None
+            if after is not None:
+                cursor = await con.fetchrow(
+                    "SELECT created_at, id FROM webhook_events WHERE tenant_id = $1 AND id = $2", tenant_id, after)
+                if cursor is None:
+                    return []
+            rows = await con.fetch(
+                "SELECT id, tenant_id, merchant_id, type, created_at, body FROM webhook_events "
+                "WHERE tenant_id = $1 AND created_at >= $2 AND ($3::timestamptz IS NULL OR (created_at, id) > ($3, $4)) "
+                "AND ($5::text[] IS NULL OR type = ANY($5::text[])) ORDER BY created_at, id LIMIT $6",
+                tenant_id, since, cursor["created_at"] if cursor else None, cursor["id"] if cursor else None,
+                None if types is None else list(types), limit)
+            sent = await con.fetch(
+                "SELECT event_id, endpoint_id, state, attempts, last_status, last_at, next_at "
+                "FROM webhook_deliveries WHERE tenant_id = $1 AND event_id = ANY($2::text[]) "
+                "ORDER BY endpoint_id", tenant_id, [r["id"] for r in rows])
+        by_event: dict[str, list[dict]] = {}
+        for d in sent:
+            by_event.setdefault(d["event_id"], []).append(
+                {k: d[k] for k in ("endpoint_id", "state", "attempts", "last_status", "last_at", "next_at")})
+        return [WebhookEvent(id=r["id"], tenant_id=r["tenant_id"], merchant_id=r["merchant_id"], type=r["type"],
+                             created_at=r["created_at"], body=r["body"], deliveries=tuple(by_event.get(r["id"], ())))
+                for r in rows]
+
+    async def sweep_webhooks(self, before: datetime) -> int:
+        """Delete every account's events older than `before`, and by cascade
+        their deliveries. Across accounts, as the login role, like the other
+        sweeps: it reads nothing back."""
+        status = await self.pool.execute("DELETE FROM webhook_events WHERE created_at < $1", before)
+        return int(status.split()[-1])
+
+
 async def _subtree(con, root_id: str) -> list[str]:
     """A tenant and everything below it. Recursive rather than a join on
     parent_id: the hierarchy is two levels today but this should not be
@@ -2081,6 +2338,22 @@ _DROP_FILE_DECISIONS = ("DELETE FROM exception_decisions WHERE tenant_id = $1 "
 #: being kept holds its run, as a decision does.
 _DROP_FILE_SUGGESTIONS = ("DELETE FROM exception_suggestions WHERE tenant_id = $1 "
                           "AND (reads_files OR name = ANY($2::text[]))")
+#: And the webhook events made from them, whichever account they were sent
+#: to (an event is visible to its merchant's scope as well as its
+#: account's). One being stored holds its run, as a decision does.
+_DROP_FILE_EVENTS = ("DELETE FROM webhook_events WHERE merchant_id = $1 "
+                     "AND (reads_files OR check_name = ANY($2::text[]))")
+
+
+_ENDPOINT_COLS = ("p.id, p.tenant_id, p.url, p.hint, p.created_at, p.created_by, p.disabled_at, p.disabled_why, "
+                  "p.failing_since, p.last_ok_at")
+
+
+def _endpoint(row) -> WebhookEndpoint:
+    return WebhookEndpoint(
+        id=row["id"], tenant_id=row["tenant_id"], url=row["url"], hint=row["hint"], created_at=row["created_at"],
+        created_by=row["created_by"], disabled_at=row["disabled_at"], disabled_why=row["disabled_why"],
+        failing_since=row["failing_since"], last_ok_at=row["last_ok_at"], pending=int(row["pending"] or 0))
 
 
 def _dumps(value) -> str | None:

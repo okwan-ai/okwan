@@ -34,11 +34,13 @@ from .models import (
     RUNS_KEPT,
     SKIPPED_ROWS_KEPT,
     SUPPORT_KEPT_DAYS,
+    WEBHOOK_ENDPOINTS_MAX,
     ApiKey,
     DailyCheck,
     Decision,
     DecisionConflict,
     DuplicateImport,
+    EndpointsFull,
     FilesGone,
     HistoryFull,
     ImportFile,
@@ -51,6 +53,9 @@ from .models import (
     SupportConversation,
     SupportTicket,
     Tenant,
+    WebhookClaim,
+    WebhookEndpoint,
+    WebhookEvent,
     add_months,
     new_unsubscribe_token,
 )
@@ -297,6 +302,29 @@ class Store(Protocol):
         factor: int = access_rules.VOLUME_FACTOR,
     ) -> list[dict]: ...
     async def sweep_access(self, now: datetime | None = None) -> int: ...
+    async def add_webhook_endpoint(
+        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime,
+    ) -> WebhookEndpoint: ...
+    async def webhook_endpoints(self, tenant_ids: list[str], *, enabled_only: bool = False) -> list[WebhookEndpoint]: ...
+    async def delete_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> bool: ...
+    async def enable_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> WebhookEndpoint | None: ...
+    async def disable_webhook_endpoint(self, tenant_id: str, endpoint_id: str, at: datetime, why: str) -> bool: ...
+    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str] | None: ...
+    async def add_webhook_events(self, merchant_id: str, run_id: str | None, events: list[dict],
+                                 at: datetime) -> int: ...
+    async def webhook_due(self, now: datetime, limit: int = 100) -> list[str]: ...
+    async def claim_webhooks(self, tenant_id: str, now: datetime, until: datetime, limit: int, *,
+                             per_address: int | None = None, skip: Collection[str] = ()) -> list[WebhookClaim]: ...
+    async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None: ...
+    async def webhook_delivered(self, tenant_id: str, endpoint_id: str, event_id: str, *,
+                                at: datetime, status: int) -> None: ...
+    async def webhook_failed(
+        self, tenant_id: str, endpoint_id: str, event_id: str, *, at: datetime, status: int | None,
+        error: str | None, next_at: datetime | None, hold_until: datetime | None,
+    ) -> datetime | None: ...
+    async def webhook_events(self, tenant_id: str, *, after: str | None, since: datetime,
+                             limit: int, types: Collection[str] | None = None) -> list[WebhookEvent]: ...
+    async def sweep_webhooks(self, before: datetime) -> int: ...
 
 
 class MemoryStore:
@@ -348,6 +376,10 @@ class MemoryStore:
         #: tenant id → what the daily mail has told its account of it.
         self._mail_told: dict[str, dict] = {}
         self._daily: dict[str, DailyCheck] = {}
+        #: Webhook addresses by id; events by id; deliveries by (address, event).
+        self._endpoints: dict[str, dict] = {}
+        self._events: dict[str, dict] = {}
+        self._deliveries: dict[tuple[str, str], dict] = {}
 
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
@@ -413,6 +445,10 @@ class MemoryStore:
         self._notify = {k: v for k, v in self._notify.items() if k not in gone}
         self._mail_told = {k: v for k, v in self._mail_told.items() if k not in gone}
         self._daily = {k: v for k, v in self._daily.items() if k not in gone}
+        self._endpoints = {k: v for k, v in self._endpoints.items() if v["tenant_id"] not in gone}
+        self._events = {k: v for k, v in self._events.items()
+                        if v["tenant_id"] not in gone and v["merchant_id"] not in gone}
+        self._prune_deliveries()
         return sorted(gone)
 
     async def save_billing(
@@ -1313,6 +1349,10 @@ class MemoryStore:
             d.tenant_id in tenant_ids and (d.reads_files or d.name in named))]
         self._suggestions = {k: x for k, x in self._suggestions.items() if not (
             x.tenant_id in tenant_ids and (x.reads_files or x.name in named))}
+        # And the events made from them, wherever they were sent.
+        self._events = {k: e for k, e in self._events.items() if not (
+            e["merchant_id"] in tenant_ids and (e["reads_files"] or e["check_name"] in named))}
+        self._prune_deliveries()
 
     async def import_rows(
         self, tenant_id: str, kind: str, *, since: date | None = None,
@@ -1526,6 +1566,193 @@ class MemoryStore:
                         if v["at"] >= now - access_rules.ALERT_RETENTION}
         return before - len(self._access)
 
+
+    # ── webhooks ────────────────────────────────────────────────────
+
+    def _prune_deliveries(self) -> None:
+        self._deliveries = {k: d for k, d in self._deliveries.items()
+                            if k[0] in self._endpoints and k[1] in self._events}
+
+    def _endpoint(self, e: dict) -> WebhookEndpoint:
+        pending = sum(1 for (ep, _), d in self._deliveries.items() if ep == e["id"] and d["state"] == "pending")
+        return WebhookEndpoint(
+            id=e["id"], tenant_id=e["tenant_id"], url=e["url"], hint=e["hint"], created_at=e["created_at"],
+            created_by=e["created_by"], disabled_at=e["disabled_at"], disabled_why=e["disabled_why"],
+            failing_since=e["failing_since"], last_ok_at=e["last_ok_at"], pending=pending)
+
+    def _open_secret(self, e: dict) -> str:
+        sealed = e["sealed"]
+        return open_sealed(self._master.unwrap(sealed.wrapped_key), sealed.ciphertext, aad=sealed.aad).decode()
+
+    async def add_webhook_endpoint(
+        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime,
+    ) -> WebhookEndpoint:
+        if tenant_id not in self._tenants:
+            raise KeyError(f"unknown tenant {tenant_id!r}")
+        if sum(1 for e in self._endpoints.values() if e["tenant_id"] == tenant_id) >= WEBHOOK_ENDPOINTS_MAX:
+            raise EndpointsFull(tenant_id)
+        endpoint_id = f"whe_{uuid.uuid4().hex[:16]}"
+        data_key = new_key()
+        record = SealedCredential(tenant_id=tenant_id, connector="webhook", field_name=endpoint_id,
+                                  ciphertext=b"", wrapped_key=b"", key_id=self._master.key_id)
+        sealed = SealedCredential(
+            tenant_id=tenant_id, connector="webhook", field_name=endpoint_id,
+            ciphertext=seal(data_key, secret.encode(), aad=record.aad),
+            wrapped_key=self._master.wrap(data_key), key_id=self._master.key_id)
+        self._endpoints[endpoint_id] = {
+            "id": endpoint_id, "tenant_id": tenant_id, "url": url, "sealed": sealed, "hint": secret[:10],
+            "created_at": at, "created_by": created_by, "disabled_at": None, "disabled_why": None,
+            "failing_since": None, "last_ok_at": None}
+        return self._endpoint(self._endpoints[endpoint_id])
+
+    async def webhook_endpoints(self, tenant_ids: list[str], *, enabled_only: bool = False) -> list[WebhookEndpoint]:
+        wanted = set(tenant_ids)
+        found = [e for e in self._endpoints.values()
+                 if e["tenant_id"] in wanted and not (enabled_only and e["disabled_at"] is not None)]
+        return [self._endpoint(e) for e in sorted(found, key=lambda e: (e["created_at"], e["id"]))]
+
+    async def delete_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> bool:
+        e = self._endpoints.get(endpoint_id)
+        if e is None or e["tenant_id"] != tenant_id:
+            return False
+        del self._endpoints[endpoint_id]
+        self._prune_deliveries()
+        return True
+
+    async def enable_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> WebhookEndpoint | None:
+        e = self._endpoints.get(endpoint_id)
+        if e is None or e["tenant_id"] != tenant_id:
+            return None
+        e.update(disabled_at=None, disabled_why=None, failing_since=None)
+        return self._endpoint(e)
+
+    async def disable_webhook_endpoint(self, tenant_id: str, endpoint_id: str, at: datetime, why: str) -> bool:
+        e = self._endpoints.get(endpoint_id)
+        if e is None or e["tenant_id"] != tenant_id or e["disabled_at"] is not None:
+            return False
+        e.update(disabled_at=at, disabled_why=why)
+        for (ep, _), d in self._deliveries.items():
+            if ep == endpoint_id and d["state"] == "pending":
+                d.update(state="failed", next_at=None, claimed_until=None)
+        return True
+
+    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str] | None:
+        e = self._endpoints.get(endpoint_id)
+        if e is None or e["tenant_id"] != tenant_id:
+            return None
+        return e["url"], self._open_secret(e)
+
+    async def add_webhook_events(self, merchant_id: str, run_id: str | None, events: list[dict],
+                                 at: datetime) -> int:
+        if not events or (run_id is not None and run_id not in self._runs):
+            return 0
+        for ev in events:
+            self._events[ev["id"]] = {**ev, "merchant_id": merchant_id, "run_id": run_id, "created_at": at}
+            for e in self._endpoints.values():
+                if e["tenant_id"] == ev["tenant_id"] and e["disabled_at"] is None:
+                    self._deliveries[(e["id"], ev["id"])] = {
+                        "tenant_id": ev["tenant_id"], "event_at": at, "state": "pending", "attempts": 0,
+                        "next_at": at, "claimed_until": None, "last_at": None, "last_status": None,
+                        "last_error": None}
+        return len(events)
+
+    def _due(self, d: dict, now: datetime) -> bool:
+        return (d["state"] == "pending" and d["next_at"] is not None and d["next_at"] <= now
+                and (d["claimed_until"] is None or d["claimed_until"] < now))
+
+    async def webhook_due(self, now: datetime, limit: int = 100) -> list[str]:
+        out: list[str] = []
+        for (ep, _), d in sorted(self._deliveries.items(), key=lambda kv: kv[1]["next_at"] or now):
+            e = self._endpoints.get(ep)
+            if e is not None and e["disabled_at"] is None and self._due(d, now) and d["tenant_id"] not in out:
+                out.append(d["tenant_id"])
+        return out[:limit]
+
+    async def claim_webhooks(self, tenant_id: str, now: datetime, until: datetime, limit: int, *,
+                             per_address: int | None = None, skip: Collection[str] = ()) -> list[WebhookClaim]:
+        ranked = sorted(((k, d) for k, d in self._deliveries.items()
+                         if d["tenant_id"] == tenant_id and self._due(d, now) and k[0] not in skip
+                         and self._endpoints[k[0]]["disabled_at"] is None),
+                        key=lambda kv: (kv[1]["next_at"], kv[1]["event_at"], kv[0][1]))
+        taken: dict[str, int] = {}
+        due = []
+        for k, d in ranked:
+            if per_address is not None and taken.get(k[0], 0) >= per_address:
+                continue
+            taken[k[0]] = taken.get(k[0], 0) + 1
+            due.append((k, d))
+        due = due[:limit]
+        out = []
+        for (ep, ev), d in due:
+            d["claimed_until"] = until
+            e = self._endpoints[ep]
+            out.append(WebhookClaim(endpoint_id=ep, event_id=ev, tenant_id=tenant_id, url=e["url"],
+                                    secret=self._open_secret(e), body=self._events[ev]["body"],
+                                    attempts=d["attempts"], event_at=d["event_at"]))
+        return out
+
+    async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None:
+        for k in deliveries:
+            d = self._deliveries.get(k)
+            if d is not None and d["tenant_id"] == tenant_id and d["state"] == "pending":
+                d["claimed_until"] = None
+
+    async def webhook_delivered(self, tenant_id: str, endpoint_id: str, event_id: str, *,
+                                at: datetime, status: int) -> None:
+        d = self._deliveries.get((endpoint_id, event_id))
+        if d is None or d["tenant_id"] != tenant_id:
+            return
+        d.update(state="delivered", attempts=d["attempts"] + 1, next_at=None, claimed_until=None,
+                 last_at=at, last_status=status, last_error=None)
+        e = self._endpoints.get(endpoint_id)
+        if e is not None:
+            e.update(last_ok_at=at, failing_since=None)
+
+    async def webhook_failed(
+        self, tenant_id: str, endpoint_id: str, event_id: str, *, at: datetime, status: int | None,
+        error: str | None, next_at: datetime | None, hold_until: datetime | None,
+    ) -> datetime | None:
+        d = self._deliveries.get((endpoint_id, event_id))
+        e = self._endpoints.get(endpoint_id)
+        if d is None or e is None or d["tenant_id"] != tenant_id:
+            return None
+        d.update(state="pending" if next_at is not None else "failed", attempts=d["attempts"] + 1,
+                 next_at=next_at, claimed_until=None, last_at=at, last_status=status, last_error=error)
+        if e["failing_since"] is None:
+            e["failing_since"] = at
+        if hold_until is not None:
+            for (ep, ev), other in self._deliveries.items():
+                if ep == endpoint_id and ev != event_id and other["state"] == "pending":
+                    other.update(next_at=max(other["next_at"] or hold_until, hold_until), claimed_until=None)
+        return e["failing_since"]
+
+    async def webhook_events(self, tenant_id: str, *, after: str | None, since: datetime,
+                             limit: int, types: Collection[str] | None = None) -> list[WebhookEvent]:
+        mine = sorted((e for e in self._events.values()
+                       if e["tenant_id"] == tenant_id and e["created_at"] >= since
+                       and (types is None or e["type"] in types)),
+                      key=lambda e: (e["created_at"], e["id"]))
+        if after is not None:
+            cursor = self._events.get(after)
+            if cursor is None or cursor["tenant_id"] != tenant_id:
+                return []
+            mine = [e for e in mine if (e["created_at"], e["id"]) > (cursor["created_at"], cursor["id"])]
+        out = []
+        for e in mine[:limit]:
+            sent = tuple(
+                {"endpoint_id": ep, "state": d["state"], "attempts": d["attempts"], "last_status": d["last_status"],
+                 "last_at": d["last_at"], "next_at": d["next_at"]}
+                for (ep, ev), d in sorted(self._deliveries.items()) if ev == e["id"])
+            out.append(WebhookEvent(id=e["id"], tenant_id=e["tenant_id"], merchant_id=e["merchant_id"],
+                                    type=e["type"], created_at=e["created_at"], body=e["body"], deliveries=sent))
+        return out
+
+    async def sweep_webhooks(self, before: datetime) -> int:
+        old = [k for k, e in self._events.items() if e["created_at"] < before]
+        for k in old:
+            del self._events[k]
+        self._prune_deliveries()
+        return len(old)
 
 async def resolver_for(store: Store, tenant_id: str, connectors=None):
     """Load a tenant's credentials, then return a synchronous resolver.

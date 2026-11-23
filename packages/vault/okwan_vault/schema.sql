@@ -767,6 +767,98 @@ CREATE TABLE IF NOT EXISTS billing_disputes (
 );
 CREATE INDEX IF NOT EXISTS billing_disputes_opened ON billing_disputes (opened_at DESC);
 
+-- Webhooks: the addresses an account has Okwan send its events to, the
+-- events, and each event's delivery to each address. Okwan writes to
+-- these and to nothing of a rail's: an event is a POST to an address the
+-- account named, never a write to a payment source.
+--
+-- `webhook_endpoints`: one address of an account (at most five), and the
+-- secret its events are signed with, sealed like a rail credential and
+-- opened only to sign. `hint` is the secret's first characters, so a
+-- person can tell which one they hold. `failing_since`: every delivery
+-- since then has failed (cleared by one that does not); three days of it
+-- and the address is turned off (`disabled_at`, `disabled_why`).
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+    id             text PRIMARY KEY,
+    tenant_id      text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    url            text NOT NULL,
+    ciphertext     bytea NOT NULL,
+    wrapped_key    bytea NOT NULL,
+    key_id         text NOT NULL,
+    hint           text NOT NULL,
+    created_at     timestamptz NOT NULL,
+    created_by     text NOT NULL,
+    disabled_at    timestamptz,
+    disabled_why   text,
+    failing_since  timestamptz,
+    last_ok_at     timestamptz
+);
+CREATE INDEX IF NOT EXISTS webhook_endpoints_tenant ON webhook_endpoints (tenant_id);
+
+-- One event as sent, to the account whose addresses receive it
+-- (`tenant_id`), about one of its merchants or itself (`merchant_id`).
+-- `body` is the JSON exactly as signed. Kept 30 days, so a platform can
+-- read what it missed (GET /v1/events). An event about a check that reads
+-- imported files holds what they hold and goes with any of the merchant's
+-- files, as the result it was made from does; so it is the merchant's to
+-- delete as well as the account's (the policy below).
+CREATE TABLE IF NOT EXISTS webhook_events (
+    id           text PRIMARY KEY,
+    tenant_id    text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    merchant_id  text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    type         text NOT NULL,
+    kind         text,
+    check_name   text,
+    item_key     text,
+    run_id       text,
+    reads_files  boolean NOT NULL DEFAULT false,
+    created_at   timestamptz NOT NULL,
+    body         text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS webhook_events_feed ON webhook_events (tenant_id, created_at, id);
+CREATE INDEX IF NOT EXISTS webhook_events_merchant ON webhook_events (merchant_id);
+CREATE INDEX IF NOT EXISTS webhook_events_age ON webhook_events (created_at);
+
+-- One event's delivery to one address: pending until a 2xx answers it, or
+-- failed once it has been tried over three days or its address is turned
+-- off. `claimed_until`: a round is sending it; another round takes it only
+-- after that. What is kept of an answer is its status code, never its body.
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    endpoint_id    text NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+    event_id       text NOT NULL REFERENCES webhook_events(id) ON DELETE CASCADE,
+    tenant_id      text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    event_at       timestamptz NOT NULL,
+    state          text NOT NULL DEFAULT 'pending',
+    attempts       integer NOT NULL DEFAULT 0,
+    next_at        timestamptz,
+    claimed_until  timestamptz,
+    last_at        timestamptz,
+    last_status    integer,
+    last_error     text,
+    PRIMARY KEY (endpoint_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_due ON webhook_deliveries (next_at) WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS webhook_deliveries_event ON webhook_deliveries (event_id);
+
+-- An event is seen by a scope holding the account it was sent to or the
+-- merchant it is about, and written only by one holding the account.
+-- Made before the loop below, which would otherwise give it the policy
+-- every other tenant table has.
+DO $$
+DECLARE
+    scope constant text :=
+        $s$string_to_array(current_setting('okwan.tenant_ids', true), ',')$s$;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = current_schema() AND tablename = 'webhook_events' AND policyname = 'tenant_scope'
+    ) THEN
+        EXECUTE format('CREATE POLICY tenant_scope ON webhook_events TO okwan_tenant '
+                       'USING (tenant_id = ANY (%s) OR merchant_id = ANY (%s)) WITH CHECK (tenant_id = ANY (%s))',
+                       scope, scope, scope);
+    END IF;
+END $$;
+
 -- Every step checks before it acts. This runs on every start, and ALTER
 -- TABLE and GRANT take locks that a running instance's queries, or
 -- autovacuum, would wait for or deadlock against; once the database is
@@ -781,7 +873,8 @@ BEGIN
                              'support_conversations', 'support_tickets', 'support_replies',
                              'import_files', 'import_rows', 'import_layouts',
                              'access_log', 'access_alerts', 'notify_settings', 'daily_checks',
-                             'exception_decisions', 'exception_suggestions', 'mail_told'] LOOP
+                             'exception_decisions', 'exception_suggestions', 'mail_told',
+                             'webhook_endpoints', 'webhook_events', 'webhook_deliveries'] LOOP
         IF NOT (has_table_privilege('okwan_tenant', t, 'SELECT')
                 AND has_table_privilege('okwan_tenant', t, 'INSERT')
                 AND has_table_privilege('okwan_tenant', t, 'UPDATE')

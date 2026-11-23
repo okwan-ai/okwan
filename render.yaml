@@ -109,7 +109,8 @@ services:
       - key: OKWAN_BILLING_REQUIRE_TERMS
         value: "off"
       # Postgres DSNs may only reach public addresses. Name deliberate
-      # exceptions here (hostnames or CIDRs, comma-separated).
+      # exceptions here (hostnames or CIDRs, comma-separated). They apply to
+      # a database a credential names, never to a webhook address.
       - key: OKWAN_EGRESS_ALLOW
         value: ""
 

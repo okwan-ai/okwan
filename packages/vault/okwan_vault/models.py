@@ -422,3 +422,62 @@ def unsubscribe_tenant(token: str) -> str | None:
     else is let through."""
     found = _UNSUBSCRIBE.fullmatch(token)
     return found.group(1) if found else None
+
+
+# ── webhooks ─────────────────────────────────────────────────────────
+
+#: Addresses one account may have Okwan send its events to.
+WEBHOOK_ENDPOINTS_MAX = 5
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookEndpoint:
+    """An address an account has Okwan send its events to. Its secret is
+    sealed in the store and opened only to sign; `hint` is its first
+    characters, so a person can tell which one they hold. `failing_since`:
+    every delivery since then has failed. `pending`: deliveries waiting."""
+
+    id: str
+    tenant_id: str
+    url: str
+    hint: str
+    created_at: datetime
+    created_by: str
+    disabled_at: datetime | None = None
+    disabled_why: str | None = None
+    failing_since: datetime | None = None
+    last_ok_at: datetime | None = None
+    pending: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookClaim:
+    """One delivery a round is sending: the event as signed, the address and
+    the secret to sign it with. Held by that round until `claimed_until`."""
+
+    endpoint_id: str
+    event_id: str
+    tenant_id: str
+    url: str
+    secret: str
+    body: str
+    attempts: int
+    event_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookEvent:
+    """One event as it was sent, with what became of each delivery of it
+    (address id, state, attempts, last status, when last tried)."""
+
+    id: str
+    tenant_id: str
+    merchant_id: str
+    type: str
+    created_at: datetime
+    body: str
+    deliveries: tuple[dict, ...] = ()
+
+
+class EndpointsFull(Exception):
+    """The account already has WEBHOOK_ENDPOINTS_MAX addresses."""
