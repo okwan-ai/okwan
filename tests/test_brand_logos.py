@@ -22,9 +22,7 @@ UI = ROOT / "apps" / "dashboard" / "app" / "_components" / "ui"
 OKWAN_OWN = {"files"}
 #: Logos still to come, each with why. Only ever shrinks: the test below
 #: fails once a logo lands and its name is still here.
-AWAITING = {
-    "paystack": "paystack.com refuses an automated download; the owner adds the file from its brand assets",
-}
+AWAITING: dict[str, str] = {}
 
 _ENTRY = re.compile(r'^\s+"?([a-z0-9-]+)"?: \{ viewBox: ("[^"]*"), body: (".*") \},$', re.MULTILINE)
 

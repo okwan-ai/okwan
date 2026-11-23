@@ -15,9 +15,10 @@
  *   in the colour Simple Icons records from squareup.com.
  * - The owner's own files: Clover's and Gusto's from their developer docs,
  *   Avalara's from avalara.com. Gusto's tile is the "g" of its logo, as its
- *   own favicon shows it.
- * Paystack's is the one still to come: its site refuses an automated
- * download, so the owner adds the file from Paystack's brand assets.
+ *   own favicon shows it. Paystack's is the mark of its logo (four bars),
+ *   from the logo file the owner added from Paystack's brand assets, since
+ *   its site refuses an automated download: each bar measured from the file
+ *   to a tenth of a pixel, in the file's own cyan.
  *
  * Vendored, so the dashboard adds no dependency. `__ID<n>__` marks a
  * gradient id that BrandMark makes unique per drawing.
@@ -45,6 +46,8 @@ export const LOGOS: Record<string, Logo> = {
   clover: { viewBox: "0 0 22 22", body: "<path d=\"M10.7 5.6c0-2-1.2-3.7-3-4.5-1.8-.8-3.9-.4-5.3 1S.6 5.6 1.3 7.4c.7 1.8 2.5 3 4.5 3h4.9V5.6zm1.4 0c0-2 1.2-3.7 3-4.5 1.8-.8 3.9-.4 5.3 1s1.8 3.5 1.1 5.3c-.7 1.8-2.5 3-4.5 3h-4.9V5.6zm0 11c0 2 1.2 3.7 3 4.5 1.8.8 3.9.4 5.3-1s1.8-3.5 1.1-5.3c-.7-1.8-2.5-3-4.5-3h-4.9v4.8zm-6.3 3.5c1.9 0 3.5-1.5 3.5-3.5v-3.5H5.8c-1.9 0-3.5 1.5-3.5 3.5s1.6 3.5 3.5 3.5zm4.9-3.5c0 2-1.2 3.7-3 4.5-1.8.8-3.9.4-5.3-1s-1.8-3.5-1.1-5.3c.7-1.8 2.5-3 4.5-3h4.9v4.8z\" fill=\"#228800\"/>" },
   // Avalara: its mark from avalara.com (footer avalara-logo-32px.svg)
   avalara: { viewBox: "0 0 32 32", body: "<path d=\"M16.0598 24.0195C16.0598 24.0195 14.3928 22.0652 13.4066 21.0094L12.0214 24.1318C14.0171 26.9623 15.3319 29.4108 16.0598 30.5789C17.4685 28.2876 20.92 21.5036 28.0341 15.1463L27.2358 13.3717C22.6105 16.6514 18.666 20.8297 16.0598 24.0195Z\" fill=\"#059bd2\"/><path d=\"M26.4379 31.4999H32.0964L27.1188 20.0883C25.6631 21.5709 24.4187 23.031 23.3152 24.4238L26.4379 31.4999Z\" fill=\"#ff6600\"/><path d=\"M18.525 0.5H18.5016H13.5709H13.5475L0 31.5H5.65847L15.4493 9.39565L15.9189 8.20507H16.1771L16.6467 9.39565L19.5581 15.9551C20.8495 14.7196 22.2582 13.5065 23.7374 12.3609L18.525 0.5Z\" fill=\"#ff6600\"/>" },
+  // Paystack: the four bars of its logo, measured from the logo file the owner added from its brand assets
+  paystack: { viewBox: "0 0 50.6 50.5", body: "<g fill=\"#03c3f3\"><rect width=\"48.05\" height=\"10.2\" rx=\"2\"/><rect y=\"13.49\" width=\"50.6\" height=\"10.2\" rx=\"2\"/><rect y=\"26.94\" width=\"48.05\" height=\"10.2\" rx=\"2\"/><rect y=\"40.34\" width=\"29.2\" height=\"10.2\" rx=\"2\"/></g>" },
   // Gusto: the "g" of its logo from docs.gusto.com (files.readme.io/000ba2a-gusto-logo.svg), as its favicon shows it
   gusto: { viewBox: "0 5.9 24.2 34.9", body: "<path fill=\"#f45d48\" d=\"M24.1 27.407V6.427h-5.69V7.83a11.863 11.863 0 00-6.425-1.883C5.378 5.947 0 11.348 0 17.987c0 6.64 5.377 12.042 11.986 12.042 2.334 0 4.522-.674 6.36-1.837 0 .184-.01.35-.01.461 0 3.49-2.83 6.335-6.304 6.335a6.27 6.27 0 01-3.337-.97l-2.813 4.95a11.87 11.87 0 006.159 1.736c6.608 0 12.059-5.402 12.059-12.042 0-.258.018-1.015 0-1.255zm-12.115-3.085c-3.474 0-6.305-2.844-6.305-6.334 0-3.49 2.831-6.335 6.306-6.335 3.474 0 6.305 2.844 6.305 6.335 0 3.49-2.831 6.334-6.306 6.334z\"/>" },
 };
