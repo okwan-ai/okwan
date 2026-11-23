@@ -150,10 +150,10 @@ async def receiver(tmp_path, monkeypatch):
     monkeypatch.setattr(wh, "_tls", lambda: trust)
     real = wh.resolve_public
 
-    async def dns(host, port):
+    async def dns(host, port, **kw):
         # The one stand-in: HOST is a name only this test knows. Every other
         # name goes through the real check.
-        return "127.0.0.1" if host == HOST else await real(host, port)
+        return "127.0.0.1" if host == HOST else await real(host, port, **kw)
 
     monkeypatch.setattr(wh, "resolve_public", dns)
     yield r
@@ -559,8 +559,8 @@ async def test_the_connection_goes_to_the_address_that_was_checked(receiver):
 async def test_a_certificate_for_another_name_is_refused(receiver, monkeypatch):
     real = wh.resolve_public
 
-    async def dns(host, port):
-        return "127.0.0.1" if host == "other.okwan.test" else await real(host, port)
+    async def dns(host, port, **kw):
+        return "127.0.0.1" if host == "other.okwan.test" else await real(host, port, **kw)
 
     monkeypatch.setattr(wh, "resolve_public", dns)
     status, error = await wh.send(f"https://other.okwan.test:{receiver.port}/x", "{}", {})
@@ -588,7 +588,7 @@ async def test_a_slow_address_holds_up_no_other_account(world, receiver):
     assert [r["path"] for r in receiver.requests] == ["/fast"], "the other account waited for the slow address"
     # A second round takes nothing more for the address still being sent to.
     assert await wh.deliver_due() == 0
-    await asyncio.gather(*list(wh._sending.values()))
+    await asyncio.gather(*[task for _, task in wh._sending.values()])
     assert sorted(r["path"] for r in receiver.requests) == ["/fast", "/slow", "/slow"]
 
 

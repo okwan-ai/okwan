@@ -98,16 +98,21 @@ URL_MAX = 2048
 CONNECT_SECONDS = 5.0
 SEND_SECONDS = 10.0
 #: The delivery round: how often; how many accounts, and deliveries an
-#: account and an address, a round takes; how long what it took is held;
-#: and how many addresses are sent to at once, one delivery at a time to
-#: each. An address's queue is sent on its own: a slow address keeps its own
-#: queue waiting, not a round, nor another account's.
+#: account and an address, a round takes; how long what it took is held.
+#: Each address's queue is sent on its own task, one delivery at a time:
+#: SENDING_AT_ONCE addresses at once in all, ACCOUNT_AT_ONCE of one account,
+#: and an address's turn ends after QUEUE_SECONDS, the rest of its queue
+#: going back for a later round. When places are short, an account with
+#: nothing being sent goes first: slow addresses keep their own accounts'
+#: events waiting, and another account's for a turn at most.
 ROUND_SECONDS = 5.0
 ROUND_ACCOUNTS = 100
 ROUND_DELIVERIES = 50
 ADDRESS_DELIVERIES = 10
 CLAIM_FOR = timedelta(minutes=5)
-SENDING_AT_ONCE = 16
+SENDING_AT_ONCE = 64
+ACCOUNT_AT_ONCE = 2
+QUEUE_SECONDS = 30.0
 #: Listed a request at most.
 EVENTS_LISTED = 100
 USER_AGENT = "Okwan-Webhooks/1"
@@ -217,7 +222,7 @@ async def send(url: str, body: str, headers: dict[str, str]) -> tuple[int | None
     parts = urlsplit(url)
     host = (parts.hostname or "").rstrip(".")
     try:
-        ip = await resolve_public(host, PORT)
+        ip = await resolve_public(host, PORT, exceptions=False)
     except EgressRefused:
         return None, "refused: the host does not resolve to a public address"
     dial = f"[{ip}]" if ":" in ip else ip
@@ -423,41 +428,53 @@ def _the_address(status: int | None) -> bool:
     return status is None or status >= 500 or status in (408, 429)
 
 
-#: The addresses whose queues this process is sending, each its task: a
-#: round takes nothing more for them until it is done.
-_sending: dict[str, asyncio.Task] = {}
-_gates: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
-
-
-def _gate() -> asyncio.Semaphore:
-    loop = asyncio.get_running_loop()
-    if loop not in _gates:
-        _gates.clear()
-        _gates[loop] = asyncio.Semaphore(SENDING_AT_ONCE)
-    return _gates[loop]
+#: The addresses whose queues this process is sending: each address's
+#: account and task. A round takes nothing more for them until it is done.
+_sending: dict[str, tuple[str, asyncio.Task]] = {}
 
 
 async def deliver_due(at: datetime | None = None, *, wait: bool = True) -> int:
-    """One round: every account with deliveries due, each in its own scope,
-    takes up to ADDRESS_DELIVERIES an address (ROUND_DELIVERIES an account)
-    for each of its addresses not being sent to already, and each address's
-    queue is sent on its own task, SENDING_AT_ONCE at a time. With `wait`,
-    the round waits for them and says how many were delivered; the sweeper
-    does not wait, so a slow address holds up no one else."""
+    """One round. Places are given out in turns: first one to each account
+    with deliveries due (those with nothing being sent before the rest),
+    then a second to each, up to ACCOUNT_AT_ONCE an account and
+    SENDING_AT_ONCE in all. An account given a place takes, in its own
+    scope, up to ADDRESS_DELIVERIES for one of its addresses not being sent
+    to already, and that address's queue is sent on its own task; what it
+    took for an address with no place goes back. With `wait`, the round
+    waits for the tasks and says how many were delivered; the sweeper does
+    not wait."""
     store = get_store()
     at = at or now()
     started: list[asyncio.Task] = []
-    for account in await store.webhook_due(at, ROUND_ACCOUNTS):
-        claims = await store.claim_webhooks(account, at, at + CLAIM_FOR, ROUND_DELIVERIES,
-                                            per_address=ADDRESS_DELIVERIES, skip=set(_sending))
-        by_address: dict[str, list] = {}
-        for c in claims:
-            by_address.setdefault(c.endpoint_id, []).append(c)
-        for address, queue in by_address.items():
-            task = asyncio.create_task(_guarded(store, queue))
-            _sending[address] = task
+    free = SENDING_AT_ONCE - len(_sending)
+    busy: dict[str, int] = {}
+    for account, _ in _sending.values():
+        busy[account] = busy.get(account, 0) + 1
+    due = await store.webhook_due(at, ROUND_ACCOUNTS) if free > 0 else []
+    due = sorted(due, key=lambda a: busy.get(a, 0) > 0)
+    for turn in range(1, ACCOUNT_AT_ONCE + 1):
+        for account in due:
+            if free <= 0:
+                break
+            if busy.get(account, 0) >= turn:
+                continue
+            claims = await store.claim_webhooks(account, at, at + CLAIM_FOR, ROUND_DELIVERIES,
+                                                per_address=ADDRESS_DELIVERIES, skip=set(_sending))
+            by_address: dict[str, list] = {}
+            for c in claims:
+                by_address.setdefault(c.endpoint_id, []).append(c)
+            if not by_address:
+                continue
+            address, *rest = list(by_address)
+            back = [(c.endpoint_id, c.event_id) for a in rest for c in by_address[a]]
+            if back:
+                await store.release_webhooks(account, back)
+            task = asyncio.create_task(_guarded(store, by_address[address]))
+            _sending[address] = (account, task)
             task.add_done_callback(lambda _t, a=address: _sending.pop(a, None))
             started.append(task)
+            busy[account] = busy.get(account, 0) + 1
+            free -= 1
     if not wait:
         return 0
     return sum(await asyncio.gather(*started)) if started else 0
@@ -465,8 +482,7 @@ async def deliver_due(at: datetime | None = None, *, wait: bool = True) -> int:
 
 async def _guarded(store, queue: list) -> int:
     try:
-        async with _gate():
-            return await _send_queue(store, queue)
+        return await _send_queue(store, queue)
     except Exception:
         logger.warning("webhook deliveries to %s failed to send", queue[0].endpoint_id, exc_info=True)
         return 0
@@ -474,7 +490,12 @@ async def _guarded(store, queue: list) -> int:
 
 async def _send_queue(store, queue: list) -> int:
     done = 0
-    for c in queue:
+    ends = time.monotonic() + QUEUE_SECONDS
+    for n, c in enumerate(queue):
+        if time.monotonic() >= ends:
+            # The address's turn is over: what is left goes back for a later round.
+            await store.release_webhooks(c.tenant_id, [(x.endpoint_id, x.event_id) for x in queue[n:]])
+            break
         sent_at = now()
         status, error = await send(c.url, c.body, signed_headers(c.secret, c.event_id, c.body, sent_at.timestamp()))
         if error is None and status is not None:
@@ -594,7 +615,7 @@ def build_router() -> APIRouter:
         enforce(request, (WEBHOOK_CHANGE, actor.id))
         try:
             url, host = check_url(body.url)
-            await resolve_public(host, PORT)
+            await resolve_public(host, PORT, exceptions=False)
         except BadAddress as exc:
             raise HTTPException(422, str(exc)) from None
         except EgressRefused:

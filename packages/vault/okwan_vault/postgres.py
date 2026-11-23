@@ -2183,6 +2183,17 @@ class PostgresStore:
                              body=bodies[r["event_id"]], attempts=r["attempts"], event_at=r["event_at"])
                 for r in rows if r["event_id"] in bodies and r["endpoint_id"] in ends]
 
+    async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None:
+        """Give back deliveries a round took and will not send: due again at
+        the next round, as they were."""
+        if not deliveries:
+            return
+        async with self._scoped(tenant_id) as con:
+            await con.execute(
+                "UPDATE webhook_deliveries d SET claimed_until = NULL FROM unnest($2::text[], $3::text[]) AS x(e, v) "
+                "WHERE d.tenant_id = $1 AND d.endpoint_id = x.e AND d.event_id = x.v AND d.state = 'pending'",
+                tenant_id, [e for e, _ in deliveries], [v for _, v in deliveries])
+
     async def webhook_delivered(self, tenant_id: str, endpoint_id: str, event_id: str, *,
                                 at: datetime, status: int) -> None:
         async with self._scoped(tenant_id) as con:

@@ -315,6 +315,7 @@ class Store(Protocol):
     async def webhook_due(self, now: datetime, limit: int = 100) -> list[str]: ...
     async def claim_webhooks(self, tenant_id: str, now: datetime, until: datetime, limit: int, *,
                              per_address: int | None = None, skip: Collection[str] = ()) -> list[WebhookClaim]: ...
+    async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None: ...
     async def webhook_delivered(self, tenant_id: str, endpoint_id: str, event_id: str, *,
                                 at: datetime, status: int) -> None: ...
     async def webhook_failed(
@@ -1689,6 +1690,12 @@ class MemoryStore:
                                     secret=self._open_secret(e), body=self._events[ev]["body"],
                                     attempts=d["attempts"], event_at=d["event_at"]))
         return out
+
+    async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None:
+        for k in deliveries:
+            d = self._deliveries.get(k)
+            if d is not None and d["tenant_id"] == tenant_id and d["state"] == "pending":
+                d["claimed_until"] = None
 
     async def webhook_delivered(self, tenant_id: str, endpoint_id: str, event_id: str, *,
                                 at: datetime, status: int) -> None:
