@@ -127,6 +127,23 @@ def recon_tables() -> list[Table]:
     return out
 
 
+#: The schema of what people work from: the open items. Never a connector name.
+EXCEPTIONS = "exceptions"
+
+
+def exception_tables() -> list[Table]:
+    """`exceptions.open_items`: every finding of the caller's checks, open or
+    closed, with what a person last decided and Okwan last suggested. Its
+    columns are OpenItem's, the row `GET /v1/exceptions` and the MCP tool
+    `okwan_open_items` answer with (the one-definition rule). It reads
+    stored results, never a rail, and only with an Okwan API key: the
+    hosted API and MCP give the session a reader for the key's tenant."""
+    from okwan_recon.exceptions import OpenItem
+
+    return [Table(connector=EXCEPTIONS, resource="open_items", operation="stored", model=OpenItem,
+                  columns=tuple(columns_for(OpenItem)))]
+
+
 def recon_spec(table: Table):
     """The declaration a `recon.*` table runs."""
     from okwan_recon.registry import get, get_across
@@ -143,8 +160,9 @@ def _sides(spec) -> list:
 
 def catalog() -> list[Table]:
     """Every SQL-addressable resource across every registered connector,
-    then every reconciliation."""
-    return [t for c in all_connectors() for t in tables_for(c)] + list(_DECLARED) + recon_tables()
+    then every reconciliation, then the open items."""
+    return ([t for c in all_connectors() for t in tables_for(c)] + list(_DECLARED) + recon_tables()
+            + exception_tables())
 
 
 def missing_credentials(
@@ -158,6 +176,8 @@ def missing_credentials(
     from okwan_recon.fetch import env_credentials
 
     resolve = resolver or env_credentials
+    if table.connector == EXCEPTIONS:
+        return ()  # stored results, read with the caller's key: no credential of a rail
     if table.connector == RECON:
         # Every system the reconciliation reads, named with its connector
         # since several are involved: ("paypal.client_id", ...).

@@ -67,6 +67,9 @@ SQL_RECON_TENANT = Rule("sql:recon:tenant", 12, 60)
 IMPORT_TENANT = Rule("import:tenant", 30, 3600)
 #: The list of open items: a session reloading a page, never a loop.
 EXCEPTIONS_TENANT = Rule("exceptions:tenant", 60, 60)
+#: Reads of the open items as data (REST, SQL, MCP) by one account: each reads
+#: stored rows of every merchant it can open.
+OPEN_ITEMS_TENANT = Rule("open-items:tenant", 30, 60)
 #: Decisions on open items. Each caller (a session's or a key's account) may
 #: send 300 an hour, recorded or not; an account and its merchants together
 #: record at most 1,000 an hour, charged only for a decision about to be

@@ -88,11 +88,25 @@ def sql_run_admit(tenant):
 
 
 def sql_session(tenant, resolver, *, max_records: int, fresh: bool) -> QuerySession:
+    from okwan_api.open_items import sql_reader
+
     return QuerySession(
         resolver=resolver, max_records=max_records, fresh=fresh,
         on_run=sql_run_recorder(tenant, resolver), reuse=sql_run_reuse(tenant),
-        admit=sql_run_admit(tenant),
+        admit=sql_run_admit(tenant), items=sql_reader(tenant),
     )
+
+
+async def record_items_read(tenant, session: QuerySession, surface: str) -> None:
+    """A query that read the open items is a read of the tenant's data:
+    written to the access log, though it reads no rail and is not metered."""
+    from okwan_api import access
+
+    from .catalog import EXCEPTIONS
+
+    for name in session.loaded:
+        if name.startswith(f"{EXCEPTIONS}."):
+            await access.record(tenant, surface, target=name)
 
 
 def build_router() -> APIRouter:
@@ -116,6 +130,7 @@ def build_router() -> APIRouter:
             # (§3.4); a query counts when it read a provider.
             if session.upstream_reads:
                 await meter(tenant, "rest:query")
+            await record_items_read(tenant, session, "rest:query")
             return result
         except TooManyRuns as exc:
             import math

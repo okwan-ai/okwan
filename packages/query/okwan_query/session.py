@@ -26,7 +26,7 @@ from okwan_core import CredentialError
 from okwan_recon.declaration import ResourceRef
 from okwan_recon.fetch import CredentialResolver, env_credentials, fetch_rows
 
-from .catalog import RECON, Table, catalog, missing_credentials, recon_spec
+from .catalog import EXCEPTIONS, RECON, Table, catalog, missing_credentials, recon_spec
 from .guard import check as check_statement
 
 #: schema.table references in a SQL string. Deliberately loose — a name
@@ -80,6 +80,7 @@ class QuerySession:
         reuse: Callable[[Any], ReusedRun | None | Awaitable[ReusedRun | None]] | None = None,
         admit: Callable[[int], None] | None = None,
         fresh: bool = False,
+        items: Callable[[], Any] | None = None,
     ) -> None:
         self._con = duckdb.connect(":memory:", config=SANDBOX)
         self._resolver = resolver
@@ -94,6 +95,12 @@ class QuerySession:
         self._reuse = None if fresh else reuse
         self._admit = admit
         self._planned: dict[str, ReusedRun] = {}
+        #: A reader of the caller's open items (okwan_api.open_items.Reader),
+        #: made when a query names `exceptions.open_items`; None where there
+        #: is no caller to read for (the stdio server).
+        self._items = items
+        #: Per `exceptions.*` table: merchants a read left out at its bound.
+        self.not_read: dict[str, int] = {}
         #: Per `recon.*` table: the run read, and whether it was reused.
         self.runs: dict[str, dict[str, Any]] = {}
         #: Reads that went upstream (connector tables, live runs). A query
@@ -127,6 +134,8 @@ class QuerySession:
                 out.append(None)
             elif kind == "JSON" or isinstance(value, (dict, list)):
                 out.append(json.dumps(value, default=str))
+            elif kind == "TIMESTAMP" and isinstance(value, datetime) and value.tzinfo is not None:
+                out.append(value.astimezone(UTC).replace(tzinfo=None))  # a UTC instant
             else:
                 out.append(value)
         return tuple(out)
@@ -145,6 +154,11 @@ class QuerySession:
 
         if table.connector == RECON:
             count = await self._run_reconciliation(table)
+            self._loaded.add(table.qualified)
+            return count
+
+        if table.connector == EXCEPTIONS:
+            count = await self._load_items(table)
             self._loaded.add(table.qualified)
             return count
 
@@ -174,6 +188,27 @@ class QuerySession:
             )
         self._loaded.add(table.qualified)
         return len(rows)
+
+    async def _load_items(self, table: Table) -> int:
+        """The caller's open items, from stored results, a merchant's worth
+        at a time. Nothing upstream is read."""
+        if self._items is None:
+            raise CredentialError(
+                f"{table.qualified} is read with an Okwan API key: query it through the hosted API or MCP")
+        reader = self._items()
+        self._con.execute(f'CREATE SCHEMA IF NOT EXISTS "{table.connector}"')
+        self._con.execute(table.ddl())
+        placeholders = ", ".join("?" for _ in table.columns)
+        count = 0
+        async for batch in reader.batches():
+            if batch:
+                self._con.executemany(
+                    f'INSERT INTO "{table.connector}"."{table.resource}" VALUES ({placeholders})',
+                    [self._coerce(table, r) for r in batch])
+                count += len(batch)
+        if reader.merchants_not_read:
+            self.not_read[table.qualified] = reader.merchants_not_read
+        return count
 
     async def _run_reconciliation(self, table: Table) -> int:
         """Run the declaration as this session's caller, at its own record
@@ -263,6 +298,9 @@ class QuerySession:
             "row_count": len(rows),
             "sources": loaded or {t: 0 for t in self.loaded},
             **({"runs": self.runs} if self.runs else {}),
+            # A table read only part of what it covers: how many merchants
+            # its bound left out (okwan_api.open_items).
+            **({"merchants_not_read": self.not_read} if self.not_read else {}),
         }
 
     def close(self) -> None:

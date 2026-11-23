@@ -283,6 +283,16 @@ class PostgresStore:
         )
         return [_tenant(r) for r in rows]
 
+    async def subtree(self, tenant_id: str, depth: int) -> list[Tenant]:
+        """A tenant and those below it, `depth` levels down at most: the
+        tenant first, then each level by id."""
+        rows = await self.pool.fetch(
+            "WITH RECURSIVE sub AS (SELECT id, name, parent_id, created_at, 0 AS depth FROM tenants WHERE id = $1 "
+            "UNION ALL SELECT t.id, t.name, t.parent_id, t.created_at, sub.depth + 1 FROM tenants t "
+            "JOIN sub ON t.parent_id = sub.id WHERE sub.depth < $2) "
+            "SELECT id, name, parent_id, created_at FROM sub ORDER BY depth, id", tenant_id, depth)
+        return [_tenant(r) for r in rows]
+
     async def list_tenants(self) -> list[Tenant]:
         rows = await self.pool.fetch(
             "SELECT id, name, parent_id, created_at FROM tenants ORDER BY created_at"
@@ -780,6 +790,23 @@ class PostgresStore:
                 f"SELECT {_SUGGESTION_COLS} FROM exception_suggestions WHERE tenant_id = $1 AND id = $2",
                 tenant_id, suggestion_id)
         return None if row is None else _suggestion(row)
+
+    async def newest_suggestions(
+        self, items: Collection[tuple[str, str]]
+    ) -> dict[tuple[str, str, str, str], Suggestion]:
+        """Each item's newest suggestion, for these (tenant, key) items, by
+        (tenant, kind, name, key): one row an item, read from the index."""
+        wanted = sorted(set(items))
+        if not wanted:
+            return {}
+        tids = sorted({t for t, _ in wanted})
+        async with self._scoped(*tids) as con:
+            rows = await con.fetch(
+                "SELECT s.* FROM unnest($1::text[], $2::text[]) AS k(tid, key) CROSS JOIN LATERAL ("
+                f" SELECT {_SUGGESTION_COLS} FROM exception_suggestions e"
+                " WHERE e.tenant_id = k.tid AND e.item_key = k.key ORDER BY e.created_at DESC, e.id DESC LIMIT 1) s",
+                [t for t, _ in wanted], [k for _, k in wanted])
+        return {(x.tenant_id, x.kind, x.name, x.key): x for x in map(_suggestion, rows)}
 
     async def suggestions_of(
         self, tenant_id: str, kind: str, name: str, key: str, limit: int = 100

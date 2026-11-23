@@ -23,6 +23,7 @@ that matters comes from somewhere else. Three layers do that
 | Secrets at rest | `packages/vault/okwan_vault/crypto.py`, `packages/vault/okwan_vault/keys.py`, `apps/api/okwan_api/scrub.py` |
 | Caller SQL | `packages/query/okwan_query/guard.py`, `packages/query/okwan_query/session.py` |
 | The hosted MCP server | `packages/query/okwan_query/mcp_http.py` |
+| The open items as data for keys (REST, SQL, MCP: what a read key reads, and that it decides nothing) | `apps/api/okwan_api/open_items.py`, `packages/query/okwan_query/catalog.py`, `packages/query/okwan_query/session.py`, `packages/recon/okwan_recon/exceptions.py` (`OpenItem`) |
 | Connecting Gusto (OAuth) | `apps/api/okwan_api/connect.py`, `packages/connectors/gusto/okwan_gusto/auth.py`, `apps/dashboard/app/integrations/[name]/` |
 | Files customers upload | `apps/api/okwan_api/imports.py`, `packages/connectors/files/okwan_files/` |
 | The dashboard's session and its changes | `apps/dashboard/lib/api.ts`, `apps/dashboard/lib/respond.ts`, `apps/dashboard/app/**/route.ts` |

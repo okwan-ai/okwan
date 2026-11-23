@@ -72,7 +72,7 @@ from okwan_core import get as get_connector
 from okwan_core.currency import format_minor, minor_unit_factor
 from okwan_recon.across import AcrossRails, run_across
 from okwan_recon.emitters.rest import mapped, vault_resolver
-from okwan_recon.exceptions import holds, open_items, run_found
+from okwan_recon.exceptions import WHAT, holds, open_items, run_found
 from okwan_recon.registry import get_across
 from okwan_vault.authz import MAX_DEPTH
 from okwan_vault.models import AGING_DAYS, LARGE_AMOUNT, DailyCheck, Tenant
@@ -627,16 +627,6 @@ def _counted(items: list[dict[str, Any]]) -> str:
     return t.counted()
 
 
-#: What each kind of finding is, in words that name no reference.
-WHAT = {
-    "collected_twice": "collected twice",
-    "collected_inconsistent": "payments don't add up",
-    "uncollected": "no payment found",
-    "matched_discrepant": "amounts differ",
-    "unmatched_left": "no match found",
-    "unmatched_right": "no match found",
-    "ambiguous": "more than one match fits",
-}
 
 
 def _kinds(items: list[dict[str, Any]]) -> str:
