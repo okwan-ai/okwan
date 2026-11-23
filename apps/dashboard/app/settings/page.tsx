@@ -1,11 +1,12 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { tenantTree } from "@/lib/api";
+import { apiUrl, tenantTree } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors } from "@/lib/merchants";
 import { SETTINGS_TABS, settingsTabOf } from "@/lib/settings-tabs";
 import { accessFor } from "@/lib/access";
 import { notifySettings } from "@/lib/notify";
+import { webhookAddresses, type WebhookAddress } from "@/lib/webhooks";
 import { billing } from "@/lib/billing";
 import { myUsage, usageFor } from "@/lib/usage";
 import { ConnectionsGrid } from "../_components/connections-grid";
@@ -16,6 +17,8 @@ import { DailyChecks } from "../_components/settings/daily-checks";
 import { PlanUsage } from "../_components/settings/plan-usage";
 import { RevokeKey } from "../_components/settings/revoke-key";
 import { UsageScope } from "../_components/settings/usage-scope";
+import { AddWebhook, WebhookActions } from "../_components/settings/webhooks";
+import { Badge } from "../_components/ui/badge";
 import { Card, CardBody, CardHeader } from "../_components/ui/card";
 import { CopyButton } from "../_components/ui/copy-button";
 import { EmptyState } from "../_components/ui/empty-state";
@@ -113,6 +116,8 @@ export default async function SettingsPage({ searchParams }: {
           </div>
         )}
 
+        {active === "webhooks" && <WebhooksTab />}
+
         {active === "access" && <AccessTab merchants={merchants} selfId={tree.self.id} merchant={merchant ?? null} days={days} />}
 
         {active === "security" && (
@@ -130,6 +135,101 @@ export default async function SettingsPage({ searchParams }: {
         )}
       </div>
     </>
+  );
+}
+
+/** The account's webhook addresses (okwan_api/webhooks.py): each with whether
+ *  Okwan is sending to it, and what can be done to it; and a form to add
+ *  one, which shows the new address's secret once. */
+async function WebhooksTab() {
+  const addresses = await webhookAddresses();
+  if (addresses === null) {
+    return <p className="text-sm text-ink-soft">Webhooks aren&apos;t available right now. Try again in a moment.</p>;
+  }
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader
+          title="Add an address"
+          description="Okwan sends it an event each time an open item of yours or a merchant's opens, has been open your number of days, is cleared by a later run, or is closed or opened again."
+        />
+        <CardBody>
+          <AddWebhook full={addresses.length >= 5} />
+        </CardBody>
+      </Card>
+      {addresses.length === 0 ? (
+        <EmptyState title="No webhook addresses yet">
+          Add one above, and your system hears of a change on your open items without asking for it.
+        </EmptyState>
+      ) : (
+        <ul className="space-y-4" aria-label="Webhook addresses">
+          {addresses.map((a) => <WebhookCard key={a.id} address={a} />)}
+        </ul>
+      )}
+      <p className="text-xs text-ink-soft">
+        Each event is signed as Standard Webhooks signs (<code className="font-mono">webhook-id</code>,{" "}
+        <code className="font-mono">webhook-timestamp</code>, <code className="font-mono">webhook-signature</code>):
+        check the signature with the address&apos;s secret before you trust an event. Its{" "}
+        <code className="font-mono">data</code> is the open item, as <code className="font-mono">GET /v1/exceptions</code>{" "}
+        lists it. An event that fails is sent again for three days; the last 30 days are at{" "}
+        <code className="font-mono">GET /v1/events</code> with any of your keys.{" "}
+        <a href={`${apiUrl()}/docs`} target="_blank" rel="noopener" className="underline underline-offset-4 hover:text-ink">
+          API reference<span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      </p>
+    </div>
+  );
+}
+
+function day(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC";
+}
+
+function WebhookCard({ address: a }: { address: WebhookAddress }) {
+  const state = !a.enabled
+    ? <Badge tone="danger" symbol="■">Off</Badge>
+    : a.failing_since
+      ? <Badge tone="warn" symbol="!">Failing</Badge>
+      : <Badge tone="ok" symbol="●">On</Badge>;
+  return (
+    <Card as="li">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
+        <p className="min-w-0 flex-1 break-all font-mono text-sm">{a.url}</p>
+        {state}
+      </div>
+      <div className="px-5 pt-4">
+      <KeyValueList label={`Webhook ${a.id}`}>
+        {!a.enabled && (
+          <KeyValueRow label="Turned off">
+            <span suppressHydrationWarning>{a.disabled_at ? day(a.disabled_at) : "—"}</span>
+            {a.disabled_why && <span className="block text-xs text-ink-soft">{a.disabled_why}</span>}
+            <span className="block text-xs text-ink-soft">Nothing is sent to it until it is turned back on; what was made meanwhile is at GET /v1/events.</span>
+          </KeyValueRow>
+        )}
+        {a.enabled && a.failing_since && (
+          <KeyValueRow label="Failing since">
+            <span suppressHydrationWarning>{day(a.failing_since)}</span>
+            <span className="block text-xs text-ink-soft">Okwan keeps trying, less and less often; after three days of failures it turns the address off and emails you.</span>
+          </KeyValueRow>
+        )}
+        <KeyValueRow label="Last delivered">
+          {a.last_ok_at ? <span suppressHydrationWarning>{day(a.last_ok_at)}</span> : <span className="text-ink-soft">Nothing yet</span>}
+        </KeyValueRow>
+        <KeyValueRow label="Waiting to be sent">{a.pending}</KeyValueRow>
+        <KeyValueRow label="Secret">
+          <code className="font-mono text-[13px]">{a.secret_hint}</code>
+          <span className="block text-xs text-ink-soft">Only its first characters: it was shown once, when the address was added.</span>
+        </KeyValueRow>
+        <KeyValueRow label="Added">
+          <span suppressHydrationWarning>{day(a.created_at)}</span>
+          <span className="block text-xs text-ink-soft">by {a.created_by === "session" ? "a dashboard sign-in" : <code className="font-mono">{a.created_by}</code>}</span>
+        </KeyValueRow>
+      </KeyValueList>
+      </div>
+      <div className="px-5 py-4">
+        <WebhookActions id={a.id} enabled={a.enabled} />
+      </div>
+    </Card>
   );
 }
 

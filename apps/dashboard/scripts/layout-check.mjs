@@ -27,7 +27,8 @@ const SIZES = [[1670, 941], [1366, 768], [1024, 768], [390, 844]];
 const SIGNED_OUT = ["/signup?mode=signin", "/signup", "/verify?token=layout-check", "/unsubscribe?token=layout-check"];
 const SIGNED_IN = [
   "/overview", "/overview?days=all", "/sample", "/findings", "/exceptions", "/merchants", "/integrations", "/agents",
-  "/settings", "/settings?tab=plan", "/settings?tab=keys", "/settings?tab=access", "/settings?tab=security", "/ops",
+  "/settings", "/settings?tab=plan", "/settings?tab=keys", "/settings?tab=webhooks", "/settings?tab=access",
+  "/settings?tab=security", "/ops",
 ];
 
 // Runs in the page: text a person can see, and whether any of it collides.
@@ -604,6 +605,45 @@ async function checkDailyMail(page) {
   if ((await saved(days, "7")) !== 200 || (await saved(amount, "1000")) !== 200) return note(page, where, "putting them back did not save");
 }
 
+// Settings › Webhooks: an address that is not public is refused in words;
+// one that is is added, its secret shown once and gone after "I've stored
+// it"; a test ping says what came back; and the address is deleted after a
+// second click. The seeded API resolves `.example` names to an address no
+// packet reaches (scripts/ui_server.py), so the ping fails as such an
+// address does.
+async function checkWebhooks(page) {
+  const where = "Settings › Webhooks";
+  await page.goto(`${BASE}/settings?tab=webhooks`, { waitUntil: "networkidle" });
+  const list = page.getByRole("list", { name: "Webhook addresses" });
+  if ((await list.locator(":scope > li").count()) < 3) return note(page, where, "the three seeded addresses are not listed");
+  if ((await page.getByRole("button", { name: "Turn back on" }).count()) !== 1) return note(page, where, "the turned-off address offers no way back on");
+  const field = page.getByRole("textbox", { name: "Address", exact: true });
+  const add = page.getByRole("button", { name: "Add", exact: true });
+  await field.fill("https://127.0.0.1/hook");
+  await add.click();
+  const refused = await page.getByRole("alert").filter({ hasText: "public" }).waitFor({ timeout: 10000 }).then(() => true, () => false);
+  if (!refused) return note(page, where, "an address that is not public was not refused in words");
+  const url = "https://layout-check.example/okwan/events";
+  await field.fill(url);
+  await add.click();
+  const panel = page.getByRole("region", { name: "Your new webhook's secret" });
+  if (!(await panel.waitFor({ timeout: 10000 }).then(() => true, () => false))) return note(page, where, "no secret was shown");
+  const secret = (await panel.locator("code").first().textContent())?.trim() ?? "";
+  if (!/^whsec_[A-Za-z0-9+/=]{32}$/.test(secret)) return note(page, where, `the secret reads "${secret.slice(0, 10)}…"`);
+  await panel.getByRole("button", { name: "I've stored it" }).click();
+  const row = list.locator(":scope > li").filter({ hasText: url });
+  // The list re-reads from the API once the address is added.
+  if (!(await row.waitFor({ timeout: 10000 }).then(() => true, () => false))) return note(page, where, "the new address is not listed");
+  if ((await page.content()).includes(secret)) return note(page, where, "the secret is still in the page after it was stored");
+  await row.getByRole("button", { name: "Send a test" }).click();
+  const said = await row.getByRole("status").waitFor({ timeout: 30000 }).then(() => row.getByRole("status").textContent(), () => null);
+  if (!said || !said.startsWith("Not delivered")) return note(page, where, `the test ping said ${JSON.stringify(said)}`);
+  await row.getByRole("button", { name: "Delete this webhook address" }).click();
+  await row.getByRole("button", { name: "Confirm: delete this webhook address" }).click();
+  const gone = await row.waitFor({ state: "detached", timeout: 10000 }).then(() => true, () => false);
+  if (!gone) return note(page, where, "the address was not deleted");
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -676,6 +716,7 @@ try {
   await checkDeciding(await last.newPage());
   await checkSuggesting(await last.newPage());
   await checkDailyMail(await last.newPage());
+  await checkWebhooks(await last.newPage());
   await last.close();
 } finally {
   await browser.close();
@@ -687,4 +728,4 @@ if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, a suggestion on it turned down, asked again and decided from, the daily mail's days and amount saved and kept, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, a suggestion on it turned down, asked again and decided from, the daily mail's days and amount saved and kept, a webhook address refused, added with its secret shown once, pinged and deleted, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
