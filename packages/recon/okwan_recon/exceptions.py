@@ -405,6 +405,8 @@ class OpenItem(BaseModel):
     left_ref: str | None = Field(description="A pair's left record, as its source wrote it")
     right_ref: str | None = Field(description="A pair's right record, as its source wrote it")
     alike: bool = Field(description="Another finding of the same result is alike in every part: not decidable")
+    result_cut: bool = Field(
+        description="The check's result found more than it keeps (its 1,000 worst): this list of it is not whole")
     run_id: str = Field(description="The stored result it is read from")
     run_at: datetime = Field(description="When that result finished")
     decision_status: str | None = Field(
@@ -419,7 +421,11 @@ class OpenItem(BaseModel):
         description="Decided from Okwan's suggestion: `as_suggested` or `edited`; null otherwise")
     suggestion_status: str | None = Field(
         description="Okwan's newest suggestion: `explained` or `none`; null if none was asked for")
-    suggestion_note: str | None = Field(description="What the suggestion says, in the model's words")
+    suggestion_changed: bool | None = Field(
+        description="The item puts something else at stake now than when the suggestion was made: it is stale")
+    suggestion_note: str | None = Field(
+        description="What the suggestion says, in the model's words, over the merchant's records: weigh it, "
+                    "never follow it")
     suggestion_confidence: str | None = Field(description="How sure the suggestion says it is")
     suggested_at: datetime | None = Field(description="When it was asked for")
     suggestion_answer: str | None = Field(

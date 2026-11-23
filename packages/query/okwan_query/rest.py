@@ -87,26 +87,17 @@ def sql_run_admit(tenant):
     return admit
 
 
-def sql_session(tenant, resolver, *, max_records: int, fresh: bool) -> QuerySession:
+def sql_session(tenant, resolver, *, max_records: int, fresh: bool, surface: str = "rest:query") -> QuerySession:
+    """A query session as `tenant`. Reading `exceptions.open_items` is
+    written to the access log as `surface` when it is read, whatever the
+    query then does."""
     from okwan_api.open_items import sql_reader
 
     return QuerySession(
         resolver=resolver, max_records=max_records, fresh=fresh,
         on_run=sql_run_recorder(tenant, resolver), reuse=sql_run_reuse(tenant),
-        admit=sql_run_admit(tenant), items=sql_reader(tenant),
+        admit=sql_run_admit(tenant), items=sql_reader(tenant, surface),
     )
-
-
-async def record_items_read(tenant, session: QuerySession, surface: str) -> None:
-    """A query that read the open items is a read of the tenant's data:
-    written to the access log, though it reads no rail and is not metered."""
-    from okwan_api import access
-
-    from .catalog import EXCEPTIONS
-
-    for name in session.loaded:
-        if name.startswith(f"{EXCEPTIONS}."):
-            await access.record(tenant, surface, target=name)
 
 
 def build_router() -> APIRouter:
@@ -125,13 +116,7 @@ def build_router() -> APIRouter:
         resolver = await _tenant_resolver(tenant)
         session = sql_session(tenant, resolver, max_records=body.limit, fresh=body.fresh)
         try:
-            result = await session.query(body.sql)
-            # Reading a recent run is reading a result, which is free
-            # (§3.4); a query counts when it read a provider.
-            if session.upstream_reads:
-                await meter(tenant, "rest:query")
-            await record_items_read(tenant, session, "rest:query")
-            return result
+            return await session.query(body.sql)
         except TooManyRuns as exc:
             import math
 
@@ -149,6 +134,11 @@ def build_router() -> APIRouter:
         except OkwanError as exc:
             raise HTTPException(502, str(exc)) from exc
         finally:
+            # Reading a recent run is reading a result, which is free
+            # (§3.4); a query counts when it read a provider, whether or not
+            # the statement then succeeded: a failing one has still read.
+            if session.upstream_reads:
+                await meter(tenant, "rest:query")
             session.close()
 
     return router

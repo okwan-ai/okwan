@@ -413,10 +413,12 @@ the MCP tool `okwan_open_items` (`okwan_api/open_items.py`). They read
 stored results, never a rail, and decide nothing: deciding stays in the
 dashboard and on admin routes. Reads are not metered; each is in the access
 log (`rest:exceptions`, `rest:query`/`mcp:query` naming
-`exceptions.open_items`, `mcp:open_items`), and an account may read 30
-times a minute across the three (429 past that). One read covers 20,000
-items or 2,000 merchants at most and says how many merchants it left out
+`exceptions.open_items`, `mcp:open_items`), and an account, its merchants'
+keys included, may read 30 times a minute across the three, one read at a
+time (429 past that, saying which). One read covers 20,000 items or 2,000
+merchants at most and says how many merchants it left out
 (`merchants_not_read`); reading one merchant by `merchant` covers the rest.
+`not_kept` counts findings a check found beyond the 1,000 its result keeps.
 
 ### Daily checks and their mail
 

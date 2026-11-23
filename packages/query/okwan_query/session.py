@@ -13,10 +13,12 @@ next query sees the upstream as it is then.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -99,8 +101,10 @@ class QuerySession:
         #: made when a query names `exceptions.open_items`; None where there
         #: is no caller to read for (the stdio server).
         self._items = items
-        #: Per `exceptions.*` table: merchants a read left out at its bound.
+        #: Per `exceptions.*` table: merchants a read left out at its bound,
+        #: and findings the checks' results found but did not keep.
         self.not_read: dict[str, int] = {}
+        self.not_kept: dict[str, int] = {}
         #: Per `recon.*` table: the run read, and whether it was reused.
         self.runs: dict[str, dict[str, Any]] = {}
         #: Reads that went upstream (connector tables, live runs). A query
@@ -180,14 +184,23 @@ class QuerySession:
         self._con.execute(f'CREATE SCHEMA IF NOT EXISTS "{table.connector}"')
         self._con.execute(table.ddl())
         if rows:
-            placeholders = ", ".join("?" for _ in table.columns)
-            self._con.executemany(
-                f'INSERT INTO "{table.connector}"."{table.resource}" '
-                f"VALUES ({placeholders})",
-                [self._coerce(table, r) for r in rows],
-            )
+            await asyncio.to_thread(self._insert, table, [self._coerce(table, r) for r in rows])
         self._loaded.add(table.qualified)
         return len(rows)
+
+    def _insert(self, table: Table, rows: list[tuple[Any, ...]]) -> None:
+        """Rows into a loaded table, run off the event loop. One statement
+        that unnests a list a column, which DuckDB takes some thirty times
+        faster than a row at a time; a row at a time only when a column's
+        values are not all one type, which a list of them cannot hold."""
+        target = f'"{table.connector}"."{table.resource}"'
+        columns = [list(c) for c in zip(*rows, strict=True)]
+        try:
+            select = ", ".join(f"unnest(?::{kind}[])" for _, kind in table.columns)
+            self._con.execute(f"INSERT INTO {target} SELECT {select}", columns)
+        except duckdb.Error:
+            placeholders = ", ".join("?" for _ in table.columns)
+            self._con.executemany(f"INSERT INTO {target} VALUES ({placeholders})", rows)
 
     async def _load_items(self, table: Table) -> int:
         """The caller's open items, from stored results, a merchant's worth
@@ -198,16 +211,16 @@ class QuerySession:
         reader = self._items()
         self._con.execute(f'CREATE SCHEMA IF NOT EXISTS "{table.connector}"')
         self._con.execute(table.ddl())
-        placeholders = ", ".join("?" for _ in table.columns)
         count = 0
-        async for batch in reader.batches():
-            if batch:
-                self._con.executemany(
-                    f'INSERT INTO "{table.connector}"."{table.resource}" VALUES ({placeholders})',
-                    [self._coerce(table, r) for r in batch])
-                count += len(batch)
+        async with aclosing(reader.batches()) as batches:
+            async for batch in batches:
+                if batch:
+                    await asyncio.to_thread(self._insert, table, [self._coerce(table, r) for r in batch])
+                    count += len(batch)
         if reader.merchants_not_read:
             self.not_read[table.qualified] = reader.merchants_not_read
+        if reader.not_kept:
+            self.not_kept[table.qualified] = reader.not_kept
         return count
 
     async def _run_reconciliation(self, table: Table) -> int:
@@ -289,9 +302,7 @@ class QuerySession:
             count = await self.load(table)
             loaded[table.qualified] = count
 
-        cursor = self._con.execute(sql)
-        columns = [d[0] for d in (cursor.description or [])]
-        rows = [dict(zip(columns, r)) for r in cursor.fetchall()]
+        columns, rows = await asyncio.to_thread(self._run_sql, sql)
         return {
             "columns": columns,
             "rows": rows,
@@ -301,7 +312,15 @@ class QuerySession:
             # A table read only part of what it covers: how many merchants
             # its bound left out (okwan_api.open_items).
             **({"merchants_not_read": self.not_read} if self.not_read else {}),
+            **({"not_kept": self.not_kept} if self.not_kept else {}),
         }
+
+    def _run_sql(self, sql: str) -> tuple[list[str], list[dict[str, Any]]]:
+        """The caller's statement, run off the event loop: a heavy one holds
+        a thread, never every other request."""
+        cursor = self._con.execute(sql)
+        columns = [d[0] for d in (cursor.description or [])]
+        return columns, [dict(zip(columns, r, strict=True)) for r in cursor.fetchall()]
 
     def close(self) -> None:
         self._con.close()
