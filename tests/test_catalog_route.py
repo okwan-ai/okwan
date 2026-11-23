@@ -20,8 +20,9 @@ def _listed() -> dict[str, dict]:
 def test_sql_tables_match_the_query_catalog():
     # The listing first: importing the app is what registers the connectors.
     listed = {name for c in _listed().values() for name in c["sql_tables"]}
-    # Reconciliation views (`recon.*`) belong to no connector: /v1/query/tables lists them.
-    served = {f"{t.connector}.{t.resource}" for t in catalog() if t.connector not in ("rail", "recon")}
+    # Reconciliation views (`recon.*`) and the open items (`exceptions.*`) belong to no
+    # connector: /v1/query/tables lists them.
+    served = {f"{t.connector}.{t.resource}" for t in catalog() if t.connector not in ("rail", "recon", "exceptions")}
     assert listed == served
 
 
