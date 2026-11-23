@@ -38,9 +38,11 @@ NO_TENANT_COLUMN = {"tenants", "signups", "operator_factors", "operator_actions"
 #: route: `support list` shows the operator every escalation.
 OPERATOR_READS = {"list_tickets", "get_ticket"}
 #: Maintenance across every tenant, as the login role, like deleting a
-#: tenant: the hourly sweeps delete expired imports and aged access rows,
-#: and read nothing back.
-MAINTENANCE = {"sweep_imports", "sweep_access", "sweep_checkouts"}
+#: tenant: the hourly sweeps delete expired imports, aged access rows and
+#: aged webhook events, and read nothing back. `webhook_due` reads which
+#: accounts have a delivery due, their ids and nothing of them; each
+#: account's deliveries are then claimed in its own scope.
+MAINTENANCE = {"sweep_imports", "sweep_access", "sweep_checkouts", "sweep_webhooks", "webhook_due"}
 
 
 # ── static: every query over tenant data enters a scope ────────────────
@@ -170,6 +172,11 @@ async def two(store):
         await store.set_notify(t.id, finding_emails=False)
         await store.claim_daily_check(t.id, now)
         await store.set_mail_told(t.id, {"at": now.isoformat(), "through": {f"{name}/told": now.isoformat()}})
+        await store.add_webhook_endpoint(t.id, url=f"https://hooks.{name.lower()}.example/okwan",
+                                         secret="whsec_" + "A" * 32, created_by="session", at=now)
+        await store.add_webhook_events(t.id, run.id, [{
+            "id": f"evt_{t.id[4:]}{'0' * 8}", "tenant_id": t.id, "type": "open_item.opened", "kind": "across",
+            "check_name": "rails", "item_key": f"key-{name}", "reads_files": False, "body": "{}"}], now)
         out.append(t)
     return out
 
@@ -319,6 +326,14 @@ def _insert(table: str, tenant_id: str) -> tuple:
                                  "idempotency_key, request_hash, created_at) VALUES ('dec_rls_probe_' || $1, "
                                  "1, $1, 'pair', 'batches_deposits', 'rlsprobe', 'assigned', $1, 'x', "
                                  "'session', 'run_x', 'rls-probe', 'h', $2)"), tenant_id, now),
+        "webhook_endpoints": (("INSERT INTO webhook_endpoints (id, tenant_id, url, ciphertext, wrapped_key, "
+                               "key_id, hint, created_at, created_by) VALUES ('whe_rls_probe', $1, "
+                               "'https://x.example/', '\\x00', '\\x00', 'k', 'whsec_x', $2, 'session')"),
+                              tenant_id, now),
+        "webhook_events": (("INSERT INTO webhook_events (id, tenant_id, merchant_id, type, created_at, body) "
+                            "VALUES ('evt_rls_probe', $1, $1, 'open_item.opened', $2, '{}')"), tenant_id, now),
+        "webhook_deliveries": (("INSERT INTO webhook_deliveries (endpoint_id, event_id, tenant_id, event_at) "
+                                "VALUES ('whe_rls_probe', 'evt_rls_probe', $1, $2)"), tenant_id, now),
         "exception_suggestions": (("INSERT INTO exception_suggestions (id, tenant_id, kind, name, item_key, "
                                    "terms, run_id, reads_files, status, note, evidence, confidence, model, "
                                    "actor_tenant_id, actor_name, credential, created_at) VALUES "

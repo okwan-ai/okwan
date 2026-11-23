@@ -473,11 +473,10 @@ def build_router() -> APIRouter:
             raise HTTPException(422, "this note is one of Okwan's suggestions on this item, word for word: decide "
                                      "from the suggestion, so the record says whose words they are, or write it in "
                                      "your own words")
-        if body.status == "assigned" and note is None:
-            now_on = (await store.current_decisions([(tenant_id, key)])).get((tenant_id, kind, check, key))
-            if holds(now_on, item):
-                raise HTTPException(422, "this item is closed: say why it is open again (note) as you give it "
-                                         "to someone")
+        now_on = (await store.current_decisions([(tenant_id, key)])).get((tenant_id, kind, check, key))
+        if body.status == "assigned" and note is None and holds(now_on, item):
+            raise HTTPException(422, "this item is closed: say why it is open again (note) as you give it "
+                                     "to someone")
         # The account's allowance, its merchants together, is spent only on a
         # decision about to be recorded.
         enforce(request, (DECIDE_TENANT, await _root(store, tenant_id)))
@@ -503,6 +502,14 @@ def build_router() -> APIRouter:
             raise HTTPException(409, "this suggestion was already answered: decided from, or turned down") from None
         if replayed:
             response.status_code = 200
+        else:
+            # Closed or opened again: said to the account's webhook addresses.
+            from .webhooks import after_decision
+
+            target = await store.get_tenant(tenant_id)
+            if target is not None:
+                await after_decision(target, g, key, made, holds(now_on, item),
+                                     bool(g.reads_files) or check in file_check_names())
         return {"decision": decision_dict(made), "replayed": replayed}
 
     @router.get("/{tenant_id}/exceptions/{kind}/{check}/{key}/decisions")

@@ -131,6 +131,17 @@ const parts: Part[] = [
             do not tell you twice, and nothing about any item.
           </li>
           <li>
+            <strong>Webhooks.</strong> If you add a webhook address, Okwan sends it an event each time one of your
+            open items opens, has been open the number of days you choose, is cleared by a later run, or is closed
+            or opened again by someone in your account. An event is the item as the API lists it: its references,
+            amounts and dates, and the newest decision and suggestion on it, a note included. Okwan sends only to
+            the HTTPS address you gave, signed with a secret that only you and Okwan hold and that we keep
+            encrypted. We keep each event as it was sent, and for each delivery when it was tried and the status
+            code your address answered (never what it said), for 30 days, so you can read what you missed; an
+            event about a check that read files you import is deleted with any of that merchant&rsquo;s files.
+            What happens to an event once your address has it is up to you.
+          </li>
+          <li>
             <strong>Access records.</strong> Each time your data is read, through the API, the MCP server or the
             dashboard, we record when, which API key (by its short prefix) or that it was a dashboard session, the IP
             address and network it came from, and what was read: the address requested, or the check that ran. Never
@@ -295,6 +306,8 @@ const parts: Part[] = [
             ["Usage counts", "As long as your account exists"],
             ["Access records: when, the API key's prefix, the IP address and network, what was read", "90 days, then deleted within the hour; at once with your account"],
             ["Alerts about how your keys were used", "400 days, or until your account is deleted"],
+            ["Webhook addresses, and the secret each event is signed with (encrypted)", "Until you delete the address or your account"],
+            ["Webhook events as they were sent, and for each delivery when it was tried and the status code it got", "30 days, then deleted within the hour; at once with your account. An event about a check that read files you imported is deleted with any of that merchant's files"],
             ["Your choices about daily checks and their email, the token in the unsubscribe link, when each merchant was last checked, and when we last emailed you about it and which results that covered", "As long as your account exists"],
             ["Support conversations", "30 days after the last message"],
             ["Support tickets and our replies", "As long as your account exists"],

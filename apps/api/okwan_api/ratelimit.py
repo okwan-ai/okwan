@@ -70,6 +70,13 @@ EXCEPTIONS_TENANT = Rule("exceptions:tenant", 60, 60)
 #: Reads of the open items as data (REST, SQL, MCP) by one account: each reads
 #: stored rows of every merchant it can open.
 OPEN_ITEMS_TENANT = Rule("open-items:tenant", 30, 60)
+#: Webhook addresses added, deleted or turned back on by an account; and
+#: pings sent on demand, each a request Okwan makes to an address the
+#: account chose.
+WEBHOOK_CHANGE = Rule("webhook:change", 20, 3600)
+WEBHOOK_TEST = Rule("webhook:test", 10, 600)
+#: Reads of an account's events (GET /v1/events).
+EVENTS_TENANT = Rule("events:tenant", 60, 60)
 #: Decisions on open items. Each caller (a session's or a key's account) may
 #: send 300 an hour, recorded or not; an account and its merchants together
 #: record at most 1,000 an hour, charged only for a decision about to be

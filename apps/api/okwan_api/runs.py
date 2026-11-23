@@ -60,7 +60,8 @@ async def record_run(
                 if kind == "across"
                 else result.trimmed_rows(*ref_paths(spec), limit=MAX_ROWS)
             )
-            previous = await previous_rows(tenant.id, kind, spec.name)
+            before = await previous_run(tenant.id, kind, spec.name)
+            previous = before.rows if before is not None else None
             rows = await asyncio.to_thread(carry, tenant.id, spec.name, kind, rows, previous, started)
             closed = await closed_keys(tenant.id, kind, spec.name, rows)
             summary = await asyncio.to_thread(
@@ -68,6 +69,7 @@ async def record_run(
             summary["check_version"] = check_version(spec)
             status, err = "ok", None
         else:
+            before = None
             status, summary, rows = "failed", None, None
             secrets = secrets_of(resolver) if resolver is not None else []
             err = scrub(str(error), secrets)
@@ -76,6 +78,12 @@ async def record_run(
             started_at=started, finished_at=run_clock(), summary=summary, rows=rows,
             error=err, reads_files=reads_files(spec), files=files_read(spec, result),
         )
+        if status == "ok":
+            # What changed since the check's previous good result, for the
+            # account's webhook addresses, if it has any. Never fails the run.
+            from .webhooks import after_run
+
+            await after_run(tenant, rec, before)
         return rec.id
     except FilesGone:
         # Not a fault: a file the run read was deleted, or expired, while it
@@ -121,17 +129,17 @@ async def closed_keys(tenant_id: str, kind: str, name: str, rows) -> set[str]:
             if t == tenant_id and kd == kind and n == name and k in items and holds(d, items[k])}
 
 
-async def previous_rows(tenant_id: str, kind: str, name: str) -> list | None:
-    """The rows of the check's newest stored run that finished well, by when
-    its data was read, or None. However many failed runs came after it, the
-    times its findings were first seen carry on."""
+async def previous_run(tenant_id: str, kind: str, name: str) -> RunRecord | None:
+    """The check's newest stored run that finished well, by when its data was
+    read, with its rows, or None. However many failed runs came after it,
+    the times its findings were first seen carry on; and what changed since
+    it is what the webhooks say."""
     try:
         good = await get_store().newest_runs([tenant_id], kind, name, ok_only=True, with_rows=True)
     except Exception:  # the run is still stored; its findings start from now
         logger.warning("previous run of %s not read for %s", name, tenant_id, exc_info=True)
         return None
-    rec = good.get(tenant_id)
-    return rec.rows if rec is not None else None
+    return good.get(tenant_id)
 
 
 def check_version(spec) -> str:

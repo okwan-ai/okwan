@@ -54,6 +54,18 @@ STATIC_TAGS: list[tuple[str, str, str]] = [
       "suggested. Any API key reads them, a read-only one included; deciding is a person's, in the "
       "dashboard. The same rows are the SQL table `exceptions.open_items` and the MCP tool "
       "`okwan_open_items`. Read from stored results: not metered.")),
+    ("webhooks", "Webhooks",
+     ("Okwan POSTs an event to your address when an open item is opened, has been open your number "
+      "of days, is cleared by a later run, or is closed or opened again by a person. Each event's "
+      "`data` is the open item as `GET /v1/exceptions` answers it, signed as Standard Webhooks signs "
+      "(`webhook-id`, `webhook-timestamp`, `webhook-signature`) with the address's secret, shown once "
+      "when you add it. HTTPS on port 443 to a public host only; a delivery without a 2xx is tried "
+      "again for three days, and an address that fails every delivery for three days is turned off "
+      "and you are mailed. Takes an admin key or a dashboard session.")),
+    ("events", "Events",
+     ("The events Okwan made for your webhook addresses in the last 30 days, oldest first, with what "
+      "became of each delivery: read what an address missed. Any API key, a read-only one included. "
+      "Not metered.")),
     ("query", "SQL",
      "Read-only SQL over the tables the connectors generate. One request per statement."),
     ("tenants", "Merchants & keys",
@@ -182,7 +194,7 @@ def tags() -> list[dict[str, Any]]:
 def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     connector_tags = [t["name"] for t in tag_list if t["name"] not in {s[0] for s in STATIC_TAGS}]
     return [
-        {"name": "Start here", "tags": ["sample", "reconciliations", "exceptions"]},
+        {"name": "Start here", "tags": ["sample", "reconciliations", "exceptions", "webhooks", "events"]},
         {"name": "Connectors", "tags": connector_tags},
         {"name": "SQL", "tags": ["query"]},
         {"name": "Your workspace", "tags": ["tenants", "imports", "accounts", "support"]},
@@ -195,6 +207,12 @@ def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
 TITLES: dict[tuple[str, str], str] = {
     ("get", "/v1/connectors"): "List connectors",
     ("get", "/v1/exceptions"): "List open items",
+    ("get", "/v1/events"): "List events",
+    ("get", "/v1/webhooks"): "List webhook addresses",
+    ("post", "/v1/webhooks"): "Add a webhook address",
+    ("delete", "/v1/webhooks/{endpoint_id}"): "Delete a webhook address",
+    ("post", "/v1/webhooks/{endpoint_id}/enable"): "Turn a webhook address back on",
+    ("post", "/v1/webhooks/{endpoint_id}/test"): "Send a test ping",
     ("get", "/v1/reconciliations"): "List checks",
     ("get", "/v1/reconciliations/across/{name}"): "Run the check",
     ("get", "/v1/sample/reconciliations/across/{name}"): "Run the sample check",
@@ -264,7 +282,8 @@ def write_operations() -> set[str]:
 
 
 def build_openapi(app: FastAPI) -> dict[str, Any]:
-    spec = get_openapi(title=app.title, version=app.version, description=intro(), routes=app.routes)
+    spec = get_openapi(title=app.title, version=app.version, description=intro(), routes=app.routes,
+                       webhooks=app.webhooks.routes)
     spec["info"]["x-logo"] = {"altText": "Okwan"}
     tag_list = tags()
     spec["tags"] = tag_list
