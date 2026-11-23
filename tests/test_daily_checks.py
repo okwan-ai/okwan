@@ -319,7 +319,7 @@ async def test_the_mail_names_no_reference_customer_or_secret(world):
     await world.merchant("Kofi's Store")
     await schedule.run_due(NOW)
     text = world.outbox.sent[0]["text"] + world.outbox.sent[0]["subject"]
-    for order in ("#2043", "#2046", "#2047", "2043", "SAMPLE-PP", "ch_sample"):
+    for order in ("#2043", "#2046", "#2047", "SAMPLE-PP", "ch_sample"):
         assert order not in text, f"the mail names {order}"
     for secret in SECRETS.values():
         assert secret not in text
@@ -546,8 +546,12 @@ async def test_what_the_mail_keeps_is_item_keys_and_no_reference(world):
     kofi = await world.merchant("Kofi's Store")
     await schedule.run_due(NOW)
     marks = (await world.store.mail_told([kofi.id]))[kofi.id]
-    assert len(marks) == 3 and all(re.fullmatch(r"n:[0-9a-f]{24}", m) for m in marks)
-    assert not any(ref in "".join(marks) for ref in ("2043", "2046", "2047"))
+    assert len(marks) == 3 and all(re.fullmatch(r"n:[0-9a-f]{24}", m) for m in marks), "a hash, not a reference"
+    got = await schedule.open_items_of(world.store, [kofi], NOW)
+    assert marks == {f"n:{i['key']}" for i in got[kofi.id].items}, "each one an open item's key"
+    # A key is hex, so a run of digits like "2043" may turn up in one by chance:
+    # what must not is the reference as the rail wrote it.
+    assert not any("#20" in m for m in marks)
     for day in range(1, 8):
         await schedule.run_due(NOW + timedelta(days=day, minutes=day))
     marks = (await world.store.mail_told([kofi.id]))[kofi.id]
