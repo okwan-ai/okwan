@@ -25,6 +25,7 @@ passes only when the attack fails.
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
 from datetime import timedelta
 
@@ -53,12 +54,17 @@ async def _ticking(coro):
             gaps.append(now - last)
             last = now
 
+    # As the API does once it has started (main.py): what lives as long as the
+    # process is frozen, so a collection walks only what this read makes.
+    gc.collect()
+    gc.freeze()
     t = asyncio.create_task(tick())
     try:
         out = await coro
     finally:
         done = True
         await t
+        gc.unfreeze()
     return out, max(gaps)
 
 

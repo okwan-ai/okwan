@@ -588,9 +588,12 @@ class PostgresStore:
                 list(tenant_ids),
             )
         if with_rows:
-            # Thousands of stored rows a run: decoded off the event loop, so
-            # every other request goes on meanwhile.
-            return await asyncio.to_thread(lambda: [_run(r) for r in rows])
+            # Up to a thousand stored rows a run: each run decoded off the
+            # event loop on its own, so the loop runs between them. Decoded
+            # all at once, one thread held the interpreter for the whole of
+            # it, and on two cores every other request waited (0.2 s for
+            # fifteen runs).
+            return [await asyncio.to_thread(_run, r) for r in rows]
         return [_run(r) for r in rows]
 
     # ── decisions on open items ─────────────────────────────────────

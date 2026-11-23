@@ -11,6 +11,7 @@ everything flows from the SDK definition.
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
 import os
 from contextlib import asynccontextmanager
@@ -107,6 +108,12 @@ async def lifespan(_: FastAPI):
     connected merchant (schedule.py).
     """
     await open_store()
+    # Everything made while starting (the app, its routes, the connectors'
+    # declarations, the drivers) lives as long as the process. Frozen, a full
+    # collection no longer walks it: on Python 3.12 one took 130-140 ms and
+    # held every request while it ran (tests/test_daily_mail_attacks.py).
+    gc.collect()
+    gc.freeze()
     sweeps = [asyncio.create_task(imports_sweeper()), asyncio.create_task(access_sweeper()),
               asyncio.create_task(schedule_sweeper()), asyncio.create_task(billing_sweeper()),
               asyncio.create_task(disputes_sweeper())]
