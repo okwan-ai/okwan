@@ -587,6 +587,10 @@ class PostgresStore:
                 "ORDER BY tenant_id, kind, name, started_at DESC, id DESC",
                 list(tenant_ids),
             )
+        if with_rows:
+            # Thousands of stored rows a run: decoded off the event loop, so
+            # every other request goes on meanwhile.
+            return await asyncio.to_thread(lambda: [_run(r) for r in rows])
         return [_run(r) for r in rows]
 
     # ── decisions on open items ─────────────────────────────────────
