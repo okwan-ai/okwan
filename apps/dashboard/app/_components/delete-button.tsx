@@ -19,7 +19,17 @@ export function DeleteButton({ url, what, confirmLabel = "Delete" }: { url: stri
     if (!armed) return setArmed(true);
     setBusy(true);
     setError(null);
-    const res = await fetch(url, { method: "DELETE" });
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "DELETE" });
+    } catch {
+      // It may have been deleted all the same: the page re-reads to say.
+      setBusy(false);
+      setArmed(false);
+      setError("The answer did not arrive; the page now shows whether it was deleted.");
+      router.refresh();
+      return;
+    }
     const data = await res.json().catch(() => ({}));
     setBusy(false);
     setArmed(false);

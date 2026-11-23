@@ -163,6 +163,18 @@ def check_url(url: str) -> tuple[str, str]:
         raise BadAddress(f"an address is at most {URL_MAX} characters")
     if any(c.isspace() or not c.isprintable() for c in url):
         raise BadAddress("an address has no spaces or characters that cannot be seen")
+    # Beyond the host, an address is ASCII, as a URI is (RFC 3986): what is
+    # not is written percent-encoded. A host in another script is kept as its
+    # punycode below. So no character that draws as nothing, or as another,
+    # or that stacks over the page, reaches a person reading the address.
+    try:
+        rest = urlsplit(url)
+        beyond_host = rest.path + ("?" + rest.query if rest.query else "")
+    except ValueError:
+        raise BadAddress("this is not an address Okwan can read") from None
+    if not beyond_host.isascii():
+        raise BadAddress("write the path and query of an address in ASCII: percent-encode anything else "
+                         "(%C3%A9 for é)")
     try:
         parts = urlsplit(url)
         port = parts.port

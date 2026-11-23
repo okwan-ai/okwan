@@ -19,6 +19,11 @@ dashboard session's own run, so every column of Settings › Access log fills.
 Suggestions on open items are answered by a scripted model that cites the
 item itself (SeededModel), so the Decide panel's suggestion renders and can
 be used or turned down; no model is called.
+The workspace has three webhook addresses, one delivered to, one failing
+and one turned off, so each state of Settings › Webhooks renders. Names
+ending `.example` stand in for public hosts when an address is added
+(`layout_dns`): they resolve to a documentation address no packet reaches,
+so a test ping fails as an unreachable address does.
 Dummy credentials; nothing leaves the machine; nothing is written to disk.
 
     python scripts/ui_server.py    # listens on 127.0.0.1:8000, prints "seeded"
@@ -34,7 +39,7 @@ from types import SimpleNamespace
 
 import httpx
 import uvicorn
-from okwan_api import support
+from okwan_api import support, webhooks
 from okwan_api.auth import get_store
 from okwan_api.main import app
 from okwan_recon import across
@@ -151,6 +156,41 @@ async def seed() -> None:
         r.raise_for_status()
     await store.delete_session(token_hash)
     await seed_access(store, kofi.id)
+    await seed_webhooks(store, isv.id)
+
+
+async def seed_webhooks(store, account_id: str) -> None:
+    """Three addresses: one a delivery reached, one failing for two hours
+    (its next try a day away), one Okwan turned off. Each event is made
+    here, not by a run, so the checks' runs above keep their own."""
+    now = datetime.now(UTC)
+    urls = ["https://hooks.acme-isv.example/okwan/events",
+            ("https://ops-notifications.kofis-store-holdings.example/api/v2/integrations/okwan/webhooks/receive"
+             "?team=finance-operations&region=west-africa&format=standard-webhooks"),
+            "https://old-receiver.acme-isv.example/hooks"]
+    made = [await store.add_webhook_endpoint(account_id, url=u, secret=webhooks.new_secret(), created_by="session",
+                                             at=now - timedelta(days=3 - n)) for n, u in enumerate(urls)]
+    await store.disable_webhook_endpoint(account_id, made[2].id, now - timedelta(days=1),
+                                         "every delivery failed for three days (last: timed out)")
+    events = [{"id": f"evt_{n:024x}", "tenant_id": account_id, "type": "open_item.opened", "kind": "pair",
+               "check_name": "batches_deposits", "item_key": f"seed{n}", "reads_files": True,
+               "body": webhooks.envelope(f"evt_{n:024x}", "open_item.opened", account_id, now, {})} for n in (1, 2)]
+    await store.add_webhook_events(account_id, None, events, now - timedelta(hours=2))
+    await store.webhook_delivered(account_id, made[0].id, events[0]["id"], at=now - timedelta(hours=2), status=200)
+    await store.webhook_delivered(account_id, made[0].id, events[1]["id"], at=now - timedelta(hours=2), status=200)
+    await store.webhook_delivered(account_id, made[1].id, events[0]["id"], at=now - timedelta(hours=2), status=200)
+    await store.webhook_failed(account_id, made[1].id, events[1]["id"], at=now - timedelta(hours=2), status=503,
+                               error="answered 503", next_at=now + timedelta(days=1), hold_until=None)
+
+
+_real_resolve = webhooks.resolve_public
+
+
+async def layout_dns(host: str, port: int, **kw) -> str:
+    """A name ending `.example` stands in for a public host: it resolves to
+    192.0.2.10 (TEST-NET-1), which no packet reaches. Every other name goes
+    through the API's own check."""
+    return "192.0.2.10" if host.endswith(".example") else await _real_resolve(host, port, **kw)
 
 
 async def seed_access(store, tenant_id: str) -> None:
@@ -204,6 +244,7 @@ class SeededModel:
 
 async def main() -> None:
     support.set_client(SeededModel())
+    webhooks.resolve_public = layout_dns
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning"))
     serving = asyncio.create_task(server.serve())
     while not server.started:

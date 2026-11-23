@@ -14,11 +14,15 @@ export function fail(detail: string, status: number) {
  *  a few hundred bytes. A route that takes a file passes its own limit. */
 export const BODY_MAX = 64 * 1024;
 
-/** Guard for every mutating handler: same-origin, JSON body or 400, and no
- *  bigger than `max` (413), counted as it arrives: a body is never read
- *  whole before it is known to fit, signed in or not. */
+/** Guard for every mutating handler: same-origin, declared JSON (415) and
+ *  JSON (400), and no bigger than `max` (413), counted as it arrives: a body
+ *  is never read whole before it is known to fit, signed in or not. */
 export async function readBody<T>(req: Request, max: number = BODY_MAX): Promise<T | Response> {
   if (!sameOrigin(req)) return fail("cross-origin request refused", 403);
+  // JSON only, declared as such: a form or a text/plain body (what a page
+  // elsewhere can send without asking first) is refused before it is read.
+  const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (type !== "application/json") return fail("send the body as application/json", 415);
   const declared = Number(req.headers.get("content-length") ?? "0");
   if (!Number.isFinite(declared) || declared > max) return fail("the request is too large", 413);
   const reader = req.body?.getReader();

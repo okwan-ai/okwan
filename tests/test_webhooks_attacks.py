@@ -14,6 +14,15 @@ F3  Every account's deliveries shared sixteen places: sixteen slow
     addresses, of a few accounts, held every other account's events. An
     account now sends to two addresses at once at most, an account with
     nothing being sent goes first, and an address's turn ends.
+
+And the attacker's pass on Settings › Webhooks (393ae93), whose other
+findings the layout check keeps (apps/dashboard/scripts/layout-check.mjs,
+`checkWebhooks`):
+
+T2  An address could hold characters that draw as nothing (U+034F and
+    others Python calls printable), so two addresses looked the same.
+T3  Or combining marks that stack over the whole page.
+    Beyond its host, an address is ASCII now: anything else percent-encoded.
 """
 from __future__ import annotations
 
@@ -198,3 +207,33 @@ async def test_f3_an_addresses_turn_ends_and_the_rest_goes_back(world, receiver,
             break
         total += await wh.deliver_due()
     assert total == 8
+
+
+# ── the tab's pass: what an address may hold ───────────────────────────
+
+INVISIBLE = ["\u034f", "\ufe0f", "\u17b4", "\u115f", "\u1160", "\u3164", "\uffa0", "\u2800", "\U000e0100"]
+
+
+@pytest.mark.parametrize("mark", INVISIBLE)
+def test_t2_an_address_with_a_character_that_draws_as_nothing_is_refused(mark):
+    with pytest.raises(wh.BadAddress, match="ASCII"):
+        wh.check_url(f"https://hooks.acme-isv.example/okwan/events{mark}")
+
+
+def test_t3_an_address_that_stacks_marks_is_refused():
+    with pytest.raises(wh.BadAddress, match="ASCII"):
+        wh.check_url("https://rt21-e3.example/a" + "\u0e49" * 2015)
+
+
+def test_t2_an_address_written_as_ascii_is_kept_as_written():
+    url = "https://hooks.example.com/caf%C3%A9/events?team=%E2%9C%93"
+    assert wh.check_url(url) == (url, "hooks.example.com")
+    # A host in another script is kept as its punycode, as before.
+    assert wh.check_url("https://bücher.example/x")[0] == "https://xn--bcher-kva.example/x"
+
+
+async def test_t2_the_api_refuses_it_in_words(world):
+    r = await world.client.post("/v1/webhooks", headers=data._auth(world.admin["acme"]),
+                                json={"url": "https://hooks.acme-isv.example/okwan/events\u034f"})
+    assert r.status_code == 422 and "ASCII" in r.text
+
