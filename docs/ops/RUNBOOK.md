@@ -440,7 +440,9 @@ process. What to look at when a customer says events stopped:
    until the next try.
 3. `POST /v1/webhooks/{id}/test` sends a signed ping now and says what came
    back. "refused" means the host resolves to an address that is not
-   public: Okwan does not send there, whatever the customer says.
+   public (an IPv6 form of a private IPv4 address included): Okwan does not
+   send there, whatever the customer says, and `OKWAN_EGRESS_ALLOW`, the
+   database connector's exceptions, does not apply to webhooks.
 4. The log names an address by its id (`webhook … turned off`); nothing
    of an event is logged.
 

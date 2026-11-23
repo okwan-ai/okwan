@@ -118,29 +118,37 @@ async def test_f3_slow_addresses_of_other_accounts_do_not_hold_up_an_account_wit
 
 
 async def test_f3_when_places_are_short_an_account_with_nothing_sending_goes_first(receiver, monkeypatch):
+    """Two places. A busy account with three addresses takes both; another
+    account's event arrives. When the first of the busy account's queues
+    ends, the place goes to the other account, not to the busy account's
+    third address, which was there first."""
     monkeypatch.setattr(wh, "SENDING_AT_ONCE", 2)
     store = MemoryStore(EnvMasterKey(new_key()))
     data.set_store(store)
     at = datetime.now(UTC)
-    receiver.slow["/slow"] = 1.0
-    slow = await store.create_tenant("Slow")
-    for j in range(2):
-        await store.add_webhook_endpoint(slow.id, url=f"https://{HOST}:{receiver.port}/slow{j}",
+    receiver.slow.update({"/slow0": 0.2, "/slow1": 5.0, "/slow2": 0.2})
+    busy = await store.create_tenant("Busy")
+    for j in range(3):
+        await store.add_webhook_endpoint(busy.id, url=f"https://{HOST}:{receiver.port}/slow{j}",
                                          secret=wh.new_secret(), created_by="s", at=at)
-    await _run(slow, [(f"B{i}", i, "2026-11-09") for i in range(30)], T0)
-    await wh.deliver_due(at + timedelta(seconds=1), wait=False)   # both places: the slow account
+    await _run(busy, [(f"B{i}", i, "2026-11-09") for i in range(10)], T0)
+    await wh.deliver_due(at + timedelta(seconds=1), wait=False)
     victim = await store.create_tenant("Victim")
     await store.add_webhook_endpoint(victim.id, url=f"https://{HOST}:{receiver.port}/fast",
                                      secret=wh.new_secret(), created_by="s", at=at)
     await _run(victim, [("V1", 1, "2026-11-09")], T0)
-    # A place comes free after one slow answer; the round gives it to the victim,
-    # though the slow account has deliveries due before the victim's.
     started = time.monotonic()
-    while not any(r["path"] == "/fast" for r in receiver.requests) and time.monotonic() - started < 15:
-        await wh.deliver_due(at + timedelta(minutes=1), wait=False)
-        await asyncio.sleep(0.1)
-    assert any(r["path"] == "/fast" for r in receiver.requests)
-    await asyncio.gather(*[task for _, task in wh._sending.values()])
+    try:
+        while not any(r["path"] == "/fast" for r in receiver.requests) and time.monotonic() - started < 20:
+            await wh.deliver_due(at + timedelta(minutes=1), wait=False)
+            await asyncio.sleep(0.05)
+        paths = [r["path"] for r in receiver.requests]
+        assert "/fast" in paths
+        assert "/slow2" not in paths[:paths.index("/fast")], "the busy account's third address went first"
+    finally:
+        for value in list(wh._sending.values()):
+            task = value[1] if isinstance(value, tuple) else value
+            task.cancel()
 
 
 async def test_f3_an_addresses_turn_ends_and_the_rest_goes_back(world, receiver, monkeypatch):
