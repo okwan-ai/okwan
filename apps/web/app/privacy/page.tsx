@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { COMPANY, Facts, LegalPage, Mail, type Part } from "../_components/legal";
+import { ADDRESS, COMPANY, Facts, LegalPage, Mail, type Part } from "../_components/legal";
 
 export const metadata: Metadata = {
   title: "Privacy Policy — Okwan",
@@ -20,7 +20,8 @@ const parts: Part[] = [
         <p>
           Okwan is operated by {COMPANY}, a Wyoming limited liability company in the United States
           (&ldquo;Okwan&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;). This policy covers the website at okwan.ai,
-          the dashboard at app.okwan.ai, and the API and hosted MCP server at api.okwan.ai.
+          the dashboard at app.okwan.ai, and the API and hosted MCP server at api.okwan.ai. Our address is{" "}
+          {ADDRESS}, and our email is <Mail />.
         </p>
         <ul>
           <li>
@@ -397,7 +398,7 @@ const parts: Part[] = [
     title: "Contact",
     body: (
       <p>
-        {COMPANY}, Wyoming, United States. Email <Mail /> for any question about privacy, any request about your
+        {COMPANY}, {ADDRESS}. Email <Mail /> for any question about privacy, any request about your
         information, or to report a security problem.
       </p>
     ),
@@ -408,7 +409,7 @@ export default function Privacy() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="November 23, 2026"
+      updated="November 24, 2026"
       intro={
         <>
           <p>What Okwan collects, why, who it goes to, how long we keep it, and the choices you have. In short:</p>

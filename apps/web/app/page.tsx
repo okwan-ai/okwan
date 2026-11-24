@@ -2,6 +2,7 @@
    and the only motion is CSS, which prefers-reduced-motion turns off. */
 
 import { OkwanLogo, OkwanMark, Wrap } from "./_components/brand";
+import { CompanyDetails } from "./_components/legal";
 
 const GITHUB = "https://github.com/okwan-ai/okwan";
 const API_DOCS = "https://api.okwan.ai/docs";
@@ -675,8 +676,9 @@ function Footer() {
           </div>
         ))}
       </Wrap>
-      <Wrap className="border-t border-night-line py-6 text-[13px]">
+      <Wrap className="space-y-2 border-t border-night-line py-6 text-[13px]">
         <p>© 2026 Global Tech Startup LLC</p>
+        <CompanyDetails />
       </Wrap>
     </footer>
   );

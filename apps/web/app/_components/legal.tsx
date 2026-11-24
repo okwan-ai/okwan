@@ -4,7 +4,42 @@ import { OkwanLogo, Wrap } from "./brand";
 
 export const COMPANY = "Global Tech Startup LLC";
 export const CONTACT_EMAIL = "info@globaltechstartup.com";
+/** The company's business address, the one address the site publishes. */
+export const ADDRESS = "2232 Dell Range Blvd, Suite 245, Cheyenne, WY 82009, USA";
+export const COMPANY_SITE = "https://globaltechstartup.com";
 export const UPDATED = "November 4, 2026";
+
+/** The company, its address and its email, as the footer of every page
+    shows them, with the link to the company's own site. */
+export function CompanyDetails() {
+  return (
+    <div className="space-y-2">
+      <address className="not-italic leading-relaxed">
+        {COMPANY}<br />
+        {ADDRESS}<br />
+        <a className="hover:text-white" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+      </address>
+      <p><a className="hover:text-white" href={COMPANY_SITE}>A product of {COMPANY}</a></p>
+    </div>
+  );
+}
+
+/** The company as schema.org describes an organization, for the site's head. */
+export const ORGANIZATION = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: COMPANY,
+  url: COMPANY_SITE,
+  email: CONTACT_EMAIL,
+  address: {
+    "@type": "PostalAddress",
+    streetAddress: "2232 Dell Range Blvd, Suite 245",
+    addressLocality: "Cheyenne",
+    addressRegion: "WY",
+    postalCode: "82009",
+    addressCountry: "US",
+  },
+};
 
 export type Part = { id: string; title: string; body: React.ReactNode };
 
@@ -52,8 +87,11 @@ export function LegalPage({ title, intro, parts, updated = UPDATED }: { title: s
         </Wrap>
       </main>
       <footer className="border-t border-night-line bg-night text-night-soft">
-        <Wrap className="flex flex-wrap items-center justify-between gap-4 py-8 text-[14px]">
-          <p>© 2026 {COMPANY}</p>
+        <Wrap className="flex flex-wrap items-start justify-between gap-4 py-8 text-[14px]">
+          <div className="space-y-2">
+            <p>© 2026 {COMPANY}</p>
+            <CompanyDetails />
+          </div>
           <nav className="flex flex-wrap gap-x-6 gap-y-2" aria-label="Footer">
             <a className="hover:text-white" href="/">Home</a>
             <a className="hover:text-white" href="/privacy">Privacy</a>

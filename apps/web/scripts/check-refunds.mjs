@@ -33,7 +33,9 @@ const policy = JSON.parse(readFileSync(new URL("../app/refunds/policy.json", imp
 /* The page's frame: the words around <main> on every legal page
    (app/_components/legal.tsx). If the navigation changes, change it here. */
 const ABOVE = "Privacy Terms Refunds Security";
-const BELOW = "© 2026 Global Tech Startup LLC Home Privacy Terms Refunds Security Contact";
+const BELOW =
+  "© 2026 Global Tech Startup LLC Global Tech Startup LLC 2232 Dell Range Blvd, Suite 245, Cheyenne, WY 82009, USA " +
+  "info@globaltechstartup.com A product of Global Tech Startup LLC Home Privacy Terms Refunds Security Contact";
 
 const LINK = /\[([^\]]+)\]\(([^)]+)\)/g;
 const plain = (line) => line.replace(LINK, "$1");
