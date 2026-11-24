@@ -75,6 +75,8 @@ OPEN_ITEMS_TENANT = Rule("open-items:tenant", 30, 60)
 #: account chose.
 WEBHOOK_CHANGE = Rule("webhook:change", 20, 3600)
 WEBHOOK_TEST = Rule("webhook:test", 10, 600)
+#: An account's sandbox made, and its test keys issued.
+SANDBOX_CHANGE = Rule("sandbox:change", 20, 3600)
 #: Reads of an account's events (GET /v1/events).
 EVENTS_TENANT = Rule("events:tenant", 60, 60)
 #: Decisions on open items. Each caller (a session's or a key's account) may

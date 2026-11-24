@@ -281,6 +281,8 @@ async def run_due(now: datetime | None = None) -> Round:
     accounts: list[_Account] = []
     mailing: list[_Account] = []
     for root in under.get(None, []):
+        if root.sandbox:
+            continue  # a sandbox has no daily check and no mail
         settings = await store.get_notify(root.id)
         members = _subtree(root, under)
         # The mail is about the open items, whatever ran the checks behind

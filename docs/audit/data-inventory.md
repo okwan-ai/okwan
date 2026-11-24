@@ -7,7 +7,7 @@ and what it holds only for the length of a request.
 
 | Table | Holds | Protection | Kept |
 |---|---|---|---|
-| `tenants` | Id, name (a signup's email address for self-serve accounts), parent, the API version its requests are answered in | Identity table: login role only | Until deleted by the operator; children cascade |
+| `tenants` | Id, name (a signup's email address for self-serve accounts), parent, the API version its requests are answered in, whether it is in a sandbox and, on a sandbox's root, the account it belongs to. A sandbox's imported files are the published sample week, never a customer's | Identity table: login role only | Until deleted by the operator; children cascade |
 | `accounts` | Email, tenant, password hash | scrypt (N=2^14, r=8, p=1), per-password salt; 12 to 256 characters | As the tenant |
 | `signups` | Email, password hash, verification token **hash**, expiry | Token is 32 random bytes, stored as SHA-256 only, single use | 24 hours by expiry check; expired rows are not purged |
 | `sessions` | Session token **hash**, tenant, expiry, when it was last used | SHA-256 only; httpOnly, Secure, SameSite=Lax cookie on the dashboard | 12 hours from sign-in, or 30 minutes without use, whichever is first; deleted on sign-out and on password reset; expired rows are not purged |

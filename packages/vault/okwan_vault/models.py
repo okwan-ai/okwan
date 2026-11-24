@@ -28,6 +28,12 @@ class Tenant:
     #: none (okwan_core.versions): the newest when a root account is made,
     #: its parent's for a merchant. Every tenant the store returns has one.
     api_version: str | None = None
+    #: In an account's sandbox: a tree of its own, apart from every live
+    #: tenant, reached only by test keys (`okw_test_`), holding sample data
+    #: and never a rail credential. A merchant made in it is in it too.
+    sandbox: bool = False
+    #: On a sandbox's root only: the live account it is the sandbox of.
+    sandbox_of: str | None = None
 
     @property
     def is_root(self) -> bool:
@@ -486,6 +492,12 @@ class WebhookEvent:
     created_at: datetime
     body: str
     deliveries: tuple[dict, ...] = ()
+
+
+class SandboxRefused(ValueError):
+    """What a sandbox cannot do, or a live tenant cannot do to a sandbox:
+    hold a rail credential, be made under the wrong account, be reached by a
+    key of the other kind."""
 
 
 class EndpointsFull(Exception):

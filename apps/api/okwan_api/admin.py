@@ -36,7 +36,7 @@ from okwan_recon.paging import DEFAULT_ROWS, MAX_ROWS
 from okwan_recon.registry import get as get_reconciliation
 from okwan_recon.registry import get_across
 from okwan_recon.runner import run
-from okwan_vault import READ
+from okwan_vault import READ, SandboxRefused
 from okwan_vault.authz import MAX_DEPTH, Forbidden, ancestors, require_administer
 from okwan_vault.usage import month_start
 from pydantic import BaseModel, Field, field_validator
@@ -121,6 +121,7 @@ def _public(tenant) -> dict[str, Any]:
         "name": tenant.name,
         "parent_id": tenant.parent_id,
         "created_at": tenant.created_at.isoformat(),
+        "sandbox": tenant.sandbox,
     }
 
 
@@ -135,7 +136,7 @@ def build_router() -> APIRouter:
 
     @router.post("", status_code=201)
     async def create_tenant(
-        body: CreateTenantIn, actor=Depends(admin_actor)
+        body: CreateTenantIn, request: Request, actor=Depends(admin_actor)
     ) -> dict[str, Any]:
         """Provision a tenant beneath the caller."""
         # Deeper than this the account above could not open the tenant
@@ -143,12 +144,22 @@ def build_router() -> APIRouter:
         # (usage.billing_root): refused here, so no such tenant exists.
         if len(await ancestors(get_store(), actor.id)) >= MAX_DEPTH:
             raise HTTPException(400, TOO_DEEP)
+        if actor.sandbox:
+            from .sandbox import making_in, room_for_one
+
+            await making_in(request, actor)
+            await room_for_one(actor)
         tenant = await get_store().create_tenant(body.name, parent_id=actor.id)
+        if tenant.sandbox:
+            # A merchant made in the sandbox starts with the sample week.
+            from .sandbox import seeded
+
+            await seeded(tenant.id)
         return _public(tenant)
 
     @router.post("/{tenant_id}/keys", status_code=201)
     async def issue_key(
-        tenant_id: str, body: IssueKeyIn | None = None, actor=Depends(admin_actor)
+        tenant_id: str, request: Request, body: IssueKeyIn | None = None, actor=Depends(admin_actor)
     ) -> dict[str, Any]:
         """Issue an API key for a tenant in the caller's subtree.
 
@@ -158,6 +169,11 @@ def build_router() -> APIRouter:
         its hash is stored.
         """
         await _guard(actor, tenant_id)
+        if actor.sandbox:
+            # A test key minting test keys is held to the sandbox's limit.
+            from .sandbox import making_in
+
+            await making_in(request, actor)
         scope = body.scope if body else READ
         full, record = await get_store().issue_key(tenant_id, scope=scope)
         return {
@@ -204,9 +220,12 @@ def build_router() -> APIRouter:
                 f"{body.connector} takes "
                 f"{', '.join(connector.auth.required_fields)}",
             )
-        await get_store().put_credential(
-            tenant_id, body.connector, body.field, body.value
-        )
+        try:
+            await get_store().put_credential(
+                tenant_id, body.connector, body.field, body.value
+            )
+        except SandboxRefused as exc:
+            raise HTTPException(403, str(exc)) from None
         # A reused reconciliation result was read with the old credential.
         from .recon_reuse import cache
 

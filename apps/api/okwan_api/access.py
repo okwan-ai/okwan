@@ -179,8 +179,10 @@ async def _alert(tenant_id: str, kind: str, credential: str, detail: dict) -> No
 
 
 async def _mail(tenant_id: str, alert: dict) -> bool:
-    """Mail the account, and copy the operator. True when the account's
-    mail went out; an account with no mailer or no address is not mailed."""
+    """Mail the account, and copy the operator for a live account's key
+    (a sandbox's test keys are the account's to watch, not Okwan's). True
+    when the account's mail went out; an account with no mailer or no
+    address is not mailed."""
     from .auth import get_store
 
     mailer = get_mailer()
@@ -198,7 +200,7 @@ async def _mail(tenant_id: str, alert: dict) -> bool:
         except MailNotSent as e:
             logger.error("access alert %s not mailed: %s", alert["id"], e)
     operator = os.environ.get("OKWAN_SUPPORT_ESCALATION_TO", "").strip()
-    if operator:
+    if operator and not (tenant is not None and tenant.sandbox):
         try:
             await mailer.send_notice(operator, f"[Access alert] {subject}", text)
         except MailNotSent as e:

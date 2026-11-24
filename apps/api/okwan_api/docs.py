@@ -41,6 +41,14 @@ AUTH_HEADERS = {"authorization", "x-okwan-key"}
 
 #: Sections that are not connectors: (tag, display name, description).
 STATIC_TAGS: list[tuple[str, str, str]] = [
+    ("sandbox", "Sandbox",
+     ("Build your integration before it meets a real merchant. `POST /v1/sandbox` makes your account's sandbox, "
+      "and `POST /v1/sandbox/keys` issues its keys, which start `okw_test_` and reach the sandbox and nothing "
+      "else. Every route works there as it does live: add merchants, run checks, read and decide open items, "
+      "receive webhooks. The sandbox and each merchant you add there start with a sample café's week (its "
+      "processor's batch report and its bank statement), so the batches-against-deposits check has something "
+      "to find. It holds no rail credentials, and its requests count against its own allowance, not your "
+      "plan. Takes an admin key or a dashboard session of the live account.")),
     ("reconciliations", "The check",
      ("Run the check over a merchant's orders and payments. Each run is one request and is saved as "
      "verdicts and amounts, never raw payment records.")),
@@ -159,6 +167,20 @@ renamed or removed, a type or a meaning changed. Additions (a route, a field, an
 parameter) reach every version, so read the fields you know and ignore the rest. SQL tables and MCP tools are
 not versioned: they change only by addition.
 
+## Sandbox
+
+Build against the sandbox first. `POST /v1/sandbox` makes your account's sandbox and `POST /v1/sandbox/keys` issues
+its keys: they start `okw_test_` and reach the sandbox only, as a live key never reaches it. Every route below works
+there as it does live. The sandbox and each merchant you add in it start with a sample café's week, its processor's
+batch report and its bank statement, moved to end in the last seven days: run
+`POST /v1/tenants/{{id}}/reconciliations/batches_deposits` with a test key and the open items, decisions and
+webhooks follow as they will for a real merchant; each event it sends says `"sandbox": true`. Every hour, and when
+`POST /v1/sandbox` asks for it again, a fresh week goes into any of its tenants whose week is missing or more than 60
+days old, so it never leaves the check's 120 days. It
+connects no rails yet, holds at most 25 tenants, and its requests count against its own allowance (the free
+plan's), never your plan; its model calls (suggestions) share your account's day. `GET /v1/sandbox/keys` lists
+every key in it, so a test key another test key made can be found and revoked.
+
 ## One declaration, three surfaces
 
 Each connector is declared once. Its REST routes (below), its SQL tables (`POST /v1/query`) and its MCP tools
@@ -210,7 +232,7 @@ def tags() -> list[dict[str, Any]]:
 def tag_groups(tag_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
     connector_tags = [t["name"] for t in tag_list if t["name"] not in {s[0] for s in STATIC_TAGS}]
     return [
-        {"name": "Start here", "tags": ["sample", "reconciliations", "exceptions", "webhooks", "events"]},
+        {"name": "Start here", "tags": ["sample", "sandbox", "reconciliations", "exceptions", "webhooks", "events"]},
         {"name": "Connectors", "tags": connector_tags},
         {"name": "SQL", "tags": ["query"]},
         {"name": "Your workspace", "tags": ["tenants", "imports", "accounts", "support"]},
@@ -224,6 +246,11 @@ TITLES: dict[tuple[str, str], str] = {
     ("get", "/v1/connectors"): "List connectors",
     ("get", "/v1/exceptions"): "List open items",
     ("get", "/v1/events"): "List events",
+    ("post", "/v1/sandbox"): "Make the sandbox",
+    ("get", "/v1/sandbox"): "Get the sandbox",
+    ("post", "/v1/sandbox/keys"): "Issue a test key",
+    ("get", "/v1/sandbox/keys"): "List test keys",
+    ("delete", "/v1/sandbox/keys/{key_id}"): "Revoke a test key",
     ("get", "/v1/webhooks"): "List webhook addresses",
     ("post", "/v1/webhooks"): "Add a webhook address",
     ("delete", "/v1/webhooks/{endpoint_id}"): "Delete a webhook address",

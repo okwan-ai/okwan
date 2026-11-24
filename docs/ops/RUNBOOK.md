@@ -494,6 +494,37 @@ changed, an event's body reshaped); an addition needs none:
    in its own newest), but the dashboard then reads the older shape: roll
    the dashboard back too.
 
+### The sandbox
+
+An account makes its sandbox with `POST /v1/sandbox` (an admin key or a
+dashboard session) and issues its keys with `POST /v1/sandbox/keys`; they
+start `okw_test_` (`okwan_api/sandbox.py`). The sandbox is a root tenant of
+its own whose `sandbox_of` names the account; its merchants have `sandbox`
+set. When a customer says something in the sandbox is wrong:
+
+1. "no rail credentials": the sandbox reads its sample files only (G33).
+   Rails connect on the live account.
+2. A test key answering 404 on a live tenant's route, or a live key 404 on
+   the sandbox's, is the separation working: keys of one never reach the
+   other.
+3. The sandbox's allowance is the free plan's 5,000 requests a month,
+   counted on the sandbox's root, apart from the account's plan; its
+   suggestions share the account's day of model calls. It holds at most
+   25 tenants, and merchants and test keys made in it share one hourly
+   limit (20) with its making.
+4. "The check finds nothing" in a sandbox: an hourly sweep, and
+   `POST /v1/sandbox` asked again, put a fresh week in any of its tenants
+   whose week is missing or more than 60 days old (a tenant made in the
+   last two minutes is left to its own request).
+5. A lost test key is found with `GET /v1/sandbox/keys` and revoked with
+   `DELETE /v1/sandbox/keys/{key_id}`, from the live account.
+6. Mail about the sandbox (an access alert, a support answer, an address
+   turned off) goes to the live account's sign-in address; access alerts
+   about test keys are not copied to the operator. The console's Health
+   counts customers only and shows sandboxes apart.
+7. The sandbox goes with its account (`tenant delete`); it gets no daily
+   check and no daily mail.
+
 ### Daily checks and their mail
 
 Once an hour the API looks for merchants whose Shopify, PayPal and Stripe

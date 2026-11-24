@@ -272,14 +272,15 @@ def _event_id() -> str:
     return f"evt_{uuid.uuid4().hex[:24]}"
 
 
-def envelope(event_id: str, type_: str, account: str, at: datetime, data: dict[str, Any]) -> str:
+def envelope(event_id: str, type_: str, account: str, at: datetime, data: dict[str, Any], *,
+             sandbox: bool) -> str:
     """The body as stored: Standard Webhooks' `type`, `timestamp` and
-    `data`, with the event's `id`, the `account` it is sent to and the
-    `api_version` it is in, the newest. Each address is sent it in its own
-    version (`in_version`)."""
+    `data`, with the event's `id`, the `account` it is sent to, whether it
+    is a sandbox's (`sandbox`), and the `api_version` it is in, the newest.
+    Each address is sent it in its own version (`in_version`)."""
     return json.dumps({"id": event_id, "type": type_, "timestamp": at.isoformat(), "account": account,
-                       "api_version": versions.current(), "data": data}, ensure_ascii=False,
-                      separators=(",", ":"))
+                       "sandbox": sandbox, "api_version": versions.current(), "data": data},
+                      ensure_ascii=False, separators=(",", ":"))
 
 
 def in_version(body: str, version: str) -> str:
@@ -406,7 +407,7 @@ def _events(tenant: Tenant, run: RunRecord, previous: RunRecord | None, title: s
             event_id = _event_id()
             out.append({"id": event_id, "tenant_id": account, "type": type_, "kind": run.kind,
                         "check_name": run.name, "item_key": item["key"], "reads_files": reads_files,
-                        "body": envelope(event_id, type_, account, at, data)})
+                        "body": envelope(event_id, type_, account, at, data, sandbox=tenant.sandbox)})
     return out
 
 
@@ -440,7 +441,7 @@ async def after_decision(tenant: Tenant, run: RunRecord, key: str, decision, clo
             event_id = _event_id()
             events.append({"id": event_id, "tenant_id": account, "type": type_, "kind": run.kind,
                            "check_name": run.name, "item_key": key, "reads_files": reads_files,
-                           "body": envelope(event_id, type_, account, at, data)})
+                           "body": envelope(event_id, type_, account, at, data, sandbox=tenant.sandbox)})
         return await store.add_webhook_events(tenant.id, run.id, events, at)
     except Exception:
         logger.warning("webhook event not made for a decision on %s", tenant.id, exc_info=True)
@@ -641,6 +642,7 @@ class OpenItemEvent(BaseModel):
     type: EventType
     timestamp: datetime
     account: str = Field(description="The account whose address this was sent to")
+    sandbox: bool = Field(description="Whether it is the account's sandbox's: sample data, never a live merchant's")
     api_version: str = Field(description="The API version this body is in: the address's, kept from the "
                                          "request that added it (Okwan-Version)")
     data: OpenItem
@@ -726,7 +728,8 @@ def build_router() -> APIRouter:
         url, secret, version = found
         event_id, at = _event_id(), now()
         # Made as every event is, and given in the address's version.
-        body = in_version(envelope(event_id, "ping", actor.id, at, {"webhook": endpoint_id}), version)
+        body = in_version(envelope(event_id, "ping", actor.id, at, {"webhook": endpoint_id},
+                                   sandbox=actor.sandbox), version)
         status, error = await send(url, body, signed_headers(secret, event_id, body, at.timestamp()))
         return {"delivered": error is None and status is not None, "status": status, "error": error,
                 "event_id": event_id}

@@ -44,6 +44,27 @@ BEGIN
     END IF;
 END $$;
 
+-- An account's sandbox: a tree of its own (its root has no parent), so the
+-- subtree guards and row-level security keep it apart from every live
+-- tenant as they keep accounts apart. `sandbox` is set on its root and
+-- every merchant made under it, copied from the parent when one is made;
+-- `sandbox_of` names, on its root only, the live account it belongs to,
+-- one sandbox an account, and goes with that account.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'tenants'
+          AND column_name = 'sandbox'
+    ) THEN
+        ALTER TABLE tenants
+            ADD COLUMN sandbox boolean NOT NULL DEFAULT false,
+            ADD COLUMN sandbox_of text UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+            ADD CONSTRAINT tenants_sandbox_root
+                CHECK (sandbox_of IS NULL OR (sandbox AND parent_id IS NULL));
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS api_keys (
     id          text PRIMARY KEY,
     tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

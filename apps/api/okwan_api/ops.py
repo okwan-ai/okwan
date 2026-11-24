@@ -191,6 +191,7 @@ async def _account_row(tenant, open_tickets: dict[str, int]) -> dict[str, Any]:
     last = await _latest_run(members)
     return {
         "id": tenant.id, "name": tenant.name, "created_at": tenant.created_at.isoformat(),
+        "sandbox": (sb.id if (sb := await store.sandbox_for(tenant.id)) else None),
         "contact": await store.account_email(tenant.id),
         "plan": {"name": q.plan, "limit": q.limit, "used": q.used, "unmetered": q.unmetered},
         "merchants": len(members) - 1,
@@ -372,7 +373,7 @@ def build_router() -> APIRouter:
     @router.get("/accounts")
     async def accounts_list(op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
         store = get_store()
-        roots = sorted((t for t in await store.list_tenants() if t.parent_id is None),
+        roots = sorted((t for t in await store.list_tenants() if t.parent_id is None and not t.sandbox),
                        key=lambda t: t.created_at, reverse=True)[:500]
         open_tickets = await _open_tickets()
         rows = [await _account_row(t, open_tickets) for t in roots]
@@ -464,7 +465,10 @@ def build_router() -> APIRouter:
     async def health(op: Operator = Depends(unlocked_operator)) -> dict[str, Any]:
         store = get_store()
         since = datetime.now(UTC) - timedelta(days=HEALTH_DAYS)
-        tenants = await store.list_tenants()
+        everyone = await store.list_tenants()
+        # Customers only: a sandbox holds sample data and no rails, so its
+        # runs are not customers' checks and its tenants not accounts.
+        tenants = [t for t in everyone if not t.sandbox]
         by_id = {t.id: t for t in tenants}
         ok = failed = 0
         failures = []
@@ -504,6 +508,7 @@ def build_router() -> APIRouter:
             "near_limit": sorted(near, key=lambda a: a["used"] / a["limit"], reverse=True),
             "accounts": sum(t.parent_id is None for t in tenants),
             "merchants": sum(t.parent_id is not None for t in tenants),
+            "sandboxes": sum(t.sandbox_of is not None for t in everyone),
             "open_tickets": sum(t.status == "open" for t in tickets),
             "activity": [{**e, "at": e["at"].isoformat()} for e in await store.operator_log(15)],
         }

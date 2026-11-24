@@ -48,6 +48,7 @@ from .models import (
     ImportFile,
     ItemGone,
     RunRecord,
+    SandboxRefused,
     SealedCredential,
     Suggestion,
     SuggestionAnswered,
@@ -85,6 +86,8 @@ class Store(Protocol):
     async def create_tenant(self, name: str, parent_id: str | None = None, *,
                             api_version: str | None = None) -> Tenant: ...
     async def get_tenant(self, tenant_id: str) -> Tenant | None: ...
+    async def make_sandbox(self, account_id: str) -> tuple[Tenant, bool]: ...
+    async def sandbox_for(self, account_id: str) -> Tenant | None: ...
     async def children_of(self, tenant_id: str) -> list[Tenant]: ...
     async def subtree(self, tenant_id: str, depth: int) -> list[Tenant]: ...
     async def issue_key(self, tenant_id: str, *, scope: str) -> tuple[str, ApiKey]: ...
@@ -391,17 +394,38 @@ class MemoryStore:
             raise KeyError(f"unknown parent tenant {parent_id!r}")
         # A merchant is answered as the account that made it is; a new
         # account in the newest version, or on the day it is stamped with.
+        # A merchant made in a sandbox is in it, and only there.
         parent = self._tenants.get(parent_id) if parent_id is not None else None
         tenant = Tenant(
             id=f"ten_{uuid.uuid4().hex[:16]}", name=name, parent_id=parent_id,
             api_version=(parent.api_version if parent is not None and parent.api_version
                          else api_version or versions.current()),
+            sandbox=parent is not None and parent.sandbox,
         )
         self._tenants[tenant.id] = tenant
         return tenant
 
     async def get_tenant(self, tenant_id: str) -> Tenant | None:
         return self._tenants.get(tenant_id)
+
+    async def make_sandbox(self, account_id: str) -> tuple[Tenant, bool]:
+        """The account's sandbox, made the first time: (it, whether it was
+        made now). Only a live account, never a merchant or a sandbox, has
+        one; it is on the account's API version."""
+        account = self._tenants.get(account_id)
+        if account is None:
+            raise KeyError(f"unknown tenant {account_id!r}")
+        _sandboxable(account)
+        found = await self.sandbox_for(account_id)
+        if found is not None:
+            return found, False
+        made = Tenant(id=f"ten_{uuid.uuid4().hex[:16]}", name=SANDBOX_NAME, parent_id=None,
+                      api_version=account.api_version, sandbox=True, sandbox_of=account_id)
+        self._tenants[made.id] = made
+        return made, True
+
+    async def sandbox_for(self, account_id: str) -> Tenant | None:
+        return next((t for t in self._tenants.values() if t.sandbox_of == account_id), None)
 
     async def children_of(self, tenant_id: str) -> list[Tenant]:
         return [t for t in self._tenants.values() if t.parent_id == tenant_id]
@@ -424,6 +448,10 @@ class MemoryStore:
         if tenant_id not in self._tenants:
             return []
         gone = self._subtree(tenant_id)
+        # An account's sandbox goes with it, and all that is in it.
+        for t in list(self._tenants.values()):
+            if t.sandbox_of in gone:
+                gone |= self._subtree(t.id)
         emails = {e for e, (t, _) in self._accounts.items() if t in gone}
         self._tenants = {k: v for k, v in self._tenants.items() if k not in gone}
         self._keys = {k: v for k, v in self._keys.items() if v.tenant_id not in gone}
@@ -670,7 +698,7 @@ class MemoryStore:
             raise ValueError(f"a key's scope is one of {KEY_SCOPES}, not {scope!r}")
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
-        full, prefix, hash_hex = apikey.generate()
+        full, prefix, hash_hex = apikey.generate(test=self._tenants[tenant_id].sandbox)
         record = ApiKey(
             id=f"key_{uuid.uuid4().hex[:16]}",
             tenant_id=tenant_id,
@@ -706,6 +734,8 @@ class MemoryStore:
     ) -> None:
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
+        if self._tenants[tenant_id].sandbox:
+            raise SandboxRefused(NO_RAILS)
         data_key = new_key()
         record = SealedCredential(
             tenant_id=tenant_id,
@@ -729,6 +759,10 @@ class MemoryStore:
         self, tenant_id: str, connector: str, fields: tuple[str, ...]
     ) -> dict[str, str]:
         out: dict[str, str] = {}
+        found = self._tenants.get(tenant_id)
+        if found is not None and found.sandbox:
+            # Nothing a sandbox does reads a rail, whatever is stored.
+            return {name: "" for name in fields}
         for name in fields:
             record = self._creds.get((tenant_id, connector, name))
             if record is None:
@@ -1267,13 +1301,15 @@ class MemoryStore:
 
     async def account_email(self, tenant_id: str) -> str | None:
         """The sign-in address of the tenant's login, or of the nearest
-        ancestor's: a merchant has no login, its account does."""
+        ancestor's: a merchant has no login, its account does; and a
+        sandbox's is the live account's that owns it."""
         logins = {tid: email for email, (tid, _) in self._accounts.items()}
         t = self._tenants.get(tenant_id)
         while t is not None:
             if t.id in logins:
                 return logins[t.id]
-            t = self._tenants.get(t.parent_id) if t.parent_id else None
+            up = t.parent_id or t.sandbox_of
+            t = self._tenants.get(up) if up else None
         return None
 
 
@@ -1807,3 +1843,20 @@ def _stampable(parent_id: str | None, api_version: str | None) -> None:
         raise ValueError("a merchant takes its account's version")
     if versions.in_effect(api_version) is None:
         raise ValueError(f"not a version: {api_version!r}")
+
+
+#: A sandbox's name: nothing of its account's, which for a self-serve
+#: account is its sign-in address, reaches a test key.
+SANDBOX_NAME = "Sandbox"
+
+#: Why a sandbox holds no rail credential.
+NO_RAILS = ("The sandbox reads its sample files and holds no rail credentials: connect rails on your live "
+            "account.")
+
+
+def _sandboxable(account: Tenant) -> None:
+    """Only a live account has a sandbox: not a merchant, not a sandbox."""
+    if account.sandbox:
+        raise SandboxRefused("this is the sandbox; its account makes it")
+    if account.parent_id is not None:
+        raise SandboxRefused("the sandbox is the account's, not a merchant's")
