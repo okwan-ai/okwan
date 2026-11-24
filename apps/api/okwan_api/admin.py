@@ -36,7 +36,7 @@ from okwan_recon.paging import DEFAULT_ROWS, MAX_ROWS
 from okwan_recon.registry import get as get_reconciliation
 from okwan_recon.registry import get_across
 from okwan_recon.runner import run
-from okwan_vault import READ
+from okwan_vault import READ, SandboxRefused
 from okwan_vault.authz import MAX_DEPTH, Forbidden, ancestors, require_administer
 from okwan_vault.usage import month_start
 from pydantic import BaseModel, Field, field_validator
@@ -121,6 +121,7 @@ def _public(tenant) -> dict[str, Any]:
         "name": tenant.name,
         "parent_id": tenant.parent_id,
         "created_at": tenant.created_at.isoformat(),
+        "sandbox": tenant.sandbox,
     }
 
 
@@ -144,6 +145,11 @@ def build_router() -> APIRouter:
         if len(await ancestors(get_store(), actor.id)) >= MAX_DEPTH:
             raise HTTPException(400, TOO_DEEP)
         tenant = await get_store().create_tenant(body.name, parent_id=actor.id)
+        if tenant.sandbox:
+            # A merchant made in the sandbox starts with the sample week.
+            from .sandbox import seeded
+
+            await seeded(tenant.id)
         return _public(tenant)
 
     @router.post("/{tenant_id}/keys", status_code=201)
@@ -204,9 +210,12 @@ def build_router() -> APIRouter:
                 f"{body.connector} takes "
                 f"{', '.join(connector.auth.required_fields)}",
             )
-        await get_store().put_credential(
-            tenant_id, body.connector, body.field, body.value
-        )
+        try:
+            await get_store().put_credential(
+                tenant_id, body.connector, body.field, body.value
+            )
+        except SandboxRefused as exc:
+            raise HTTPException(403, str(exc)) from None
         # A reused reconciliation result was read with the old credential.
         from .recon_reuse import cache
 

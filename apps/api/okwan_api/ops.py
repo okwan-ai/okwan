@@ -191,6 +191,7 @@ async def _account_row(tenant, open_tickets: dict[str, int]) -> dict[str, Any]:
     last = await _latest_run(members)
     return {
         "id": tenant.id, "name": tenant.name, "created_at": tenant.created_at.isoformat(),
+        "sandbox_of": tenant.sandbox_of,
         "contact": await store.account_email(tenant.id),
         "plan": {"name": q.plan, "limit": q.limit, "used": q.used, "unmetered": q.unmetered},
         "merchants": len(members) - 1,

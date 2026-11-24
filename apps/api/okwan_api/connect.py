@@ -26,6 +26,7 @@ from okwan_core import get
 from okwan_core.errors import CredentialError
 from okwan_gusto import auth as gusto_auth
 from okwan_gusto.connector import save_tokens
+from okwan_vault.store import NO_RAILS
 from pydantic import BaseModel, Field
 
 from .admin import _guard, _probe
@@ -69,6 +70,8 @@ def build_router() -> APIRouter:
         """Start connecting Gusto for a tenant in the caller's subtree: the
         link to send its Gusto admin to, and the state to bring back."""
         await _guard(actor, tenant_id)
+        if actor.sandbox:
+            raise HTTPException(403, NO_RAILS)
         if missing := gusto_auth.missing_settings():
             # The operator reads which setting, by name; the customer is
             # told only that Gusto isn't ready here.

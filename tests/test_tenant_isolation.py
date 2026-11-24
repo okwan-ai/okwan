@@ -363,6 +363,11 @@ ADMIN_OTHER = {
     # another account's address id reads as missing (tests/test_webhooks.py).
     ("GET", "/v1/webhooks"), ("POST", "/v1/webhooks"), ("DELETE", "/v1/webhooks/{endpoint_id}"),
     ("POST", "/v1/webhooks/{endpoint_id}/enable"), ("POST", "/v1/webhooks/{endpoint_id}/test"),
+    # The sandbox: the caller's own account's only; no route takes a tenant
+    # id, and a key of another account's sandbox reads as missing
+    # (tests/test_sandbox.py).
+    ("POST", "/v1/sandbox"), ("GET", "/v1/sandbox"), ("POST", "/v1/sandbox/keys"),
+    ("DELETE", "/v1/sandbox/keys/{key_id}"),
 }
 #: The operator console: Okwan's own staff, across accounts by design. Every
 #: route answers a plain 404 to anyone but an allowlisted operator whose

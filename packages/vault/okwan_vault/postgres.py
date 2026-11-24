@@ -61,6 +61,7 @@ from .models import (
     ItemBusy,
     ItemGone,
     RunRecord,
+    SandboxRefused,
     SealedCredential,
     Suggestion,
     SuggestionAnswered,
@@ -74,7 +75,7 @@ from .models import (
     add_months,
     new_unsubscribe_token,
 )
-from .store import _stampable
+from .store import NO_RAILS, _sandboxable, _stampable
 from .usage import (
     CHECKOUTS_LISTED,
     DEFAULT_PLAN,
@@ -145,6 +146,8 @@ def _tenant(row) -> Tenant:
         parent_id=row["parent_id"],
         created_at=row["created_at"],
         api_version=row["api_version"],
+        sandbox=row["sandbox"],
+        sandbox_of=row["sandbox_of"],
     )
 
 
@@ -277,9 +280,10 @@ class PostgresStore:
             # A parent that is not there leaves the newest, and the foreign key
             # refuses the row.
             row = await self.pool.fetchrow(
-                "INSERT INTO tenants (id, name, parent_id, api_version) VALUES ($1, $2, $3, "
-                "COALESCE((SELECT api_version FROM tenants WHERE id = $3), $4)) "
-                "RETURNING id, name, parent_id, created_at, api_version",
+                "INSERT INTO tenants (id, name, parent_id, api_version, sandbox) VALUES ($1, $2, $3, "
+                "COALESCE((SELECT api_version FROM tenants WHERE id = $3), $4), "
+                "COALESCE((SELECT sandbox FROM tenants WHERE id = $3), false)) "
+                "RETURNING id, name, parent_id, created_at, api_version, sandbox, sandbox_of",
                 tenant_id, name, parent_id, api_version or versions.current(),
             )
         except asyncpg.ForeignKeyViolationError:
@@ -288,14 +292,43 @@ class PostgresStore:
 
     async def get_tenant(self, tenant_id: str) -> Tenant | None:
         row = await self.pool.fetchrow(
-            "SELECT id, name, parent_id, created_at, api_version FROM tenants WHERE id = $1",
+            "SELECT id, name, parent_id, created_at, api_version, sandbox, sandbox_of FROM tenants WHERE id = $1",
             tenant_id,
         )
         return None if row is None else _tenant(row)
 
+    async def make_sandbox(self, account_id: str) -> tuple[Tenant, bool]:
+        """The account's sandbox, made the first time: (it, whether it was
+        made now). Only a live account has one, on its API version; the
+        unique `sandbox_of` keeps it to one when two ask at once."""
+        account = await self.get_tenant(account_id)
+        if account is None:
+            raise KeyError(f"unknown tenant {account_id!r}")
+        _sandboxable(account)
+        try:
+            row = await self.pool.fetchrow(
+                "INSERT INTO tenants (id, name, parent_id, api_version, sandbox, sandbox_of) "
+                "VALUES ($1, $2, NULL, $3, true, $4) ON CONFLICT (sandbox_of) DO NOTHING "
+                "RETURNING id, name, parent_id, created_at, api_version, sandbox, sandbox_of",
+                f"ten_{uuid.uuid4().hex[:16]}", f"{account.name} (sandbox)", account.api_version, account_id)
+        except asyncpg.ForeignKeyViolationError:
+            raise KeyError(f"unknown tenant {account_id!r}") from None
+        if row is not None:
+            return _tenant(row), True
+        found = await self.sandbox_for(account_id)
+        if found is None:  # deleted between the two statements
+            raise KeyError(f"unknown tenant {account_id!r}")
+        return found, False
+
+    async def sandbox_for(self, account_id: str) -> Tenant | None:
+        row = await self.pool.fetchrow(
+            "SELECT id, name, parent_id, created_at, api_version, sandbox, sandbox_of FROM tenants "
+            "WHERE sandbox_of = $1", account_id)
+        return None if row is None else _tenant(row)
+
     async def children_of(self, tenant_id: str) -> list[Tenant]:
         rows = await self.pool.fetch(
-            "SELECT id, name, parent_id, created_at, api_version FROM tenants "
+            "SELECT id, name, parent_id, created_at, api_version, sandbox, sandbox_of FROM tenants "
             "WHERE parent_id = $1 ORDER BY created_at",
             tenant_id,
         )
@@ -305,16 +338,16 @@ class PostgresStore:
         """A tenant and those below it, `depth` levels down at most: the
         tenant first, then each level by id."""
         rows = await self.pool.fetch(
-            "WITH RECURSIVE sub AS (SELECT id, name, parent_id, created_at, api_version, 0 AS depth "
+            "WITH RECURSIVE sub AS (SELECT id, name, parent_id, created_at, api_version, sandbox, sandbox_of, 0 AS depth "
             "FROM tenants WHERE id = $1 "
-            "UNION ALL SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version, sub.depth + 1 FROM tenants t "
+            "UNION ALL SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version, t.sandbox, t.sandbox_of, sub.depth + 1 FROM tenants t "
             "JOIN sub ON t.parent_id = sub.id WHERE sub.depth < $2) "
-            "SELECT id, name, parent_id, created_at, api_version FROM sub ORDER BY depth, id", tenant_id, depth)
+            "SELECT id, name, parent_id, created_at, api_version, sandbox, sandbox_of FROM sub ORDER BY depth, id", tenant_id, depth)
         return [_tenant(r) for r in rows]
 
     async def list_tenants(self) -> list[Tenant]:
         rows = await self.pool.fetch(
-            "SELECT id, name, parent_id, created_at, api_version FROM tenants ORDER BY created_at"
+            "SELECT id, name, parent_id, created_at, api_version, sandbox, sandbox_of FROM tenants ORDER BY created_at"
         )
         return [_tenant(r) for r in rows]
 
@@ -323,7 +356,9 @@ class PostgresStore:
     async def issue_key(self, tenant_id: str, *, scope: str) -> tuple[str, ApiKey]:
         if scope not in KEY_SCOPES:
             raise ValueError(f"a key's scope is one of {KEY_SCOPES}, not {scope!r}")
-        full, prefix, hash_hex = apikey.generate()
+        # The tenant decides the kind of key: a sandbox's are test keys.
+        sandbox = await self.pool.fetchval("SELECT sandbox FROM tenants WHERE id = $1", tenant_id)
+        full, prefix, hash_hex = apikey.generate(test=bool(sandbox))
         key_id = f"key_{uuid.uuid4().hex[:16]}"
         row = await self.pool.fetchrow(
             "INSERT INTO api_keys (id, tenant_id, prefix, hash_hex, scope) "
@@ -352,7 +387,7 @@ class PostgresStore:
         """The key's tenant and what the key may do. Indexed hash lookup —
         no scan over keys, no timing signal."""
         row = await self.pool.fetchrow(
-            "SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version, k.scope "
+            "SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version, t.sandbox, t.sandbox_of, k.scope "
             "FROM api_keys k JOIN tenants t ON t.id = k.tenant_id "
             "WHERE k.hash_hex = $1 AND k.revoked_at IS NULL",
             apikey.hash_key(full_key),
@@ -364,6 +399,8 @@ class PostgresStore:
     async def put_credential(
         self, tenant_id: str, connector: str, field_name: str, value: str
     ) -> None:
+        if await self.pool.fetchval("SELECT sandbox FROM tenants WHERE id = $1", tenant_id):
+            raise SandboxRefused(NO_RAILS)
         data_key = new_key()
         record = SealedCredential(
             tenant_id=tenant_id, connector=connector, field_name=field_name,
@@ -393,7 +430,10 @@ class PostgresStore:
         self, tenant_id: str, wanted: dict[str, tuple[str, ...]]
     ) -> dict[str, dict[str, str]]:
         """Several connectors' credentials in one scoped read: what a query
-        or reconciliation loads up front. A missing field reads as ""."""
+        or reconciliation loads up front. A missing field reads as "", and
+        so does every field of a sandbox's, whatever is stored."""
+        if await self.pool.fetchval("SELECT sandbox FROM tenants WHERE id = $1", tenant_id):
+            return {connector: {name: "" for name in fields} for connector, fields in wanted.items()}
         async with self._scoped(tenant_id) as con:
             rows = await con.fetch(
                 "SELECT connector, field_name, ciphertext, wrapped_key, key_id FROM credentials "
@@ -978,7 +1018,7 @@ class PostgresStore:
                 return None
             tenant = _tenant(await con.fetchrow(
                 "INSERT INTO tenants (id, name, parent_id, api_version) VALUES ($1, $2, NULL, $3) "
-                "RETURNING id, name, parent_id, created_at, api_version",
+                "RETURNING id, name, parent_id, created_at, api_version, sandbox, sandbox_of",
                 f"ten_{uuid.uuid4().hex[:16]}", email, versions.current(),
             ))
             try:
@@ -1040,7 +1080,7 @@ class PostgresStore:
         async with self.pool.acquire() as con, con.transaction():
             ids = [r["id"] for r in await con.fetch(
                 "WITH RECURSIVE sub AS (SELECT id FROM tenants WHERE id = $1 "
-                "UNION ALL SELECT t.id FROM tenants t JOIN sub ON t.parent_id = sub.id) "
+                "UNION ALL SELECT t.id FROM tenants t JOIN sub ON t.parent_id = sub.id OR t.sandbox_of = sub.id) "
                 "SELECT id FROM sub", tenant_id)]
             if not ids:
                 return []
@@ -1367,7 +1407,7 @@ class PostgresStore:
             "  UPDATE sessions SET last_seen_at = now() WHERE token_hash = $1"
             "  AND last_seen_at < now() - $3::interval AND EXISTS (SELECT 1 FROM live)"
             ") "
-            "SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version "
+            "SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version, t.sandbox, t.sandbox_of "
             "FROM live JOIN tenants t ON t.id = live.tenant_id",
             token_hash, accounts.SESSION_IDLE, accounts.SESSION_TOUCH,
         )
