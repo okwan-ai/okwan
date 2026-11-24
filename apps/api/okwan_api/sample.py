@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from okwan_recon import sample
 from okwan_recon.across import OUTCOMES, AcrossResult
 from okwan_recon.emitters.mcp import paged
@@ -23,6 +23,7 @@ from okwan_recon.emitters.rest import rest_page
 from okwan_recon.paging import DEFAULT_ROWS, MAX_ROWS
 from okwan_recon.registry import get_across
 
+from .auth import key_version
 from .ratelimit import SAMPLE_IP, client_ip, enforce
 from .runs import twice_currency
 
@@ -41,7 +42,8 @@ async def _result(now: datetime | None = None) -> AcrossResult:
 
 
 def build_router() -> APIRouter:
-    router = APIRouter(prefix="/v1/sample", tags=["sample"])
+    # A key sent anyway sets the answer's version, and nothing else.
+    router = APIRouter(prefix="/v1/sample", tags=["sample"], dependencies=[Depends(key_version)])
 
     @router.get("/reconciliations/across/{name}")
     async def sample_across(

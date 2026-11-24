@@ -30,7 +30,7 @@ from okwan_vault import (
 from okwan_vault.models import Tenant
 from okwan_vault.usage import Quota, quota
 
-from . import access
+from . import access, versions
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,26 @@ async def _key_access(request: Request, authorization: str, x_okwan_key: str) ->
     if found is None:
         raise HTTPException(401, "invalid or revoked API key")
     access.remember_request(request, key)
+    versions.remember(request, found[0])
     return found
+
+
+async def key_version(request: Request) -> None:
+    """For a route that takes no key (the catalog, the sample check): when a
+    key is sent anyway, as an SDK sends it on every call, the answer is in
+    its account's version. Nothing else is done with it: the route is as
+    open as before, and a key that is not one is ignored. The headers are
+    read from the request rather than declared, so the reference still
+    shows the route as taking no key."""
+    authorization = request.headers.get("authorization", "")
+    key = request.headers.get("x-okwan-key", "").strip()
+    if not key and authorization.lower().startswith("bearer "):
+        key = authorization[7:].strip()
+    if not key.startswith("okw_"):
+        return
+    found = await get_store().access_for_key(key)
+    if found is not None:
+        versions.remember(request, found[0])
 
 
 async def admin_actor(
@@ -159,6 +178,7 @@ async def admin_actor(
         if tenant is None:
             raise HTTPException(401, "session expired — sign in again")
         access.remember_request(request, token)
+        versions.remember(request, tenant)
         return tenant
     tenant, scope = await _key_access(request, authorization, x_okwan_key)
     if scope != ADMIN:

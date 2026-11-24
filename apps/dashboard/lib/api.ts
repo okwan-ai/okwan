@@ -11,6 +11,17 @@ import { cache } from "react";
 export const SESSION_COOKIE = "okwan_session";
 const SESSION_MAX_AGE = 60 * 60 * 12; // matches the API's SESSION_TTL (12 hours)
 
+/**
+ * The API version this dashboard is written for (okwan_core/versions.py),
+ * named on every call. The API and the dashboard deploy apart, so an API
+ * release that adds a version never reshapes what this code reads. It moves
+ * to a newer version in a release after the one that adds it to the API; if
+ * it is ever ahead of the API serving it (a rollback), the API answers in
+ * its own newest version rather than refusing. Webhook addresses added here
+ * take the account's version, not this one.
+ */
+export const API_VERSION = "2026-11-24";
+
 export function apiUrl(): string {
   return (process.env.OKWAN_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 }
@@ -29,6 +40,7 @@ export async function api<T>(
 ): Promise<ApiResult<T>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "Okwan-Version": API_VERSION,
     ...(await forwardedClient()),
   };
   if (init.session) headers.Authorization = `Bearer ${init.session}`;

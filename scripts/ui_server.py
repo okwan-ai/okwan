@@ -42,6 +42,7 @@ import uvicorn
 from okwan_api import support, webhooks
 from okwan_api.auth import get_store
 from okwan_api.main import app
+from okwan_core import versions
 from okwan_recon import across
 from okwan_recon.coverage import Coverage
 from okwan_vault import cli
@@ -169,7 +170,7 @@ async def seed_webhooks(store, account_id: str) -> None:
              "?team=finance-operations&region=west-africa&format=standard-webhooks"),
             "https://old-receiver.acme-isv.example/hooks"]
     made = [await store.add_webhook_endpoint(account_id, url=u, secret=webhooks.new_secret(), created_by="session",
-                                             at=now - timedelta(days=3 - n)) for n, u in enumerate(urls)]
+                                             at=now - timedelta(days=3 - n), api_version=versions.current()) for n, u in enumerate(urls)]
     await store.disable_webhook_endpoint(account_id, made[2].id, now - timedelta(days=1),
                                          "every delivery failed for three days (last: timed out)")
     events = [{"id": f"evt_{n:024x}", "tenant_id": account_id, "type": "open_item.opened", "kind": "pair",

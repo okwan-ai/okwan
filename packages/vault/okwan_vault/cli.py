@@ -32,6 +32,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from okwan_core import versions
+
 from . import accounts
 from .crypto import new_key
 from .keys import from_env
@@ -54,9 +56,13 @@ async def _store() -> PostgresStore:
 async def tenant_create(name: str) -> None:
     store = await _store()
     try:
-        tenant = await store.create_tenant(name)
+        # Stamped with today, not this checkout's newest version: the deployed
+        # API answers it in the version in effect today, whatever this
+        # checkout holds (okwan_core.versions, in_effect).
+        tenant = await store.create_tenant(name, api_version=versions.today())
         print(f"tenant  {tenant.id}")
         print(f"name    {tenant.name}")
+        print(f"version the one in effect on {tenant.api_version}")
     finally:
         await store.close()
 

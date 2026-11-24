@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from okwan_core import versions
 from okwan_vault import EnvMasterKey, PostgresStore, new_key
 from okwan_vault import postgres as pg
 from okwan_vault.postgres import TENANT_ROLE, TENANT_TABLES, IsolationUnavailable
@@ -173,7 +174,7 @@ async def two(store):
         await store.claim_daily_check(t.id, now)
         await store.set_mail_told(t.id, {"at": now.isoformat(), "through": {f"{name}/told": now.isoformat()}})
         await store.add_webhook_endpoint(t.id, url=f"https://hooks.{name.lower()}.example/okwan",
-                                         secret="whsec_" + "A" * 32, created_by="session", at=now)
+                                         secret="whsec_" + "A" * 32, created_by="session", at=now, api_version=versions.current())
         await store.add_webhook_events(t.id, run.id, [{
             "id": f"evt_{t.id[4:]}{'0' * 8}", "tenant_id": t.id, "type": "open_item.opened", "kind": "across",
             "check_name": "rails", "item_key": f"key-{name}", "reads_files": False, "body": "{}"}], now)

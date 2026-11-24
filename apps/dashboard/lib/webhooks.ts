@@ -10,6 +10,8 @@ export type WebhookAddress = {
   enabled: boolean;
   created_at: string;
   created_by: string;
+  /** The API version its events are sent in: the account's, unless it was added on another. */
+  api_version: string;
   disabled_at: string | null;
   disabled_why: string | null;
   /** Every delivery since then has failed. */

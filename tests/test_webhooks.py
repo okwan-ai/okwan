@@ -46,6 +46,7 @@ from cryptography.x509.oid import NameOID
 from okwan_api import runs
 from okwan_api import webhooks as wh
 from okwan_api.auth import set_store
+from okwan_core import versions
 from okwan_recon.exceptions import OpenItem, items_by_key
 from okwan_recon.registry import get as get_reconciliation
 from okwan_vault import ADMIN, READ, EnvMasterKey, MemoryStore, PostgresStore, new_key
@@ -679,7 +680,7 @@ async def test_two_rounds_never_take_the_same_delivery():
         shop = await store.create_tenant("Shop", parent_id=acme.id)
         at = datetime.now(UTC)
         await store.add_webhook_endpoint(acme.id, url=f"https://{HOST}/", secret=wh.new_secret(),
-                                         created_by="session", at=at)
+                                         created_by="session", at=at, api_version=versions.current())
         await _run(shop, [(f"B{i}", i, "2026-11-09") for i in range(1, 41)], T0)
         a, b = await asyncio.gather(*(store.claim_webhooks(acme.id, at + timedelta(seconds=1),
                                                            at + timedelta(minutes=1), 30) for _ in range(2)))
@@ -700,7 +701,7 @@ async def test_a_merchant_scope_sees_and_deletes_events_about_itself_and_writes_
         shop = await store.create_tenant("Shop", parent_id=acme.id)
         sister = await store.create_tenant("Sister", parent_id=acme.id)
         await store.add_webhook_endpoint(acme.id, url=f"https://{HOST}/", secret=wh.new_secret(),
-                                         created_by="session", at=datetime.now(UTC))
+                                         created_by="session", at=datetime.now(UTC), api_version=versions.current())
         await _run(shop, [("B1", 1, "2026-11-09")], T0)
         await _run(sister, [("S1", 1, "2026-11-09")], T0)
         async with store._scoped(shop.id) as con:

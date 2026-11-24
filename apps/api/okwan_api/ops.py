@@ -35,7 +35,7 @@ from okwan_vault import accounts, totp
 from okwan_vault.usage import month_start, quota
 from pydantic import BaseModel, Field
 
-from . import disputes
+from . import disputes, versions
 from .auth import get_store
 from .mail import MailNotSent, get_mailer
 from .ratelimit import OPS_UNLOCK, OPS_UNLOCK_IP, client_ip, enforce
@@ -72,7 +72,7 @@ class Operator:
         return self.until is not None and self.until > datetime.now(UTC)
 
 
-async def operator(authorization: str = Header(default="")) -> Operator:
+async def operator(request: Request, authorization: str = Header(default="")) -> Operator:
     allowed = operator_emails()
     token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
     if not allowed or not token.startswith(f"{accounts.SESSION_PREFIX}_"):
@@ -82,6 +82,7 @@ async def operator(authorization: str = Header(default="")) -> Operator:
     tenant = await store.tenant_for_session(token_hash)
     if tenant is None:
         raise _not_found()
+    versions.remember(request, tenant)
     email = await store.account_email(tenant.id)
     if not email or accounts.normalize_email(email) not in allowed:
         raise _not_found()

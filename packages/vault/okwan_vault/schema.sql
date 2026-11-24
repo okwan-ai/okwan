@@ -26,6 +26,24 @@ END $$;
 CREATE INDEX IF NOT EXISTS tenants_parent_idx ON tenants (parent_id)
     WHERE parent_id IS NOT NULL;
 
+-- The API version a tenant's requests are answered in when they name none
+-- (okwan_core.versions). Okwan's code states it on every new row: the
+-- newest for an account, its parent's for a merchant. The default is the
+-- first version, the API as it was before versions were named: the rows
+-- made before this column, and a row an instance still on the previous
+-- release adds while a deploy is under way. Checked first, as above.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'tenants'
+          AND column_name = 'api_version'
+    ) THEN
+        ALTER TABLE tenants ADD COLUMN api_version text NOT NULL DEFAULT '2026-11-24'
+            CHECK (api_version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS api_keys (
     id          text PRIMARY KEY,
     tenant_id   text NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -794,6 +812,20 @@ CREATE TABLE IF NOT EXISTS webhook_endpoints (
     last_ok_at     timestamptz
 );
 CREATE INDEX IF NOT EXISTS webhook_endpoints_tenant ON webhook_endpoints (tenant_id);
+-- The version an address is sent its events in: the version of the request
+-- that added it. Addresses added before versions were named are on the
+-- first, as tenants are above.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'webhook_endpoints'
+          AND column_name = 'api_version'
+    ) THEN
+        ALTER TABLE webhook_endpoints ADD COLUMN api_version text NOT NULL DEFAULT '2026-11-24'
+            CHECK (api_version ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    END IF;
+END $$;
 
 -- One event as sent, to the account whose addresses receive it
 -- (`tenant_id`), about one of its merchants or itself (`merchant_id`).

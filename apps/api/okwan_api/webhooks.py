@@ -57,6 +57,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from okwan_core import versions
 from okwan_core.egress import EgressRefused, resolve_public
 from okwan_recon.exceptions import (
     OpenItem,
@@ -72,6 +73,7 @@ from okwan_vault.models import AGING_DAYS, RunRecord, Tenant
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import access
+from . import versions as answering
 from .auth import admin_actor, current_tenant, get_store
 from .mail import get_mailer
 from .ratelimit import EVENTS_TENANT, WEBHOOK_CHANGE, WEBHOOK_TEST, enforce
@@ -82,6 +84,9 @@ EVENT_TYPES = ("open_item.opened", "open_item.aged", "open_item.cleared", "open_
                "open_item.reopened")
 EventType = Literal["open_item.opened", "open_item.aged", "open_item.cleared", "open_item.closed",
                     "open_item.reopened"]
+#: Every type of body an address is sent: the events and the test ping. A
+#: version's change may name any of them (okwan_core.versions).
+SENT_TYPES = (*EVENT_TYPES, "ping")
 #: How long the events are kept for `GET /v1/events`.
 EVENTS_KEPT = timedelta(days=30)
 #: How long a delivery is tried, and how long an address may fail every
@@ -268,10 +273,33 @@ def _event_id() -> str:
 
 
 def envelope(event_id: str, type_: str, account: str, at: datetime, data: dict[str, Any]) -> str:
-    """The body as signed and sent: Standard Webhooks' `type`, `timestamp`
-    and `data`, with the event's `id` and the `account` it is sent to."""
+    """The body as stored: Standard Webhooks' `type`, `timestamp` and
+    `data`, with the event's `id`, the `account` it is sent to and the
+    `api_version` it is in, the newest. Each address is sent it in its own
+    version (`in_version`)."""
     return json.dumps({"id": event_id, "type": type_, "timestamp": at.isoformat(), "account": account,
-                       "data": data}, ensure_ascii=False, separators=(",", ":"))
+                       "api_version": versions.current(), "data": data}, ensure_ascii=False,
+                      separators=(",", ":"))
+
+
+def in_version(body: str, version: str) -> str:
+    """A body as the version in effect on `version` gives it, to sign and
+    send or to list. One made in that version, or an older one, is returned
+    exactly as stored: nothing is made newer than it was made. One made in a
+    newer version is given back by the changes since (okwan_core.versions),
+    with `api_version` saying which version it now is. One made by a newer
+    release than this one (its version is not in this release's list) is
+    returned as stored, saying its own version: this release cannot undo
+    changes it does not have, and does not label it as what it is not. An
+    event stored before versions were named says none, and is in the first."""
+    made = json.loads(body)
+    at = made.get("api_version") or versions.FIRST
+    to = versions.in_effect(version) or versions.FIRST
+    if not isinstance(at, str) or not versions.known(at) or to >= at:
+        return body
+    older = versions.back(made, to=to, event=made.get("type"), made=at)
+    older["api_version"] = to
+    return json.dumps(older, ensure_ascii=False, separators=(",", ":"))
 
 
 async def receivers(store, merchant_id: str) -> tuple[list[str], list[str]]:
@@ -518,7 +546,8 @@ async def _send_queue(store, queue: list) -> int:
             await store.release_webhooks(c.tenant_id, [(x.endpoint_id, x.event_id) for x in queue[n:]])
             break
         sent_at = now()
-        status, error = await send(c.url, c.body, signed_headers(c.secret, c.event_id, c.body, sent_at.timestamp()))
+        body = in_version(c.body, c.api_version)
+        status, error = await send(c.url, body, signed_headers(c.secret, c.event_id, body, sent_at.timestamp()))
         if error is None and status is not None:
             await store.webhook_delivered(c.tenant_id, c.endpoint_id, c.event_id, at=sent_at, status=status)
             done += 1
@@ -597,17 +626,23 @@ class EndpointIn(BaseModel):
 
     url: str = Field(min_length=9, max_length=URL_MAX,
                      description="Where to send the events: https://, port 443, a public host")
+    api_version: str | None = Field(
+        None, description="The API version its events are sent in. Left out, the account's, as every other "
+                          "answer to the account is. Not the request's `Okwan-Version`, which is how this one "
+                          "answer is shaped")
 
 
 class OpenItemEvent(BaseModel):
     """What each event's body is: Standard Webhooks' `type`, `timestamp` and
-    `data`, with the event's `id` and the `account` it was sent to. `data`
-    is the open item, as on every other surface."""
+    `data`, with the event's `id`, the `account` it was sent to and the API
+    version it is in. `data` is the open item, as on every other surface."""
 
     id: str = Field(description="The event, as in the webhook-id header: the same on every attempt")
     type: EventType
     timestamp: datetime
     account: str = Field(description="The account whose address this was sent to")
+    api_version: str = Field(description="The API version this body is in: the address's, kept from the "
+                                         "request that added it (Okwan-Version)")
     data: OpenItem
 
 
@@ -615,6 +650,7 @@ def _endpoint_out(e: WebhookEndpoint) -> dict[str, Any]:
     return {
         "id": e.id, "url": e.url, "secret_hint": f"{e.hint}…", "enabled": e.disabled_at is None,
         "created_at": e.created_at.isoformat(), "created_by": e.created_by,
+        "api_version": versions.in_effect(e.api_version) or versions.FIRST,
         "disabled_at": e.disabled_at.isoformat() if e.disabled_at else None, "disabled_why": e.disabled_why,
         "failing_since": e.failing_since.isoformat() if e.failing_since else None,
         "last_ok_at": e.last_ok_at.isoformat() if e.last_ok_at else None, "pending": e.pending,
@@ -632,8 +668,13 @@ def build_router() -> APIRouter:
     async def add(body: EndpointIn, request: Request, actor=Depends(admin_actor)) -> dict[str, Any]:
         """Add an address for the account's events (at most five). The answer
         holds its signing secret (`secret`), shown this once: keep it where
-        the receiving code reads it. A read key is refused."""
+        the receiving code reads it. Its events are sent in the account's API
+        version, or the one `api_version` names, for as long as it is kept;
+        never in this request's `Okwan-Version`, which only shapes this
+        answer. A read key is refused."""
         enforce(request, (WEBHOOK_CHANGE, actor.id))
+        if body.api_version is not None and not versions.known(body.api_version):
+            raise HTTPException(422, f"api_version is one of {', '.join(versions.dates())}")
         try:
             url, host = check_url(body.url)
             await resolve_public(host, PORT, exceptions=False)
@@ -644,7 +685,8 @@ def build_router() -> APIRouter:
         secret = new_secret()
         try:
             made = await get_store().add_webhook_endpoint(
-                actor.id, url=url, secret=secret, created_by=access.credential_now(), at=now())
+                actor.id, url=url, secret=secret, created_by=access.credential_now(), at=now(),
+                api_version=body.api_version or actor.api_version or versions.current())
         except EndpointsFull:
             raise HTTPException(409, f"this account has {WEBHOOK_ENDPOINTS_MAX} addresses; delete one first") from None
         return {**_endpoint_out(made), "secret": secret}
@@ -681,10 +723,10 @@ def build_router() -> APIRouter:
         found = await get_store().webhook_secret(actor.id, endpoint_id)
         if found is None:
             raise HTTPException(404, f"no such webhook: {endpoint_id}")
-        url, secret = found
+        url, secret, version = found
         event_id, at = _event_id(), now()
-        body = json.dumps({"id": event_id, "type": "ping", "timestamp": at.isoformat(), "account": actor.id,
-                           "data": {"webhook": endpoint_id}}, separators=(",", ":"))
+        # Made as every event is, and given in the address's version.
+        body = in_version(envelope(event_id, "ping", actor.id, at, {"webhook": endpoint_id}), version)
         status, error = await send(url, body, signed_headers(secret, event_id, body, at.timestamp()))
         return {"delivered": error is None and status is not None, "status": status, "error": error,
                 "event_id": event_id}
@@ -699,8 +741,10 @@ def build_router() -> APIRouter:
         tenant=Depends(current_tenant),
     ) -> dict[str, Any]:
         """The events Okwan made for this account's addresses in the last 30
-        days, oldest first, each with its body as sent and what became of
-        each delivery. A read key may read them: they are the account's open
+        days, oldest first, each with its body and what became of each
+        delivery. A body is in the API version this request is answered in,
+        or in the one it was made in when that is older; an address was sent
+        it in its own. A read key may read them: they are the account's open
         items, which it reads anyway. Logged as a read."""
         enforce(request, (EVENTS_TENANT, tenant.id))
         await access.record(tenant, "rest:events", "/v1/events")
@@ -708,7 +752,7 @@ def build_router() -> APIRouter:
             tenant.id, after=after, since=now() - EVENTS_KEPT, limit=limit, types=None if type is None else [type])
         data = [{
             "id": e.id, "type": e.type, "created_at": e.created_at.isoformat(), "merchant_id": e.merchant_id,
-            "body": json.loads(e.body),
+            "body": json.loads(in_version(e.body, answering.of(request))),
             "deliveries": [{**d, "last_at": d["last_at"].isoformat() if d.get("last_at") else None,
                             "next_at": d["next_at"].isoformat() if d.get("next_at") else None}
                            for d in e.deliveries],

@@ -33,6 +33,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from okwan_api import webhooks as wh
+from okwan_core import versions
 from okwan_core.egress import EgressRefused, is_public, resolve_public
 from okwan_vault import EnvMasterKey, MemoryStore, new_key
 
@@ -105,11 +106,11 @@ async def test_f3_slow_addresses_of_other_accounts_do_not_hold_up_an_account_wit
         account = await store.create_tenant(f"Slow {i}")
         for j in range(5):
             await store.add_webhook_endpoint(account.id, url=f"https://{HOST}:{receiver.port}/slow{i}-{j}",
-                                             secret=wh.new_secret(), created_by="s", at=at)
+                                             secret=wh.new_secret(), created_by="s", at=at, api_version=versions.current())
         await _run(account, [("B1", 1, "2026-11-09")], T0)
     victim = await store.create_tenant("Victim")
     await store.add_webhook_endpoint(victim.id, url=f"https://{HOST}:{receiver.port}/fast",
-                                     secret=wh.new_secret(), created_by="s", at=at)
+                                     secret=wh.new_secret(), created_by="s", at=at, api_version=versions.current())
     await _run(victim, [("V1", 1, "2026-11-09")], T0)
     for (ep, _), d in store._deliveries.items():
         if store._endpoints[ep]["tenant_id"] == victim.id:
@@ -139,12 +140,12 @@ async def test_f3_when_places_are_short_an_account_with_nothing_sending_goes_fir
     busy = await store.create_tenant("Busy")
     for j in range(3):
         await store.add_webhook_endpoint(busy.id, url=f"https://{HOST}:{receiver.port}/slow{j}",
-                                         secret=wh.new_secret(), created_by="s", at=at)
+                                         secret=wh.new_secret(), created_by="s", at=at, api_version=versions.current())
     await _run(busy, [(f"B{i}", i, "2026-11-09") for i in range(10)], T0)
     await wh.deliver_due(at + timedelta(seconds=1), wait=False)
     victim = await store.create_tenant("Victim")
     await store.add_webhook_endpoint(victim.id, url=f"https://{HOST}:{receiver.port}/fast",
-                                     secret=wh.new_secret(), created_by="s", at=at)
+                                     secret=wh.new_secret(), created_by="s", at=at, api_version=versions.current())
     await _run(victim, [("V1", 1, "2026-11-09")], T0)
     started = time.monotonic()
     try:
@@ -172,12 +173,12 @@ async def test_f3_an_account_that_was_just_served_waits_behind_one_that_was_not(
     receiver.slow["/slow"] = 0.15
     busy = await store.create_tenant("Busy")
     await store.add_webhook_endpoint(busy.id, url=f"https://{HOST}:{receiver.port}/slow",
-                                     secret=wh.new_secret(), created_by="s", at=at)
+                                     secret=wh.new_secret(), created_by="s", at=at, api_version=versions.current())
     await _run(busy, [(f"B{i}", i, "2026-11-09") for i in range(40)], T0)
     await wh.deliver_due(at + timedelta(seconds=1), wait=False)
     victim = await store.create_tenant("Victim")
     await store.add_webhook_endpoint(victim.id, url=f"https://{HOST}:{receiver.port}/fast",
-                                     secret=wh.new_secret(), created_by="s", at=at)
+                                     secret=wh.new_secret(), created_by="s", at=at, api_version=versions.current())
     await _run(victim, [("V1", 1, "2026-11-09")], T0)
     started = time.monotonic()
     try:

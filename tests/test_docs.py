@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from okwan_core import all_connectors
-
 from okwan_api import docs
 from okwan_api.main import app
+from okwan_core import all_connectors, versions
 
 
 @pytest.fixture(scope="module")
@@ -85,6 +84,18 @@ def test_the_key_is_a_security_scheme_not_a_header_field(spec):
     for path, method, op in operations(spec):
         if (method, path) in public:
             assert "security" not in op, f"{method} {path} is public"
+
+
+def test_every_v1_operation_takes_the_version_header(spec):
+    for path, method, op in operations(spec):
+        named = [p for p in op.get("parameters", []) if p["in"] == "header" and p["name"] == versions.HEADER]
+        if path.startswith("/v1/"):
+            assert len(named) == 1 and named[0]["schema"]["format"] == "date", f"{method} {path}"
+            assert named[0]["schema"]["examples"] == list(versions.dates())
+        else:
+            assert not named, f"{method} {path}"
+    assert spec["info"]["version"] == versions.current()
+    assert "## Versions" in spec["info"]["description"]
 
 
 def test_writes_are_marked_and_only_writes(spec):

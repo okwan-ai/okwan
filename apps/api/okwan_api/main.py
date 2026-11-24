@@ -39,6 +39,7 @@ from okwan_core import (
     UpstreamError,
     all_connectors,
 )
+from okwan_core import versions as _versions
 from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
@@ -64,7 +65,7 @@ from okwan_api.ops import build_router as build_ops_router
 from okwan_api.suggestions import build_router as build_suggestions_router
 from okwan_api.support import build_router as build_support_router
 from okwan_api.auth import (
-    check_quota, close_store, load_credentials, meter, open_store,
+    check_quota, close_store, key_version, load_credentials, meter, open_store,
 )
 from okwan_query.catalog import tables_for
 from okwan_query.mcp_http import build_server as build_mcp_server
@@ -131,7 +132,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Okwan API",
-    version="0.1.0",
+    # The document describes the newest version (okwan_core.versions).
+    version=_versions.current(),
     description="The data connectivity layer built for AI agents.",
     lifespan=lifespan,
     # The reference at /docs is Okwan's own page (okwan_api/docs.py).
@@ -166,7 +168,8 @@ def _probe_name(c: Connector) -> str | None:
     return None if probe is None else f"{c.name}.{probe[0].name}.{probe[1].name}"
 
 
-@app.get("/v1/connectors", response_model=list[ConnectorInfo], tags=["catalog"])
+@app.get("/v1/connectors", response_model=list[ConnectorInfo], tags=["catalog"],
+         dependencies=[Depends(key_version)])
 async def list_connectors() -> list[ConnectorInfo]:
     return [
         ConnectorInfo(
@@ -324,6 +327,12 @@ async def healthz() -> dict[str, Any]:
 from okwan_api.docs import install as _install_docs
 
 _install_docs(app)
+
+# Inside the edge: every /v1/ answer says which API version answered, and a
+# header naming no version is refused before a route runs.
+from okwan_api.versions import Versions
+
+app.add_middleware(Versions)
 
 # Outermost: the size cap and protective headers cover every route and
 # the MCP mount, and an oversized body is refused before anything parses it.

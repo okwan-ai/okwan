@@ -54,7 +54,7 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from okwan_vault import accounts
 
-from . import access, disputes, policy
+from . import access, disputes, policy, versions
 from .auth import get_store, quota_for
 from .mail import get_mailer
 from .ratelimit import BILLING_TENANT, client_ip, enforce
@@ -257,6 +257,7 @@ async def session_owner(request: Request, authorization: str = Header(default=""
     if tenant is None:
         raise HTTPException(401, "session expired — sign in again")
     access.remember_request(request, token)
+    versions.remember(request, tenant)
     if tenant.parent_id is not None:
         raise HTTPException(403, "billing belongs to the account, not a merchant")
     return tenant
