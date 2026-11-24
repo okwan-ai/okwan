@@ -175,7 +175,8 @@ async def seed_webhooks(store, account_id: str) -> None:
                                          "every delivery failed for three days (last: timed out)")
     events = [{"id": f"evt_{n:024x}", "tenant_id": account_id, "type": "open_item.opened", "kind": "pair",
                "check_name": "batches_deposits", "item_key": f"seed{n}", "reads_files": True,
-               "body": webhooks.envelope(f"evt_{n:024x}", "open_item.opened", account_id, now, {})} for n in (1, 2)]
+               "body": webhooks.envelope(f"evt_{n:024x}", "open_item.opened", account_id, now, {},
+                                         sandbox=False)} for n in (1, 2)]
     await store.add_webhook_events(account_id, None, events, now - timedelta(hours=2))
     await store.webhook_delivered(account_id, made[0].id, events[0]["id"], at=now - timedelta(hours=2), status=200)
     await store.webhook_delivered(account_id, made[0].id, events[1]["id"], at=now - timedelta(hours=2), status=200)
