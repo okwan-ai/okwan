@@ -367,7 +367,7 @@ ADMIN_OTHER = {
     # id, and a key of another account's sandbox reads as missing
     # (tests/test_sandbox.py).
     ("POST", "/v1/sandbox"), ("GET", "/v1/sandbox"), ("POST", "/v1/sandbox/keys"),
-    ("DELETE", "/v1/sandbox/keys/{key_id}"),
+    ("GET", "/v1/sandbox/keys"), ("DELETE", "/v1/sandbox/keys/{key_id}"),
 }
 #: The operator console: Okwan's own staff, across accounts by design. Every
 #: route answers a plain 404 to anyone but an allowlisted operator whose

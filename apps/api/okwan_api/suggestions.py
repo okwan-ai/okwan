@@ -51,7 +51,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import anthropic
@@ -465,6 +465,16 @@ async def _branch(store, tenant_id: str) -> tuple[str, str]:
     return chain[-1], chain[-2] if len(chain) > 1 else chain[-1]
 
 
+async def _account_day(store, root: str, since: datetime) -> int:
+    """The calls an account made in the day, its sandbox's with them: a
+    sandbox is the account's, not a second day of model calls."""
+    top = await store.get_tenant(root)
+    live = top.sandbox_of if top is not None and top.sandbox_of else root
+    sandbox = await store.sandbox_for(live)
+    used = await store.surface_usage_since(live, since, SURFACE)
+    return used + (await store.surface_usage_since(sandbox.id, since, SURFACE) if sandbox else 0)
+
+
 async def _within_the_day(store, tenant_id: str) -> None:
     """Refuse (429) a model call past the day's allowance of the account the
     item is under, or of its merchant, counted from the calls metered in the
@@ -472,7 +482,7 @@ async def _within_the_day(store, tenant_id: str) -> None:
     limiter gives a spent day back."""
     root, branch = await _branch(store, tenant_id)
     since = now() - timedelta(days=1)
-    if await store.surface_usage_since(root, since, SURFACE) >= DAILY_ACCOUNT:
+    if await _account_day(store, root, since) >= DAILY_ACCOUNT:
         raise HTTPException(429, f"this account and its merchants asked for {DAILY_ACCOUNT} suggestions in the "
                                  "last day; ask again later", headers={"Retry-After": "3600"})
     if branch != root and await store.surface_usage_since(branch, since, SURFACE) >= DAILY_MERCHANT:

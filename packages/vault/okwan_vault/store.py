@@ -419,7 +419,7 @@ class MemoryStore:
         found = await self.sandbox_for(account_id)
         if found is not None:
             return found, False
-        made = Tenant(id=f"ten_{uuid.uuid4().hex[:16]}", name=f"{account.name} (sandbox)", parent_id=None,
+        made = Tenant(id=f"ten_{uuid.uuid4().hex[:16]}", name=SANDBOX_NAME, parent_id=None,
                       api_version=account.api_version, sandbox=True, sandbox_of=account_id)
         self._tenants[made.id] = made
         return made, True
@@ -1301,13 +1301,15 @@ class MemoryStore:
 
     async def account_email(self, tenant_id: str) -> str | None:
         """The sign-in address of the tenant's login, or of the nearest
-        ancestor's: a merchant has no login, its account does."""
+        ancestor's: a merchant has no login, its account does; and a
+        sandbox's is the live account's that owns it."""
         logins = {tid: email for email, (tid, _) in self._accounts.items()}
         t = self._tenants.get(tenant_id)
         while t is not None:
             if t.id in logins:
                 return logins[t.id]
-            t = self._tenants.get(t.parent_id) if t.parent_id else None
+            up = t.parent_id or t.sandbox_of
+            t = self._tenants.get(up) if up else None
         return None
 
 
@@ -1842,6 +1844,10 @@ def _stampable(parent_id: str | None, api_version: str | None) -> None:
     if versions.in_effect(api_version) is None:
         raise ValueError(f"not a version: {api_version!r}")
 
+
+#: A sandbox's name: nothing of its account's, which for a self-serve
+#: account is its sign-in address, reaches a test key.
+SANDBOX_NAME = "Sandbox"
 
 #: Why a sandbox holds no rail credential.
 NO_RAILS = ("The sandbox reads its sample files and holds no rail credentials: connect rails on your live "

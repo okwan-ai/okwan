@@ -174,8 +174,11 @@ its keys: they start `okw_test_` and reach the sandbox only, as a live key never
 there as it does live. The sandbox and each merchant you add in it start with a sample café's week, its processor's
 batch report and its bank statement, moved to end in the last seven days: run
 `POST /v1/tenants/{{id}}/reconciliations/batches_deposits` with a test key and the open items, decisions and
-webhooks follow as they will for a real merchant. It connects no rails yet, and its requests count against its own
-allowance (the free plan's), never your plan.
+webhooks follow as they will for a real merchant; each event it sends says `"sandbox": true`. Asked for again,
+`POST /v1/sandbox` puts a fresh week in any of its tenants whose week is missing or more than 60 days old. It
+connects no rails yet, holds at most 25 tenants, and its requests count against its own allowance (the free
+plan's), never your plan; its model calls (suggestions) share your account's day. `GET /v1/sandbox/keys` lists
+every key in it, so a test key another test key made can be found and revoked.
 
 ## One declaration, three surfaces
 
@@ -245,6 +248,7 @@ TITLES: dict[tuple[str, str], str] = {
     ("post", "/v1/sandbox"): "Make the sandbox",
     ("get", "/v1/sandbox"): "Get the sandbox",
     ("post", "/v1/sandbox/keys"): "Issue a test key",
+    ("get", "/v1/sandbox/keys"): "List test keys",
     ("delete", "/v1/sandbox/keys/{key_id}"): "Revoke a test key",
     ("get", "/v1/webhooks"): "List webhook addresses",
     ("post", "/v1/webhooks"): "Add a webhook address",

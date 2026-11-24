@@ -75,7 +75,7 @@ from .models import (
     add_months,
     new_unsubscribe_token,
 )
-from .store import NO_RAILS, _sandboxable, _stampable
+from .store import NO_RAILS, SANDBOX_NAME, _sandboxable, _stampable
 from .usage import (
     CHECKOUTS_LISTED,
     DEFAULT_PLAN,
@@ -310,7 +310,7 @@ class PostgresStore:
                 "INSERT INTO tenants (id, name, parent_id, api_version, sandbox, sandbox_of) "
                 "VALUES ($1, $2, NULL, $3, true, $4) ON CONFLICT (sandbox_of) DO NOTHING "
                 "RETURNING id, name, parent_id, created_at, api_version, sandbox, sandbox_of",
-                f"ten_{uuid.uuid4().hex[:16]}", f"{account.name} (sandbox)", account.api_version, account_id)
+                f"ten_{uuid.uuid4().hex[:16]}", SANDBOX_NAME, account.api_version, account_id)
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {account_id!r}") from None
         if row is not None:
@@ -497,11 +497,12 @@ class PostgresStore:
         async with self.pool.acquire() as con, con.transaction():
             ids = await _subtree(con, root_id)
             await _enter_scope(con, ids)
-            return await con.fetchval(
+            # SUM over bigint reads back as a Decimal: an int, as the memory store answers.
+            return int(await con.fetchval(
                 "SELECT COALESCE(SUM(requests), 0) FROM usage "
                 "WHERE tenant_id = ANY($1::text[]) AND hour >= $2",
                 ids, since,
-            )
+            ))
 
     async def surface_usage_since(self, root_id: str, since, surface: str) -> int:
         """Requests on one surface across a tenant and everything it
@@ -509,11 +510,11 @@ class PostgresStore:
         async with self.pool.acquire() as con, con.transaction():
             ids = await _subtree(con, root_id)
             await _enter_scope(con, ids)
-            return await con.fetchval(
+            return int(await con.fetchval(
                 "SELECT COALESCE(SUM(requests), 0) FROM usage "
                 "WHERE tenant_id = ANY($1::text[]) AND hour >= $2 AND surface = $3",
                 ids, since, surface,
-            )
+            ))
 
     async def usage_buckets(
         self, root_id: str, since
@@ -1590,14 +1591,16 @@ class PostgresStore:
 
     async def account_email(self, tenant_id: str) -> str | None:
         """The sign-in address of the tenant's login, or of the nearest
-        ancestor's: a merchant has no login, its account does. Identity
-        tables, so the login role."""
+        ancestor's: a merchant has no login, its account does; and a
+        sandbox's is the live account's that owns it (its root's
+        `sandbox_of`). Identity tables, so the login role."""
         return await self.pool.fetchval(
             """
             WITH RECURSIVE up AS (
-                SELECT id, parent_id, 0 AS depth FROM tenants WHERE id = $1
+                SELECT id, parent_id, sandbox_of, 0 AS depth FROM tenants WHERE id = $1
                 UNION ALL
-                SELECT t.id, t.parent_id, up.depth + 1 FROM tenants t JOIN up ON t.id = up.parent_id
+                SELECT t.id, t.parent_id, t.sandbox_of, up.depth + 1 FROM tenants t
+                JOIN up ON t.id = COALESCE(up.parent_id, up.sandbox_of)
             )
             SELECT a.email FROM up JOIN accounts a ON a.tenant_id = up.id
             ORDER BY up.depth LIMIT 1
