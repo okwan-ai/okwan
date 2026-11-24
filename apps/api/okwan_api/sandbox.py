@@ -36,18 +36,23 @@ checks, open items, decisions and webhooks included.
 Made from the live account (`POST /v1/sandbox`, an admin key or a
 dashboard session), which also issues, lists and revokes its keys. Asked
 again, `POST /v1/sandbox` puts a fresh week in any tenant of it whose
-week is missing, half there, or more than REFRESH_AFTER old, so the
-sandbox always holds what its README says, inside the check's 120 days.
+week is missing, half there, or more than REFRESH_AFTER old, and an
+hourly sweep does the same for every sandbox, so the sandbox always holds
+what its README says, inside the check's 120 days. A tenant made in the
+last SETTLING is left alone: its own request may still be putting the
+week in.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from okwan_files import Mapping, prepare
-from okwan_vault import ADMIN, READ, SandboxRefused
+from okwan_vault import ADMIN, READ, DuplicateImport, SandboxRefused
 from okwan_vault.authz import ancestors
 from pydantic import BaseModel, Field
 
@@ -59,6 +64,14 @@ from .ratelimit import SANDBOX_CHANGE, enforce
 SANDBOX_TENANTS_MAX = 25
 #: A week older than this is put back fresh when the sandbox is asked for.
 REFRESH_AFTER = timedelta(days=60)
+#: How long a tenant just made is left to its own request to put the week in.
+SETTLING = timedelta(minutes=2)
+#: How often every sandbox's week is looked at.
+SWEEP_SECONDS = 3600
+
+logger = logging.getLogger("okwan.sandbox")
+#: One refresh of a tenant at a time in this process.
+_refreshing: dict[str, asyncio.Lock] = {}
 
 #: The sample week as docs/samples/imports holds it (tests/test_sandbox.py
 #: keeps the two the same): the processor's batch report and the bank's
@@ -126,10 +139,13 @@ async def seed(tenant_id: str, now: datetime | None = None) -> None:
     for filename, text, mapping in SEED:
         prepared = prepare(moved(text, today).encode(), filename, mapping)
         n = prepared.normalized
-        await store.add_import(
-            tenant_id, kind=mapping.kind, filename=filename, format=prepared.format, layout=mapping.name,
-            mapping=mapping.model_dump(mode="json"), sha256=prepared.sha256, rows=n.rows, skipped=n.skipped,
-            card_columns=n.card_columns, first_date=prepared.first_date, last_date=prepared.last_date)
+        try:
+            await store.add_import(
+                tenant_id, kind=mapping.kind, filename=filename, format=prepared.format, layout=mapping.name,
+                mapping=mapping.model_dump(mode="json"), sha256=prepared.sha256, rows=n.rows, skipped=n.skipped,
+                card_columns=n.card_columns, first_date=prepared.first_date, last_date=prepared.last_date)
+        except DuplicateImport:
+            continue  # the same week, put in by another request: there is nothing to add
 
 
 def _samples(files) -> list:
@@ -145,14 +161,42 @@ async def refresh(tenant_id: str, now: datetime | None = None) -> bool:
     Whether it did."""
     store = get_store()
     now = now or _now()
-    found = _samples(await store.list_imports(tenant_id))
-    ends = [f.last_date for f in found if f.last_date is not None]
-    if len(found) == len(SEED) and ends and min(ends) >= now.date() - REFRESH_AFTER:
-        return False
-    for f in found:
-        await store.delete_import(tenant_id, f.id)
-    await seed(tenant_id, now)
-    return True
+    async with _refreshing.setdefault(tenant_id, asyncio.Lock()):
+        tenant = await store.get_tenant(tenant_id)
+        if tenant is None or not tenant.sandbox or now - tenant.created_at < SETTLING:
+            return False
+        found = _samples(await store.list_imports(tenant_id))
+        ends = [f.last_date for f in found if f.last_date is not None]
+        if len(found) == len(SEED) and ends and min(ends) >= now.date() - REFRESH_AFTER:
+            return False
+        for f in found:
+            await store.delete_import(tenant_id, f.id)
+        await seed(tenant_id, now)
+        return True
+
+
+async def refresh_all(now: datetime | None = None) -> int:
+    """Every sandbox tenant's week looked at, and put back where it is
+    missing, half there or old. How many were. A failure is logged and the
+    next tenant goes on."""
+    done = 0
+    for t in await get_store().list_tenants():
+        if not t.sandbox:
+            continue
+        try:
+            done += await refresh(t.id, now)
+        except Exception:
+            logger.warning("sandbox %s not refreshed", t.id, exc_info=True)
+    return done
+
+
+async def sweeper(interval: float = SWEEP_SECONDS) -> None:
+    while True:
+        try:
+            await refresh_all()
+        except Exception:
+            logger.warning("sandbox sweep failed", exc_info=True)
+        await asyncio.sleep(interval)
 
 
 async def live_account(store, tenant) -> str:

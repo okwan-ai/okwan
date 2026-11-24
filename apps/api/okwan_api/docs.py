@@ -174,8 +174,9 @@ its keys: they start `okw_test_` and reach the sandbox only, as a live key never
 there as it does live. The sandbox and each merchant you add in it start with a sample café's week, its processor's
 batch report and its bank statement, moved to end in the last seven days: run
 `POST /v1/tenants/{{id}}/reconciliations/batches_deposits` with a test key and the open items, decisions and
-webhooks follow as they will for a real merchant; each event it sends says `"sandbox": true`. Asked for again,
-`POST /v1/sandbox` puts a fresh week in any of its tenants whose week is missing or more than 60 days old. It
+webhooks follow as they will for a real merchant; each event it sends says `"sandbox": true`. Every hour, and when
+`POST /v1/sandbox` asks for it again, a fresh week goes into any of its tenants whose week is missing or more than 60
+days old, so it never leaves the check's 120 days. It
 connects no rails yet, holds at most 25 tenants, and its requests count against its own allowance (the free
 plan's), never your plan; its model calls (suggestions) share your account's day. `GET /v1/sandbox/keys` lists
 every key in it, so a test key another test key made can be found and revoked.

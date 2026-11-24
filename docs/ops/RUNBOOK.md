@@ -512,9 +512,10 @@ set. When a customer says something in the sandbox is wrong:
    suggestions share the account's day of model calls. It holds at most
    25 tenants, and merchants and test keys made in it share one hourly
    limit (20) with its making.
-4. "The check finds nothing" in an old sandbox: `POST /v1/sandbox` again
-   puts a fresh week in any of its tenants whose week is missing or more
-   than 60 days old.
+4. "The check finds nothing" in a sandbox: an hourly sweep, and
+   `POST /v1/sandbox` asked again, put a fresh week in any of its tenants
+   whose week is missing or more than 60 days old (a tenant made in the
+   last two minutes is left to its own request).
 5. A lost test key is found with `GET /v1/sandbox/keys` and revoked with
    `DELETE /v1/sandbox/keys/{key_id}`, from the live account.
 6. Mail about the sandbox (an access alert, a support answer, an address

@@ -19,6 +19,7 @@ and passes on its fix.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import os
@@ -294,6 +295,9 @@ async def test_s5_a_half_made_sandbox_is_given_its_whole_week_when_asked_again(w
         await w.client.post("/v1/sandbox", headers=_auth(w.admin))
     monkeypatch.setattr(w.store, "add_import", real_add)
     monkeypatch.setattr(w.store, "delete_tenant", real_delete)
+    # Asked again once its own request can no longer be putting the week in.
+    later = datetime.now(UTC) + sandbox.SETTLING + timedelta(seconds=5)
+    monkeypatch.setattr(sandbox, "_now", lambda: later, raising=False)
     made, issued = await _sandbox_and_key(w)
     key = issued["secret"]
     files = (await w.client.get(f"/v1/tenants/{made['id']}/imports", headers=_auth(key))).json()["imports"]
@@ -302,9 +306,11 @@ async def test_s5_a_half_made_sandbox_is_given_its_whole_week_when_asked_again(w
     assert await _readme_items(w, key, made["id"]) == README
 
 
-async def test_s5_a_sandbox_made_but_never_seeded_is_given_its_week_when_asked(world):
+async def test_s5_a_sandbox_made_but_never_seeded_is_given_its_week_when_asked(world, monkeypatch):
     w = world
     await w.store.make_sandbox(w.acme.id)  # the INSERT, then the process died
+    later = datetime.now(UTC) + sandbox.SETTLING + timedelta(seconds=5)
+    monkeypatch.setattr(sandbox, "_now", lambda: later, raising=False)
     made, issued = await _sandbox_and_key(w)
     files = (await w.client.get(f"/v1/tenants/{made['id']}/imports", headers=_auth(issued["secret"]))).json()
     assert len(files["imports"]) == 2
@@ -330,6 +336,30 @@ async def test_s6_an_old_week_is_put_back_fresh_when_the_sandbox_is_asked_for(wo
     before = {f.id for f in await w.store.list_imports(made["id"])}
     await w.client.post("/v1/sandbox", headers=_auth(w.admin))
     assert {f.id for f in await w.store.list_imports(made["id"])} == before
+
+
+async def test_s5_many_asking_at_once_make_one_sandbox_with_its_week_once(world):
+    w = world
+    rs = await asyncio.gather(*(w.client.post("/v1/sandbox", headers=_auth(w.admin)) for _ in range(8)))
+    assert sorted(r.status_code for r in rs) == [200] * 7 + [201]
+    assert len({r.json()["id"] for r in rs}) == 1
+    assert len(await w.store.list_imports(rs[0].json()["id"])) == 2
+
+
+async def test_s6_the_hourly_sweep_keeps_every_sandboxs_week_inside_the_check(world, as_of):
+    w = world
+    made, issued = await _sandbox_and_key(w)
+    key = issued["secret"]
+    m = (await w.client.post("/v1/tenants", headers=_auth(key), json={"name": "Shop"})).json()
+    live_files = len(await w.store.list_imports(w.shop.id))
+    later = datetime.now(UTC) + timedelta(days=125)
+    as_of(later.year, later.month, later.day)
+    assert await sandbox.refresh_all(now=later) == 2  # the sandbox and its merchant, nothing live
+    assert len(await w.store.list_imports(w.shop.id)) == live_files
+    for tenant_id in (made["id"], m["id"]):
+        await _check(w, key, tenant_id)
+        assert await _readme_items(w, key, tenant_id) == README
+    assert await sandbox.refresh_all(now=later) == 0  # fresh now: left as it is
 
 
 # ── S7 ─────────────────────────────────────────────────────────────────

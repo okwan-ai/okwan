@@ -56,6 +56,7 @@ from okwan_api.schedule import sweeper as schedule_sweeper
 from okwan_api.billing import sweeper as billing_sweeper
 from okwan_api.disputes import sweeper as disputes_sweeper
 from okwan_api.sandbox import build_router as build_sandbox_router
+from okwan_api.sandbox import sweeper as sandbox_sweeper
 from okwan_api.webhooks import build_router as build_webhooks_router
 from okwan_api.webhooks import document as document_webhooks
 from okwan_api.webhooks import sweeper as webhooks_sweeper
@@ -121,7 +122,8 @@ async def lifespan(_: FastAPI):
     gc.freeze()
     sweeps = [asyncio.create_task(imports_sweeper()), asyncio.create_task(access_sweeper()),
               asyncio.create_task(schedule_sweeper()), asyncio.create_task(billing_sweeper()),
-              asyncio.create_task(disputes_sweeper()), asyncio.create_task(webhooks_sweeper())]
+              asyncio.create_task(disputes_sweeper()), asyncio.create_task(webhooks_sweeper()),
+              asyncio.create_task(sandbox_sweeper())]
     try:
         async with _mcp.session_manager.run():
             yield
