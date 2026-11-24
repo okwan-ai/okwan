@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { COMPANY, LegalPage, Mail, type Part } from "../_components/legal";
+import { ADDRESS, COMPANY, LegalPage, Mail, type Part } from "../_components/legal";
 
 export const metadata: Metadata = {
   title: "Terms of Service — Okwan",
@@ -265,7 +265,7 @@ const parts: Part[] = [
   {
     id: "contact",
     title: "Contact",
-    body: <p>{COMPANY}, Wyoming, United States. Email <Mail />.</p>,
+    body: <p>{COMPANY}, {ADDRESS}. Email <Mail />.</p>,
   },
 ];
 
@@ -273,6 +273,7 @@ export default function Terms() {
   return (
     <LegalPage
       title="Terms of Service"
+      updated="November 24, 2026"
       intro={
         <p>
           These Terms are the agreement between you and {COMPANY}, a Wyoming limited liability company that operates

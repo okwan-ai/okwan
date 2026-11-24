@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ORGANIZATION } from "./_components/legal";
 import "./globals.css";
 
 const TITLE = "Okwan — Find where your systems disagree";
@@ -32,6 +33,10 @@ export default function RootLayout({
         <link
           href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap"
           rel="stylesheet"
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(ORGANIZATION) }}
         />
       </head>
       <body>{children}</body>
