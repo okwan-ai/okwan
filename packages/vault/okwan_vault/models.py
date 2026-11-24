@@ -24,6 +24,10 @@ class Tenant:
     #: account — a solo developer, or an ISV itself.
     parent_id: str | None = None
     created_at: datetime = field(default_factory=_now)
+    #: The API version the tenant's requests are answered in when they name
+    #: none (okwan_core.versions): the newest when a root account is made,
+    #: its parent's for a merchant. Every tenant the store returns has one.
+    api_version: str | None = None
 
     @property
     def is_root(self) -> bool:
@@ -443,6 +447,9 @@ class WebhookEndpoint:
     hint: str
     created_at: datetime
     created_by: str
+    #: The API version its events are sent in: the version of the request
+    #: that added it (okwan_core.versions).
+    api_version: str
     disabled_at: datetime | None = None
     disabled_why: str | None = None
     failing_since: datetime | None = None
@@ -452,8 +459,9 @@ class WebhookEndpoint:
 
 @dataclass(frozen=True, slots=True)
 class WebhookClaim:
-    """One delivery a round is sending: the event as signed, the address and
-    the secret to sign it with. Held by that round until `claimed_until`."""
+    """One delivery a round is sending: the event as stored, the address,
+    the version the address takes it in, and the secret to sign it with.
+    Held by that round until `claimed_until`."""
 
     endpoint_id: str
     event_id: str
@@ -463,6 +471,7 @@ class WebhookClaim:
     body: str
     attempts: int
     event_at: datetime
+    api_version: str
 
 
 @dataclass(frozen=True, slots=True)

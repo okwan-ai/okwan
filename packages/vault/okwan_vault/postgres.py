@@ -29,6 +29,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import asyncpg
+from okwan_core import versions
 
 from . import access as access_rules
 from . import accounts, apikey
@@ -142,6 +143,7 @@ def _tenant(row) -> Tenant:
         name=row["name"],
         parent_id=row["parent_id"],
         created_at=row["created_at"],
+        api_version=row["api_version"],
     )
 
 
@@ -267,10 +269,14 @@ class PostgresStore:
         """
         tenant_id = f"ten_{uuid.uuid4().hex[:16]}"
         try:
+            # A merchant is answered as the account that made it is; a new
+            # account in the newest version. A parent that is not there leaves
+            # the newest, and the foreign key refuses the row.
             row = await self.pool.fetchrow(
-                "INSERT INTO tenants (id, name, parent_id) VALUES ($1, $2, $3) "
-                "RETURNING id, name, parent_id, created_at",
-                tenant_id, name, parent_id,
+                "INSERT INTO tenants (id, name, parent_id, api_version) VALUES ($1, $2, $3, "
+                "COALESCE((SELECT api_version FROM tenants WHERE id = $3), $4)) "
+                "RETURNING id, name, parent_id, created_at, api_version",
+                tenant_id, name, parent_id, versions.current(),
             )
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown parent tenant {parent_id!r}") from None
@@ -278,14 +284,14 @@ class PostgresStore:
 
     async def get_tenant(self, tenant_id: str) -> Tenant | None:
         row = await self.pool.fetchrow(
-            "SELECT id, name, parent_id, created_at FROM tenants WHERE id = $1",
+            "SELECT id, name, parent_id, created_at, api_version FROM tenants WHERE id = $1",
             tenant_id,
         )
         return None if row is None else _tenant(row)
 
     async def children_of(self, tenant_id: str) -> list[Tenant]:
         rows = await self.pool.fetch(
-            "SELECT id, name, parent_id, created_at FROM tenants "
+            "SELECT id, name, parent_id, created_at, api_version FROM tenants "
             "WHERE parent_id = $1 ORDER BY created_at",
             tenant_id,
         )
@@ -295,15 +301,16 @@ class PostgresStore:
         """A tenant and those below it, `depth` levels down at most: the
         tenant first, then each level by id."""
         rows = await self.pool.fetch(
-            "WITH RECURSIVE sub AS (SELECT id, name, parent_id, created_at, 0 AS depth FROM tenants WHERE id = $1 "
-            "UNION ALL SELECT t.id, t.name, t.parent_id, t.created_at, sub.depth + 1 FROM tenants t "
+            "WITH RECURSIVE sub AS (SELECT id, name, parent_id, created_at, api_version, 0 AS depth "
+            "FROM tenants WHERE id = $1 "
+            "UNION ALL SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version, sub.depth + 1 FROM tenants t "
             "JOIN sub ON t.parent_id = sub.id WHERE sub.depth < $2) "
-            "SELECT id, name, parent_id, created_at FROM sub ORDER BY depth, id", tenant_id, depth)
+            "SELECT id, name, parent_id, created_at, api_version FROM sub ORDER BY depth, id", tenant_id, depth)
         return [_tenant(r) for r in rows]
 
     async def list_tenants(self) -> list[Tenant]:
         rows = await self.pool.fetch(
-            "SELECT id, name, parent_id, created_at FROM tenants ORDER BY created_at"
+            "SELECT id, name, parent_id, created_at, api_version FROM tenants ORDER BY created_at"
         )
         return [_tenant(r) for r in rows]
 
@@ -341,7 +348,7 @@ class PostgresStore:
         """The key's tenant and what the key may do. Indexed hash lookup —
         no scan over keys, no timing signal."""
         row = await self.pool.fetchrow(
-            "SELECT t.id, t.name, t.parent_id, t.created_at, k.scope "
+            "SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version, k.scope "
             "FROM api_keys k JOIN tenants t ON t.id = k.tenant_id "
             "WHERE k.hash_hex = $1 AND k.revoked_at IS NULL",
             apikey.hash_key(full_key),
@@ -966,9 +973,9 @@ class PostgresStore:
             if await con.fetchval("SELECT 1 FROM accounts WHERE email = $1", email):
                 return None
             tenant = _tenant(await con.fetchrow(
-                "INSERT INTO tenants (id, name, parent_id) VALUES ($1, $2, NULL) "
-                "RETURNING id, name, parent_id, created_at",
-                f"ten_{uuid.uuid4().hex[:16]}", email,
+                "INSERT INTO tenants (id, name, parent_id, api_version) VALUES ($1, $2, NULL, $3) "
+                "RETURNING id, name, parent_id, created_at, api_version",
+                f"ten_{uuid.uuid4().hex[:16]}", email, versions.current(),
             ))
             try:
                 await con.execute(
@@ -1356,7 +1363,7 @@ class PostgresStore:
             "  UPDATE sessions SET last_seen_at = now() WHERE token_hash = $1"
             "  AND last_seen_at < now() - $3::interval AND EXISTS (SELECT 1 FROM live)"
             ") "
-            "SELECT t.id, t.name, t.parent_id, t.created_at "
+            "SELECT t.id, t.name, t.parent_id, t.created_at, t.api_version "
             "FROM live JOIN tenants t ON t.id = live.tenant_id",
             token_hash, accounts.SESSION_IDLE, accounts.SESSION_TOUCH,
         )
@@ -2035,11 +2042,14 @@ class PostgresStore:
         return open_sealed(data_key, record.ciphertext, aad=record.aad).decode()
 
     async def add_webhook_endpoint(
-        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime,
+        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime, api_version: str,
     ) -> WebhookEndpoint:
         """A new address, its secret sealed for this account and this address
-        alone. At most WEBHOOK_ENDPOINTS_MAX an account, counted under a lock
-        on the account's addresses so two at once cannot both pass."""
+        alone, sent its events in `api_version`. At most WEBHOOK_ENDPOINTS_MAX
+        an account, counted under a lock on the account's addresses so two at
+        once cannot both pass."""
+        if not versions.known(api_version):
+            raise ValueError(f"not a version: {api_version!r}")
         endpoint_id = f"whe_{uuid.uuid4().hex[:16]}"
         data_key = new_key()
         record = SealedCredential(tenant_id=tenant_id, connector="webhook", field_name=endpoint_id,
@@ -2052,10 +2062,10 @@ class PostgresStore:
                     raise EndpointsFull(tenant_id)
                 row = await con.fetchrow(
                     "INSERT INTO webhook_endpoints AS p (id, tenant_id, url, ciphertext, wrapped_key, key_id, hint, "
-                    "created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+                    "created_at, created_by, api_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) "
                     f"RETURNING {_ENDPOINT_COLS}, 0 AS pending",
                     endpoint_id, tenant_id, url, seal(data_key, secret.encode(), aad=record.aad),
-                    self._master.wrap(data_key), self._master.key_id, secret[:10], at, created_by)
+                    self._master.wrap(data_key), self._master.key_id, secret[:10], at, created_by, api_version)
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown tenant {tenant_id!r}") from None
         return _endpoint(row)
@@ -2098,12 +2108,13 @@ class PostgresStore:
                     "WHERE tenant_id = $1 AND endpoint_id = $2 AND state = 'pending'", tenant_id, endpoint_id)
         return done is not None
 
-    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str] | None:
+    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str, str] | None:
+        """The address, its secret and the version it is sent in."""
         async with self._scoped(tenant_id) as con:
             row = await con.fetchrow(
-                "SELECT id, tenant_id, url, ciphertext, wrapped_key, key_id FROM webhook_endpoints "
+                "SELECT id, tenant_id, url, ciphertext, wrapped_key, key_id, api_version FROM webhook_endpoints "
                 "WHERE tenant_id = $1 AND id = $2", tenant_id, endpoint_id)
-        return None if row is None else (row["url"], self._webhook_secret(row))
+        return None if row is None else (row["url"], self._webhook_secret(row), row["api_version"])
 
     async def add_webhook_events(self, merchant_id: str, run_id: str | None, events: list[dict],
                                  at: datetime) -> int:
@@ -2174,13 +2185,14 @@ class PostgresStore:
             bodies = {r["id"]: r["body"] for r in await con.fetch(
                 "SELECT id, body FROM webhook_events WHERE id = ANY($1::text[])", [r["event_id"] for r in rows])}
             ends = {r["id"]: r for r in await con.fetch(
-                "SELECT id, tenant_id, url, ciphertext, wrapped_key, key_id FROM webhook_endpoints "
+                "SELECT id, tenant_id, url, ciphertext, wrapped_key, key_id, api_version FROM webhook_endpoints "
                 "WHERE id = ANY($1::text[])", list({r["endpoint_id"] for r in rows}))}
         secrets = {k: self._webhook_secret(v) for k, v in ends.items()}
         rows = sorted(rows, key=lambda r: (r["next_at"], r["event_at"], r["event_id"]))
         return [WebhookClaim(endpoint_id=r["endpoint_id"], event_id=r["event_id"], tenant_id=tenant_id,
                              url=ends[r["endpoint_id"]]["url"], secret=secrets[r["endpoint_id"]],
-                             body=bodies[r["event_id"]], attempts=r["attempts"], event_at=r["event_at"])
+                             body=bodies[r["event_id"]], attempts=r["attempts"], event_at=r["event_at"],
+                             api_version=ends[r["endpoint_id"]]["api_version"])
                 for r in rows if r["event_id"] in bodies and r["endpoint_id"] in ends]
 
     async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None:
@@ -2345,15 +2357,16 @@ _DROP_FILE_EVENTS = ("DELETE FROM webhook_events WHERE merchant_id = $1 "
                      "AND (reads_files OR check_name = ANY($2::text[]))")
 
 
-_ENDPOINT_COLS = ("p.id, p.tenant_id, p.url, p.hint, p.created_at, p.created_by, p.disabled_at, p.disabled_why, "
-                  "p.failing_since, p.last_ok_at")
+_ENDPOINT_COLS = ("p.id, p.tenant_id, p.url, p.hint, p.created_at, p.created_by, p.api_version, p.disabled_at, "
+                  "p.disabled_why, p.failing_since, p.last_ok_at")
 
 
 def _endpoint(row) -> WebhookEndpoint:
     return WebhookEndpoint(
         id=row["id"], tenant_id=row["tenant_id"], url=row["url"], hint=row["hint"], created_at=row["created_at"],
-        created_by=row["created_by"], disabled_at=row["disabled_at"], disabled_why=row["disabled_why"],
-        failing_since=row["failing_since"], last_ok_at=row["last_ok_at"], pending=int(row["pending"] or 0))
+        created_by=row["created_by"], api_version=row["api_version"], disabled_at=row["disabled_at"],
+        disabled_why=row["disabled_why"], failing_since=row["failing_since"], last_ok_at=row["last_ok_at"],
+        pending=int(row["pending"] or 0))
 
 
 def _dumps(value) -> str | None:

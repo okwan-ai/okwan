@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, RedirectResponse
-from okwan_core import all_connectors
+from okwan_core import all_connectors, versions
 from okwan_recon.across import OUTCOMES
 from okwan_recon.paging import MAX_ROWS
 from okwan_recon.registry import all_across
@@ -120,6 +120,7 @@ def intro() -> str:
                     for r, op in c.iter_operations() if not op.is_read_only)
     write_line = (f"The only operations that write are {', '.join(writes)}; they are marked **Writes** below."
                   if writes else "No operation writes.")
+    dated = ", ".join(f"`{v.date}` ({v.what[0].lower()}{v.what[1:].rstrip('.')})" for v in versions.VERSIONS)
     return f"""Okwan reads the order ledgers and payment rails of the merchants you serve and tells you, order by
 order, what was **collected twice**, what **doesn't add up** and what was **never paid**. Every route is
 read-only.
@@ -142,6 +143,20 @@ read-only.
 Send the key as `Authorization: Bearer okw_…` (or `X-Okwan-Key: okw_…`). A key belongs to one merchant, or to
 your workspace, and reads only what that tenant has connected. Routes under **Merchants & keys** also take a
 dashboard session. Okwan stores a key's hash only; revoke a key by its id.
+
+## Versions
+
+The API is versioned by date. Your account is answered in the version that was newest when it was made, and
+the merchants you add are answered as your account is, so a later release never changes what your code reads.
+Every answer says which version answered, in its `Okwan-Version` header. Send `Okwan-Version: YYYY-MM-DD` on a
+request to be answered in another version, for example to try a newer one before you move to it; a value that
+names no version is refused with `400`. A webhook address is sent its events in the version of the request that
+added it, and each body says which in `api_version`. The versions: {dated}.
+
+A new version is made only for a change that would break code written against the one before it: a field
+renamed or removed, a type or a meaning changed. Additions (a route, a field, an event type, an optional
+parameter) reach every version, so read the fields you know and ignore the rest. SQL tables and MCP tools are
+not versioned: they change only by addition.
 
 ## One declaration, three surfaces
 
@@ -173,7 +188,7 @@ reconciliation, a check) counts as one request against your plan. Reading the ca
 
 ## Errors
 
-Errors are JSON: `{{"detail": …}}`. `401` the key is missing or invalid, or the provider rejected the stored
+Errors are JSON: `{{"detail": …}}`. `400` the `Okwan-Version` header names no version · `401` the key is missing or invalid, or the provider rejected the stored
 credentials · `402` the plan's limit is reached · `404` unknown, or not yours (never `403`) · `409` a cursor from a
 different result · `422` the request is invalid (your input is never echoed back) · `502` a provider failed. A
 provider's own error keeps its status code.
@@ -298,6 +313,12 @@ def build_openapi(app: FastAPI) -> dict[str, Any]:
             "description": "The same key in its own header, for clients that can't set Authorization.",
         },
     }
+    version = {
+        "name": versions.HEADER, "in": "header", "required": False,
+        "schema": {"type": "string", "enum": list(versions.dates())},
+        "description": ("The API version to answer in. Left out, your account's: the newest when the "
+                        "account was made. The answer's own `Okwan-Version` header says which answered."),
+    }
     writes = write_operations()
     titles = connector_titles()
     for path, item in spec.get("paths", {}).items():
@@ -320,6 +341,8 @@ def build_openapi(app: FastAPI) -> dict[str, Any]:
                     op["parameters"] = kept
                 else:
                     op.pop("parameters", None)
+            if path.startswith("/v1/"):
+                op["parameters"] = [*op.get("parameters", []), dict(version)]
             if op.get("operationId") in writes:
                 op["x-okwan-writes"] = True
                 op["description"] = ("**Writes.** This operation sends data to the provider.\n\n"

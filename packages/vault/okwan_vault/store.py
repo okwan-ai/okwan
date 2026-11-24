@@ -17,6 +17,8 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
+from okwan_core import versions
+
 from . import access as access_rules
 from . import accounts, apikey
 from .access import Seen
@@ -303,13 +305,13 @@ class Store(Protocol):
     ) -> list[dict]: ...
     async def sweep_access(self, now: datetime | None = None) -> int: ...
     async def add_webhook_endpoint(
-        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime,
+        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime, api_version: str,
     ) -> WebhookEndpoint: ...
     async def webhook_endpoints(self, tenant_ids: list[str], *, enabled_only: bool = False) -> list[WebhookEndpoint]: ...
     async def delete_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> bool: ...
     async def enable_webhook_endpoint(self, tenant_id: str, endpoint_id: str) -> WebhookEndpoint | None: ...
     async def disable_webhook_endpoint(self, tenant_id: str, endpoint_id: str, at: datetime, why: str) -> bool: ...
-    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str] | None: ...
+    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str, str] | None: ...
     async def add_webhook_events(self, merchant_id: str, run_id: str | None, events: list[dict],
                                  at: datetime) -> int: ...
     async def webhook_due(self, now: datetime, limit: int = 100) -> list[str]: ...
@@ -384,8 +386,13 @@ class MemoryStore:
     async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
         if parent_id is not None and parent_id not in self._tenants:
             raise KeyError(f"unknown parent tenant {parent_id!r}")
+        # A merchant is answered as the account that made it is; a new
+        # account in the newest version.
+        parent = self._tenants.get(parent_id) if parent_id is not None else None
         tenant = Tenant(
-            id=f"ten_{uuid.uuid4().hex[:16]}", name=name, parent_id=parent_id
+            id=f"ten_{uuid.uuid4().hex[:16]}", name=name, parent_id=parent_id,
+            api_version=(parent.api_version if parent is not None and parent.api_version
+                         else versions.current()),
         )
         self._tenants[tenant.id] = tenant
         return tenant
@@ -1577,16 +1584,19 @@ class MemoryStore:
         pending = sum(1 for (ep, _), d in self._deliveries.items() if ep == e["id"] and d["state"] == "pending")
         return WebhookEndpoint(
             id=e["id"], tenant_id=e["tenant_id"], url=e["url"], hint=e["hint"], created_at=e["created_at"],
-            created_by=e["created_by"], disabled_at=e["disabled_at"], disabled_why=e["disabled_why"],
-            failing_since=e["failing_since"], last_ok_at=e["last_ok_at"], pending=pending)
+            created_by=e["created_by"], api_version=e["api_version"], disabled_at=e["disabled_at"],
+            disabled_why=e["disabled_why"], failing_since=e["failing_since"], last_ok_at=e["last_ok_at"],
+            pending=pending)
 
     def _open_secret(self, e: dict) -> str:
         sealed = e["sealed"]
         return open_sealed(self._master.unwrap(sealed.wrapped_key), sealed.ciphertext, aad=sealed.aad).decode()
 
     async def add_webhook_endpoint(
-        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime,
+        self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime, api_version: str,
     ) -> WebhookEndpoint:
+        if not versions.known(api_version):
+            raise ValueError(f"not a version: {api_version!r}")
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
         if sum(1 for e in self._endpoints.values() if e["tenant_id"] == tenant_id) >= WEBHOOK_ENDPOINTS_MAX:
@@ -1601,8 +1611,8 @@ class MemoryStore:
             wrapped_key=self._master.wrap(data_key), key_id=self._master.key_id)
         self._endpoints[endpoint_id] = {
             "id": endpoint_id, "tenant_id": tenant_id, "url": url, "sealed": sealed, "hint": secret[:10],
-            "created_at": at, "created_by": created_by, "disabled_at": None, "disabled_why": None,
-            "failing_since": None, "last_ok_at": None}
+            "created_at": at, "created_by": created_by, "api_version": api_version, "disabled_at": None,
+            "disabled_why": None, "failing_since": None, "last_ok_at": None}
         return self._endpoint(self._endpoints[endpoint_id])
 
     async def webhook_endpoints(self, tenant_ids: list[str], *, enabled_only: bool = False) -> list[WebhookEndpoint]:
@@ -1636,11 +1646,11 @@ class MemoryStore:
                 d.update(state="failed", next_at=None, claimed_until=None)
         return True
 
-    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str] | None:
+    async def webhook_secret(self, tenant_id: str, endpoint_id: str) -> tuple[str, str, str] | None:
         e = self._endpoints.get(endpoint_id)
         if e is None or e["tenant_id"] != tenant_id:
             return None
-        return e["url"], self._open_secret(e)
+        return e["url"], self._open_secret(e), e["api_version"]
 
     async def add_webhook_events(self, merchant_id: str, run_id: str | None, events: list[dict],
                                  at: datetime) -> int:
@@ -1688,7 +1698,8 @@ class MemoryStore:
             e = self._endpoints[ep]
             out.append(WebhookClaim(endpoint_id=ep, event_id=ev, tenant_id=tenant_id, url=e["url"],
                                     secret=self._open_secret(e), body=self._events[ev]["body"],
-                                    attempts=d["attempts"], event_at=d["event_at"]))
+                                    attempts=d["attempts"], event_at=d["event_at"],
+                                    api_version=e["api_version"]))
         return out
 
     async def release_webhooks(self, tenant_id: str, deliveries: list[tuple[str, str]]) -> None:

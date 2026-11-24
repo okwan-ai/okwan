@@ -30,7 +30,7 @@ from okwan_vault import (
 from okwan_vault.models import Tenant
 from okwan_vault.usage import Quota, quota
 
-from . import access
+from . import access, versions
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,7 @@ async def _key_access(request: Request, authorization: str, x_okwan_key: str) ->
     if found is None:
         raise HTTPException(401, "invalid or revoked API key")
     access.remember_request(request, key)
+    versions.remember(request, found[0])
     return found
 
 
@@ -159,6 +160,7 @@ async def admin_actor(
         if tenant is None:
             raise HTTPException(401, "session expired — sign in again")
         access.remember_request(request, token)
+        versions.remember(request, tenant)
         return tenant
     tenant, scope = await _key_access(request, authorization, x_okwan_key)
     if scope != ADMIN:

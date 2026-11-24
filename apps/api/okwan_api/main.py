@@ -39,6 +39,7 @@ from okwan_core import (
     UpstreamError,
     all_connectors,
 )
+from okwan_core import versions as _versions
 from okwan_core.connector import Connector, Operation, Resource
 import okwan_recon.declarations  # noqa: F401  (registers reconciliations)
 import okwan_query.declarations  # noqa: F401  (registers declared tables)
@@ -131,7 +132,8 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Okwan API",
-    version="0.1.0",
+    # The document describes the newest version (okwan_core.versions).
+    version=_versions.current(),
     description="The data connectivity layer built for AI agents.",
     lifespan=lifespan,
     # The reference at /docs is Okwan's own page (okwan_api/docs.py).
@@ -324,6 +326,12 @@ async def healthz() -> dict[str, Any]:
 from okwan_api.docs import install as _install_docs
 
 _install_docs(app)
+
+# Inside the edge: every /v1/ answer says which API version answered, and a
+# header naming no version is refused before a route runs.
+from okwan_api.versions import Versions
+
+app.add_middleware(Versions)
 
 # Outermost: the size cap and protective headers cover every route and
 # the MCP mount, and an oversized body is refused before anything parses it.
