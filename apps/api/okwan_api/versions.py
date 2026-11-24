@@ -1,14 +1,16 @@
 """Which API version answers a request, and the answer in that version.
 
 Every request under /v1/ is answered in one version (okwan_core.versions):
-the one its `Okwan-Version` header names, else the version of the account
-whose key or session made it (stamped when the account was made), else, on
-a route that takes neither, the newest. The answer says which, in the same
-header.
+the one in effect on the day its `Okwan-Version` header names, else the
+one in effect for the account whose key or session made it (stamped when
+the account was made), else, on a route that takes neither, the newest.
+The answer says which, in the same header, always a version's own date.
 
-A header naming no version is refused with 400 before any route runs:
-code that asks for a shape Okwan does not have is told so, rather than
-answered in another. Two different values are refused the same way.
+A header that is not a day, or names a day before the first version, is
+refused with 400 before any route runs, and so are two different values:
+code that asks for a shape no version had is told so, rather than
+answered in another. A day after this release's newest version is
+answered in its newest: the client is ahead of what is deployed.
 
 A route makes its answer in the newest shape. When the version answering
 is older and a change since then alters that route, its successful JSON
@@ -43,7 +45,8 @@ class Unknown(ValueError):
 
 
 def asked(headers: list[tuple[bytes, bytes]]) -> str | None:
-    """The version the request's header names, or None when it names none."""
+    """The version in effect on the day the request's header names, or None
+    when it has no header."""
     # Only the spaces and tabs HTTP allows around a value are taken off.
     values = {v.decode("latin-1").strip(" \t") for k, v in headers if k.lower() == _NAME}
     if not values:
@@ -51,20 +54,24 @@ def asked(headers: list[tuple[bytes, bytes]]) -> str | None:
     if len(values) > 1:
         raise Unknown("two versions")
     (value,) = values
-    if not versions.known(value):
+    found = versions.in_effect(value)
+    if found is None:
         raise Unknown(value)
-    return value
+    return found
 
 
 def remember(request: Request, tenant: Tenant) -> None:
-    """Called where a key or session is resolved: the account's version
+    """Called wherever a key or session is resolved: the account's version
     answers when the request names none."""
     request.scope.setdefault("state", {})[_ACCOUNT] = tenant.api_version
 
 
 def of_scope(scope: Scope) -> str:
+    """The version answering: the one asked, else the one in effect for the
+    account (a stamp this release does not know, made by a newer one, is
+    answered in this release's newest), else the newest."""
     state = scope.get("state") or {}
-    return state.get(_ASKED) or state.get(_ACCOUNT) or versions.current()
+    return state.get(_ASKED) or versions.in_effect(state.get(_ACCOUNT)) or versions.current()
 
 
 def of(request: Request) -> str:
@@ -74,8 +81,9 @@ def of(request: Request) -> str:
 
 def _refusal() -> bytes:
     return json.dumps({"detail": (
-        f"{versions.HEADER} names no version of this API. Send one of {', '.join(versions.dates())} "
-        f"(YYYY-MM-DD), or leave it out to be answered in your account's version.")}).encode()
+        f"{versions.HEADER} names no version of this API: send a day, YYYY-MM-DD, on or after "
+        f"{versions.FIRST} (the versions are {', '.join(versions.dates())}), or leave it out to be "
+        f"answered in your account's version.")}).encode()
 
 
 class Versions:

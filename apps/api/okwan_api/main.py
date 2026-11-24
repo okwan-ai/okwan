@@ -65,7 +65,7 @@ from okwan_api.ops import build_router as build_ops_router
 from okwan_api.suggestions import build_router as build_suggestions_router
 from okwan_api.support import build_router as build_support_router
 from okwan_api.auth import (
-    check_quota, close_store, load_credentials, meter, open_store,
+    check_quota, close_store, key_version, load_credentials, meter, open_store,
 )
 from okwan_query.catalog import tables_for
 from okwan_query.mcp_http import build_server as build_mcp_server
@@ -168,7 +168,8 @@ def _probe_name(c: Connector) -> str | None:
     return None if probe is None else f"{c.name}.{probe[0].name}.{probe[1].name}"
 
 
-@app.get("/v1/connectors", response_model=list[ConnectorInfo], tags=["catalog"])
+@app.get("/v1/connectors", response_model=list[ConnectorInfo], tags=["catalog"],
+         dependencies=[Depends(key_version)])
 async def list_connectors() -> list[ConnectorInfo]:
     return [
         ConnectorInfo(

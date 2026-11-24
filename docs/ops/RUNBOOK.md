@@ -451,19 +451,21 @@ process. What to look at when a customer says events stopped:
 ### API versions
 
 Every answer under `/v1/` says which version answered in its
-`Okwan-Version` header (`okwan_api/versions.py`): the one the request
-named, else the account's (`tenants.api_version`, the newest when the
-account was made; a merchant has its account's), else the newest. A
-webhook address keeps the version of the request that added it
+`Okwan-Version` header (`okwan_api/versions.py`): the one in effect on the
+day the request named (the newest version on or before it), else the
+account's (`tenants.api_version`, the newest when the account was made; a
+merchant has its account's; an account made with `tenant create` is
+stamped with the day it was made), else the newest. A webhook address is
+on its account's version unless it was added with another
 (`webhook_endpoints.api_version`, in `GET /v1/webhooks`). When a customer
 says a release broke their integration:
 
 1. Ask for the `Okwan-Version` header of a failing answer. If it is not
    the version their code was written for, their code sends another one
    in the header, or the account is on another version than they think.
-2. `400` "Okwan-Version names no version" is a header naming a date that
-   is not a version (or two different ones): the list is in the API
-   reference under Versions.
+2. `400` "Okwan-Version names no version" is a header that is not a day,
+   a day before the first version, or two different values: the list is
+   in the API reference under Versions.
 3. If the version is theirs and the shape still changed, the release
    changed that version: a bug. Fix it with a `Change` (below), never by
    asking the customer to move.
@@ -485,8 +487,12 @@ changed, an event's body reshaped); an addition needs none:
    removed for safety is not written; that change reaches every version.
 4. Say what changed in the version's `what`: the reference lists every
    version with it.
-5. Moving the dashboard to it is a separate change: `API_VERSION` in
-   `apps/dashboard/lib/api.ts`, in the change that reads the new shape.
+5. Moving the dashboard to it is a later release: `API_VERSION` in
+   `apps/dashboard/lib/api.ts`, with the change that reads the new shape,
+   once the API that has the version is live. Rolling the API back past a
+   version the dashboard names does not lock anyone out (the API answers
+   in its own newest), but the dashboard then reads the older shape: roll
+   the dashboard back too.
 
 ### Daily checks and their mail
 

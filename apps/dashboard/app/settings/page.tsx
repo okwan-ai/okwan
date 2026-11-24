@@ -216,6 +216,10 @@ function WebhookCard({ address: a }: { address: WebhookAddress }) {
           {a.last_ok_at ? <span suppressHydrationWarning>{day(a.last_ok_at)}</span> : <span className="text-ink-soft">Nothing yet</span>}
         </KeyValueRow>
         <KeyValueRow label="Waiting to be sent">{a.pending}</KeyValueRow>
+        <KeyValueRow label="API version">
+          <code className="font-mono text-[13px]">{a.api_version}</code>
+          <span className="block text-xs text-ink-soft">Each event is in this version, and its body says so in api_version.</span>
+        </KeyValueRow>
         <KeyValueRow label="Secret">
           <code className="font-mono text-[13px]">{a.secret_hint}</code>
           <span className="block text-xs text-ink-soft">Only its first characters: it was shown once, when the address was added.</span>

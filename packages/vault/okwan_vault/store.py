@@ -82,7 +82,8 @@ class Store(Protocol):
     #: file is removed. Set by the API from its registry.
     file_checks: Callable[[], Collection[str]]
 
-    async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant: ...
+    async def create_tenant(self, name: str, parent_id: str | None = None, *,
+                            api_version: str | None = None) -> Tenant: ...
     async def get_tenant(self, tenant_id: str) -> Tenant | None: ...
     async def children_of(self, tenant_id: str) -> list[Tenant]: ...
     async def subtree(self, tenant_id: str, depth: int) -> list[Tenant]: ...
@@ -383,16 +384,18 @@ class MemoryStore:
         self._events: dict[str, dict] = {}
         self._deliveries: dict[tuple[str, str], dict] = {}
 
-    async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
+    async def create_tenant(self, name: str, parent_id: str | None = None, *,
+                            api_version: str | None = None) -> Tenant:
+        _stampable(parent_id, api_version)
         if parent_id is not None and parent_id not in self._tenants:
             raise KeyError(f"unknown parent tenant {parent_id!r}")
         # A merchant is answered as the account that made it is; a new
-        # account in the newest version.
+        # account in the newest version, or on the day it is stamped with.
         parent = self._tenants.get(parent_id) if parent_id is not None else None
         tenant = Tenant(
             id=f"ten_{uuid.uuid4().hex[:16]}", name=name, parent_id=parent_id,
             api_version=(parent.api_version if parent is not None and parent.api_version
-                         else versions.current()),
+                         else api_version or versions.current()),
         )
         self._tenants[tenant.id] = tenant
         return tenant
@@ -1595,7 +1598,7 @@ class MemoryStore:
     async def add_webhook_endpoint(
         self, tenant_id: str, *, url: str, secret: str, created_by: str, at: datetime, api_version: str,
     ) -> WebhookEndpoint:
-        if not versions.known(api_version):
+        if versions.in_effect(api_version) is None:
             raise ValueError(f"not a version: {api_version!r}")
         if tenant_id not in self._tenants:
             raise KeyError(f"unknown tenant {tenant_id!r}")
@@ -1793,3 +1796,14 @@ async def resolver_for(store: Store, tenant_id: str, connectors=None):
     # (`files`) reads this tenant's data and no other (Connector.context).
     resolve.tenant_id = tenant_id  # type: ignore[attr-defined]
     return resolve
+
+
+def _stampable(parent_id: str | None, api_version: str | None) -> None:
+    """A version is stamped on an account only: a merchant always takes its
+    account's. The stamp is a day the version list can read (in_effect)."""
+    if api_version is None:
+        return
+    if parent_id is not None:
+        raise ValueError("a merchant takes its account's version")
+    if versions.in_effect(api_version) is None:
+        raise ValueError(f"not a version: {api_version!r}")

@@ -74,6 +74,7 @@ from .models import (
     add_months,
     new_unsubscribe_token,
 )
+from .store import _stampable
 from .usage import (
     CHECKOUTS_LISTED,
     DEFAULT_PLAN,
@@ -260,23 +261,26 @@ class PostgresStore:
 
     # ── tenants ─────────────────────────────────────────────────────
 
-    async def create_tenant(self, name: str, parent_id: str | None = None) -> Tenant:
+    async def create_tenant(self, name: str, parent_id: str | None = None, *,
+                            api_version: str | None = None) -> Tenant:
         """Create a tenant, optionally as a child of an existing one.
 
         The parent must exist; the foreign key enforces that rather than a
         prior read, so two concurrent creates cannot both pass a check
         against a parent one of them is deleting.
         """
+        _stampable(parent_id, api_version)
         tenant_id = f"ten_{uuid.uuid4().hex[:16]}"
         try:
             # A merchant is answered as the account that made it is; a new
-            # account in the newest version. A parent that is not there leaves
-            # the newest, and the foreign key refuses the row.
+            # account in the newest version, or on the day it is stamped with.
+            # A parent that is not there leaves the newest, and the foreign key
+            # refuses the row.
             row = await self.pool.fetchrow(
                 "INSERT INTO tenants (id, name, parent_id, api_version) VALUES ($1, $2, $3, "
                 "COALESCE((SELECT api_version FROM tenants WHERE id = $3), $4)) "
                 "RETURNING id, name, parent_id, created_at, api_version",
-                tenant_id, name, parent_id, versions.current(),
+                tenant_id, name, parent_id, api_version or versions.current(),
             )
         except asyncpg.ForeignKeyViolationError:
             raise KeyError(f"unknown parent tenant {parent_id!r}") from None
@@ -2048,7 +2052,7 @@ class PostgresStore:
         alone, sent its events in `api_version`. At most WEBHOOK_ENDPOINTS_MAX
         an account, counted under a lock on the account's addresses so two at
         once cannot both pass."""
-        if not versions.known(api_version):
+        if versions.in_effect(api_version) is None:
             raise ValueError(f"not a version: {api_version!r}")
         endpoint_id = f"whe_{uuid.uuid4().hex[:16]}"
         data_key = new_key()

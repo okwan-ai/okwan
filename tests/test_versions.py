@@ -4,10 +4,11 @@ What must hold:
 
 - the list is real dates, each after the one before, the first changing
   nothing; the schema's defaults and the dashboard name versions on it;
-- every answer under /v1/ says which version answered: the one the
-  `Okwan-Version` header names, else the account's, else (no key) the
-  newest; a header naming no version, or two, is refused with 400 before
-  any route runs, and a route outside /v1/ is left alone;
+- every answer under /v1/ says which version answered: the one in effect
+  on the day the `Okwan-Version` header names, else the account's, else (no
+  key) the newest; a header that is not a day, a day before the first
+  version, or two values, is refused with 400 before any route runs, and a
+  route outside /v1/ is left alone;
 - an account is made on the newest version and a merchant on its parent's,
   so a release never moves an existing account or the merchants it adds;
   every way a key or session is resolved carries the version, in both
@@ -15,9 +16,10 @@ What must hold:
 - a change since the version answering gives a successful JSON answer back
   in the older shape, and nothing else: not an error, not another route,
   not a request that names the newer version;
-- a webhook address keeps the version of the request that added it, and
-  each delivery is in that version, signed over exactly what is sent; an
-  address on the newest version is sent the stored body byte for byte.
+- a webhook address is on its account's version, or the one named when it
+  is added (never the request's header), and each delivery is in that
+  version, signed over exactly what is sent; an address on the newest
+  version is sent the stored body byte for byte.
 
 The changes used here are made up for the test: none exists yet.
 """
@@ -158,14 +160,31 @@ def test_undoing_goes_newest_first_and_never_makes_a_body_newer(monkeypatch):
     assert not versions.changed("2027-01-01", route=r) and versions.changed(versions.FIRST, route=r)
 
 
-def test_every_route_a_change_names_is_mounted_and_every_event_is_one_okwan_sends():
-    from okwan_api.main import app
+def mounted() -> set[str]:
+    """Every route as a change names it, included routers and all."""
+    from tests.test_tenant_isolation import _routes
 
-    mounted = {f"{m} {r.path}" for r in app.routes for m in getattr(r, "methods", None) or ()}
+    return {f"{m} {path}" for m, path in _routes() if m != "MOUNT"}
+
+
+def test_every_route_a_change_names_is_mounted_and_every_event_is_one_okwan_sends():
+    routes = mounted()
+    assert {"GET /v1/webhooks", "GET /v1/exceptions", "GET /v1/connectors"} <= routes
     for v in versions.VERSIONS:
         for c in v.changes:
-            assert c.routes <= mounted, (v.date, c.what, c.routes - mounted)
-            assert c.events <= set(wh.EVENT_TYPES), (v.date, c.what)
+            assert c.routes <= routes, (v.date, c.what, c.routes - routes)
+            assert c.events <= set(wh.SENT_TYPES), (v.date, c.what)
+
+
+def test_a_day_names_the_version_in_effect_on_it(monkeypatch):
+    assert versions.in_effect(versions.FIRST) == versions.FIRST
+    assert versions.in_effect("2026-11-30") == versions.FIRST
+    assert versions.in_effect("2099-01-01") == versions.current()
+    for nothing in ("2026-11-23", "2026-02-30", "26-11-24", "latest", "", None, "2026-11-24 "):
+        assert versions.in_effect(nothing) is None, nothing
+    monkeypatch.setattr(versions, "VERSIONS", (versions.VERSIONS[0], versions.Version(NEXT, "x")))
+    assert versions.in_effect("2026-11-30") == versions.FIRST and versions.in_effect(NEXT) == NEXT
+    assert versions.in_effect("2026-12-31") == NEXT
 
 
 # ── the header ─────────────────────────────────────────────────────────
@@ -189,7 +208,7 @@ async def test_every_answer_under_v1_says_which_version_answered(world):
 
 
 @pytest.mark.parametrize("sent", [
-    ["2026-11-25"], ["latest"], [""], ["2026-11-24; drop"], [b"2026-11-24\xa0"], [b"2026-11-24\x00"], ["2026-11-24", "2026-11-23"],
+    ["2026-11-23"], ["2026-02-30"], ["latest"], [""], ["2026-11-24; drop"], [b"2026-11-24\xa0"], [b"2026-11-24\x00"], ["2026-11-24", "2026-11-23"],
     ["9999-99-99"], ["2026-11-24,2026-11-24"],
 ])
 async def test_a_header_that_names_no_version_is_refused_before_any_route_runs(world, sent):
@@ -207,6 +226,14 @@ async def test_a_header_that_names_no_version_is_refused_before_any_route_runs(w
     assert r.headers["okwan-version"] == versions.current()
     # Refused before the route: nothing was added.
     assert await w.store.webhook_endpoints([t.id]) == []
+
+
+async def test_a_day_between_versions_is_answered_in_the_one_in_effect(world, next_version):
+    w = world
+    r = await w.client.get("/v1/connectors", headers={"Okwan-Version": "2026-11-30"})
+    assert r.status_code == 200 and r.headers["okwan-version"] == versions.FIRST
+    r = await w.client.get("/v1/connectors", headers={"Okwan-Version": "2027-03-01"})
+    assert r.status_code == 200 and r.headers["okwan-version"] == NEXT
 
 
 async def test_the_same_version_twice_or_with_spaces_is_one_version(world):
@@ -322,18 +349,28 @@ async def test_errors_and_other_routes_are_never_reshaped(world, next_version):
 
 # ── webhooks ───────────────────────────────────────────────────────────
 
-async def test_an_address_keeps_the_version_of_the_request_that_added_it(world, receiver, next_version):  # noqa: F811
+async def test_an_address_is_on_its_accounts_version_or_the_one_it_was_added_on(world, receiver, next_version):  # noqa: F811
     w = world
     _, admin, _ = await _account(w)
     a = await w.client.post("/v1/webhooks", headers=_auth(admin), json={"url": f"https://{HOST}/a"})
+    # The header shapes this one answer, never the address.
     b = await w.client.post("/v1/webhooks", headers=_auth(admin, versions.FIRST), json={"url": f"https://{HOST}/b"})
-    assert a.json()["api_version"] == versions.current() and b.json()["api_version"] == versions.FIRST
+    assert b.headers["okwan-version"] == versions.FIRST
+    c = await w.client.post("/v1/webhooks", headers=_auth(admin),
+                            json={"url": f"https://{HOST}/c", "api_version": versions.FIRST})
+    assert (a.json()["api_version"], b.json()["api_version"], c.json()["api_version"]) == (
+        NEXT, NEXT, versions.FIRST)
     listed = (await w.client.get("/v1/webhooks", headers=_auth(admin))).json()["data"]
-    assert {e["id"]: e["api_version"] for e in listed} == {a.json()["id"]: versions.current(),
-                                                         b.json()["id"]: versions.FIRST}
+    assert {e["id"]: e["api_version"] for e in listed} == {
+        a.json()["id"]: NEXT, b.json()["id"]: NEXT, c.json()["id"]: versions.FIRST}
+    # Only a version's own date may be chosen.
+    for bad in ("2026-11-30", "latest", "2026-11-23"):
+        r = await w.client.post("/v1/webhooks", headers=_auth(admin),
+                                json={"url": f"https://{HOST}/d", "api_version": bad})
+        assert r.status_code == 422, bad
     # A ping says the address's version, signed.
-    await w.client.post(f"/v1/webhooks/{b.json()['id']}/test", headers=_auth(admin))
-    assert _verify(b.json()["secret"], receiver.requests[-1])["api_version"] == versions.FIRST
+    await w.client.post(f"/v1/webhooks/{c.json()['id']}/test", headers=_auth(admin))
+    assert _verify(c.json()["secret"], receiver.requests[-1])["api_version"] == versions.FIRST
 
 
 async def test_each_address_is_sent_its_own_version_signed_over_what_is_sent(world, receiver, next_version):  # noqa: F811
@@ -348,8 +385,8 @@ async def test_each_address_is_sent_its_own_version_signed_over_what_is_sent(wor
                                  events=frozenset({"open_item.opened"})))
     acme, admin, read = await _account(w)
     shop = await w.store.create_tenant("Kofi's Store", parent_id=acme.id)
-    old = (await w.client.post("/v1/webhooks", headers=_auth(admin, versions.FIRST),
-                               json={"url": f"https://{HOST}/old"})).json()
+    old = (await w.client.post("/v1/webhooks", headers=_auth(admin),
+                               json={"url": f"https://{HOST}/old", "api_version": versions.FIRST})).json()
     new = (await w.client.post("/v1/webhooks", headers=_auth(admin), json={"url": f"https://{HOST}/new"})).json()
     assert old["api_version"] == versions.FIRST and new["api_version"] == NEXT
 

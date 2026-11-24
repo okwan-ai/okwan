@@ -84,6 +84,9 @@ EVENT_TYPES = ("open_item.opened", "open_item.aged", "open_item.cleared", "open_
                "open_item.reopened")
 EventType = Literal["open_item.opened", "open_item.aged", "open_item.cleared", "open_item.closed",
                     "open_item.reopened"]
+#: Every type of body an address is sent: the events and the test ping. A
+#: version's change may name any of them (okwan_core.versions).
+SENT_TYPES = (*EVENT_TYPES, "ping")
 #: How long the events are kept for `GET /v1/events`.
 EVENTS_KEPT = timedelta(days=30)
 #: How long a delivery is tried, and how long an address may fail every
@@ -280,18 +283,22 @@ def envelope(event_id: str, type_: str, account: str, at: datetime, data: dict[s
 
 
 def in_version(body: str, version: str) -> str:
-    """An event's body as `version` gives it, to sign and send or to list.
-    One made in that version, or an older one, is returned exactly as
-    stored: nothing is made newer than it was made. One made in a newer
-    version is given back by the changes since (okwan_core.versions), with
-    `api_version` saying which version it now is. An event stored before
-    versions were named says none, and is in the first."""
+    """A body as the version in effect on `version` gives it, to sign and
+    send or to list. One made in that version, or an older one, is returned
+    exactly as stored: nothing is made newer than it was made. One made in a
+    newer version is given back by the changes since (okwan_core.versions),
+    with `api_version` saying which version it now is. One made by a newer
+    release than this one (its version is not in this release's list) is
+    returned as stored, saying its own version: this release cannot undo
+    changes it does not have, and does not label it as what it is not. An
+    event stored before versions were named says none, and is in the first."""
     made = json.loads(body)
     at = made.get("api_version") or versions.FIRST
-    if not isinstance(at, str) or version >= at:
+    to = versions.in_effect(version) or versions.FIRST
+    if not isinstance(at, str) or not versions.known(at) or to >= at:
         return body
-    older = versions.back(made, to=version, event=made.get("type"), made=at)
-    older["api_version"] = version
+    older = versions.back(made, to=to, event=made.get("type"), made=at)
+    older["api_version"] = to
     return json.dumps(older, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -619,6 +626,10 @@ class EndpointIn(BaseModel):
 
     url: str = Field(min_length=9, max_length=URL_MAX,
                      description="Where to send the events: https://, port 443, a public host")
+    api_version: str | None = Field(
+        None, description="The API version its events are sent in. Left out, the account's, as every other "
+                          "answer to the account is. Not the request's `Okwan-Version`, which is how this one "
+                          "answer is shaped")
 
 
 class OpenItemEvent(BaseModel):
@@ -638,7 +649,8 @@ class OpenItemEvent(BaseModel):
 def _endpoint_out(e: WebhookEndpoint) -> dict[str, Any]:
     return {
         "id": e.id, "url": e.url, "secret_hint": f"{e.hint}…", "enabled": e.disabled_at is None,
-        "created_at": e.created_at.isoformat(), "created_by": e.created_by, "api_version": e.api_version,
+        "created_at": e.created_at.isoformat(), "created_by": e.created_by,
+        "api_version": versions.in_effect(e.api_version) or versions.FIRST,
         "disabled_at": e.disabled_at.isoformat() if e.disabled_at else None, "disabled_why": e.disabled_why,
         "failing_since": e.failing_since.isoformat() if e.failing_since else None,
         "last_ok_at": e.last_ok_at.isoformat() if e.last_ok_at else None, "pending": e.pending,
@@ -656,10 +668,13 @@ def build_router() -> APIRouter:
     async def add(body: EndpointIn, request: Request, actor=Depends(admin_actor)) -> dict[str, Any]:
         """Add an address for the account's events (at most five). The answer
         holds its signing secret (`secret`), shown this once: keep it where
-        the receiving code reads it. Its events are sent in the API version
-        this request is answered in (`api_version`), for as long as it is
-        kept. A read key is refused."""
+        the receiving code reads it. Its events are sent in the account's API
+        version, or the one `api_version` names, for as long as it is kept;
+        never in this request's `Okwan-Version`, which only shapes this
+        answer. A read key is refused."""
         enforce(request, (WEBHOOK_CHANGE, actor.id))
+        if body.api_version is not None and not versions.known(body.api_version):
+            raise HTTPException(422, f"api_version is one of {', '.join(versions.dates())}")
         try:
             url, host = check_url(body.url)
             await resolve_public(host, PORT, exceptions=False)
@@ -671,7 +686,7 @@ def build_router() -> APIRouter:
         try:
             made = await get_store().add_webhook_endpoint(
                 actor.id, url=url, secret=secret, created_by=access.credential_now(), at=now(),
-                api_version=answering.of(request))
+                api_version=body.api_version or actor.api_version or versions.current())
         except EndpointsFull:
             raise HTTPException(409, f"this account has {WEBHOOK_ENDPOINTS_MAX} addresses; delete one first") from None
         return {**_endpoint_out(made), "secret": secret}
@@ -710,8 +725,8 @@ def build_router() -> APIRouter:
             raise HTTPException(404, f"no such webhook: {endpoint_id}")
         url, secret, version = found
         event_id, at = _event_id(), now()
-        body = json.dumps({"id": event_id, "type": "ping", "timestamp": at.isoformat(), "account": actor.id,
-                           "api_version": version, "data": {"webhook": endpoint_id}}, separators=(",", ":"))
+        # Made as every event is, and given in the address's version.
+        body = in_version(envelope(event_id, "ping", actor.id, at, {"webhook": endpoint_id}), version)
         status, error = await send(url, body, signed_headers(secret, event_id, body, at.timestamp()))
         return {"delivered": error is None and status is not None, "status": status, "error": error,
                 "event_id": event_id}

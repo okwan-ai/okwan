@@ -90,7 +90,8 @@ def test_every_v1_operation_takes_the_version_header(spec):
     for path, method, op in operations(spec):
         named = [p for p in op.get("parameters", []) if p["in"] == "header" and p["name"] == versions.HEADER]
         if path.startswith("/v1/"):
-            assert len(named) == 1 and named[0]["schema"]["enum"] == list(versions.dates()), f"{method} {path}"
+            assert len(named) == 1 and named[0]["schema"]["format"] == "date", f"{method} {path}"
+            assert named[0]["schema"]["examples"] == list(versions.dates())
         else:
             assert not named, f"{method} {path}"
     assert spec["info"]["version"] == versions.current()

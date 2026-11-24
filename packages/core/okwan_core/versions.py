@@ -11,7 +11,18 @@ Each account is answered in its own version: the newest one when the
 account was made, and a merchant in the version of the account that made
 it. A request names another with the `Okwan-Version` header; every answer
 under /v1/ says in the same header which version answered. A webhook
-address keeps the version of the request that added it.
+address is on its account's version, unless it was added on another.
+
+A version is named by a day, and a day names the version in effect on it:
+the newest on or before it (`in_effect`). So `2026-11-30` is answered as
+`2026-11-24` until a version dated on or before the 30th exists, and a
+client that names a version this release does not have yet (it is ahead:
+a deploy under way, or a rollback) is answered in this release's newest,
+and told so, rather than refused. Only a value that is not a day, or a
+day before the first version, names nothing. An account made outside the
+API (the operator's command line) is stamped with the day it is made,
+for the same reason: the checkout it runs from may not be what is
+deployed.
 
 An answer is always made in the newest shape, then given back in an older
 version by undoing, newest first, each change made since (`Change.back`).
@@ -28,7 +39,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 #: The request and response header.
@@ -88,7 +99,27 @@ def current() -> str:
 
 
 def known(value: str) -> bool:
+    """Whether `value` is exactly the date of a version."""
     return value in dates()
+
+
+def in_effect(value: str | None) -> str | None:
+    """The version in effect on the day `value` names: the newest version
+    on or before it. None when it is not a day (YYYY-MM-DD, a real date),
+    or is a day before the first version."""
+    if not isinstance(value, str) or not _DATE.match(value):
+        return None
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return None
+    on = [d for d in dates() if d <= value]
+    return on[-1] if on else None
+
+
+def today() -> str:
+    """Today, UTC, as a version is named: what the command line stamps."""
+    return datetime.now(UTC).date().isoformat()
 
 
 def _since(to: str, made: str) -> list[Change]:

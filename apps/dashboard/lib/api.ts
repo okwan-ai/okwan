@@ -14,8 +14,11 @@ const SESSION_MAX_AGE = 60 * 60 * 12; // matches the API's SESSION_TTL (12 hours
 /**
  * The API version this dashboard is written for (okwan_core/versions.py),
  * named on every call. The API and the dashboard deploy apart, so an API
- * release that adds a version never reshapes what this code reads; it moves
- * to a newer one in the same change that reads the new shape.
+ * release that adds a version never reshapes what this code reads. It moves
+ * to a newer version in a release after the one that adds it to the API; if
+ * it is ever ahead of the API serving it (a rollback), the API answers in
+ * its own newest version rather than refusing. Webhook addresses added here
+ * take the account's version, not this one.
  */
 export const API_VERSION = "2026-11-24";
 

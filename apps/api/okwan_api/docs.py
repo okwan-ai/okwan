@@ -149,9 +149,10 @@ dashboard session. Okwan stores a key's hash only; revoke a key by its id.
 The API is versioned by date. Your account is answered in the version that was newest when it was made, and
 the merchants you add are answered as your account is, so a later release never changes what your code reads.
 Every answer says which version answered, in its `Okwan-Version` header. Send `Okwan-Version: YYYY-MM-DD` on a
-request to be answered in another version, for example to try a newer one before you move to it; a value that
-names no version is refused with `400`. A webhook address is sent its events in the version of the request that
-added it, and each body says which in `api_version`. The versions: {dated}.
+request to be answered in the version in effect on that day (the newest on or before it), for example to try a
+newer one before you move to it; a value that is not a day, or a day before the first version, is refused with
+`400`. A webhook address is sent its events in your account's version, or in the one you name in `api_version`
+when you add it, and each body says which in `api_version`. The versions: {dated}.
 
 A new version is made only for a change that would break code written against the one before it: a field
 renamed or removed, a type or a meaning changed. Additions (a route, a field, an event type, an optional
@@ -188,7 +189,7 @@ reconciliation, a check) counts as one request against your plan. Reading the ca
 
 ## Errors
 
-Errors are JSON: `{{"detail": …}}`. `400` the `Okwan-Version` header names no version · `401` the key is missing or invalid, or the provider rejected the stored
+Errors are JSON: `{{"detail": …}}`. `400` the `Okwan-Version` header is not a day on or after the first version · `401` the key is missing or invalid, or the provider rejected the stored
 credentials · `402` the plan's limit is reached · `404` unknown, or not yours (never `403`) · `409` a cursor from a
 different result · `422` the request is invalid (your input is never echoed back) · `502` a provider failed. A
 provider's own error keeps its status code.
@@ -315,9 +316,10 @@ def build_openapi(app: FastAPI) -> dict[str, Any]:
     }
     version = {
         "name": versions.HEADER, "in": "header", "required": False,
-        "schema": {"type": "string", "enum": list(versions.dates())},
-        "description": ("The API version to answer in. Left out, your account's: the newest when the "
-                        "account was made. The answer's own `Okwan-Version` header says which answered."),
+        "schema": {"type": "string", "format": "date", "examples": list(versions.dates())},
+        "description": ("The API version to answer in: the one in effect on this day. Left out, your "
+                        "account's: the newest when the account was made. The answer's own "
+                        "`Okwan-Version` header says which answered."),
     }
     writes = write_operations()
     titles = connector_titles()
