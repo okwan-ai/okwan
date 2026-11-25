@@ -92,11 +92,11 @@ const note = async (page, where, what) => {
   await page.screenshot({ path: `${OUT}/${where.replace(/[^a-z0-9]+/gi, "_")}.png`, fullPage: true }).catch(() => {});
 };
 
-async function checkPage(page, w, h, path) {
+async function checkPage(page, w, h, path, mode = "") {
   await page.goto(BASE + path, { waitUntil: "networkidle" });
   await page.waitForTimeout(250);
   const res = await page.evaluate(inspect);
-  const where = `${w}x${h} ${path}`;
+  const where = `${w}x${h}${mode} ${path}`;
   if (res.sideways) await note(page, where, "the page scrolls sideways");
   for (const hit of res.hits) await note(page, where, hit);
 }
@@ -701,6 +701,37 @@ async function checkWebhooks(page) {
   await orphan.waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
 }
 
+// Test mode (app/_components/test-mode.tsx): switched on where a person
+// switches it, the account menu on a wide screen and the menu on a phone;
+// then every signed-in page, in the sandbox, at this width, under the
+// banner; then left from the banner, back on the live workspace.
+async function checkTestMode(page, w, h) {
+  const where = `${w}x${h} test mode`;
+  await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
+  if (w >= 900) {
+    await page.locator('button[aria-haspopup="menu"]:visible').first().click();
+    await page.getByRole("menuitemcheckbox", { name: "Test mode" }).click();
+  } else {
+    await page.getByRole("button", { name: /^Open menu/ }).click();
+    await page.getByRole("switch", { name: "Test mode" }).click();
+  }
+  const banner = page.getByRole("region", { name: "Test mode" });
+  if (!(await banner.waitFor({ timeout: 20000 }).then(() => true, () => false))) return note(page, where, "switching Test mode on did not bring the banner");
+  for (const path of SIGNED_IN.filter((p) => p !== "/ops")) {
+    await checkPage(page, w, h, path, " test mode");
+    if (!(await banner.isVisible())) await note(page, `${where} ${path}`, "the page has no Test mode banner");
+  }
+  // In the sandbox: the workspace is the sandbox, its own merchant list.
+  await page.goto(`${BASE}/settings`, { waitUntil: "networkidle" });
+  if (!(await page.locator("#main").getByText("Sandbox", { exact: true }).filter({ visible: true }).count())) {
+    await note(page, where, "Settings does not name the sandbox");
+  }
+  await banner.getByRole("button", { name: "Leave Test mode" }).click();
+  await page.waitForURL(/\/overview/, { timeout: 20000 }).catch(() => {});
+  await page.waitForLoadState("networkidle");
+  if (await banner.count()) await note(page, where, "leaving Test mode left the banner");
+}
+
 async function checkMenu(page, w, h) {
   await page.goto(`${BASE}/overview`, { waitUntil: "networkidle" });
   const button = page.locator('button[aria-haspopup="menu"]:visible').first();
@@ -766,6 +797,7 @@ try {
     if (merchant) await checkImport(page, w, h, merchant);
     await checkOpenItems(page, w, h);
     if (w >= 900) await checkMenu(page, w, h);
+    await checkTestMode(page, w, h);
     await ctx.close();
   }
   if (merchant) slow = await checkSlowly(browser, session, merchant);
@@ -779,10 +811,10 @@ try {
   await browser.close();
 }
 
-const pages = SIZES.length * (SIGNED_OUT.length + SIGNED_IN.length + 7);
+const pages = SIZES.length * (SIGNED_OUT.length + SIGNED_IN.length + 7 + SIGNED_IN.length - 1);
 if (threw.length) console.log(`Noted, not failed (G22): ${threw.length} page view(s) threw while the browser took them over:\n- ${threw.join("\n- ")}`);
 if (problems.length) {
   console.error(`Layout check failed (${problems.length}):\n- ${problems.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, a suggestion on it turned down, asked again and decided from, the daily mail's days and amount saved and kept, a webhook address refused, added with its secret shown once, pinged and deleted, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);
+console.log(`Layout check passed: ${pages} page views at ${SIZES.map(([w]) => w).join(", ")}px, account menu on top, the refund notice ahead of Upgrade, the file check saying what its run holds, the open items listing the unpaid batch, a decision on it recorded with its reason and undone, a suggestion on it turned down, asked again and decided from, the daily mail's days and amount saved and kept, a webhook address refused, added with its secret shown once, pinged and deleted, Test mode switched on, every page shown in the sandbox under its banner, and left, and the Files tab taken over cleanly on ${slow} loads of a document arriving slowly.`);

@@ -48,7 +48,8 @@ STATIC_TAGS: list[tuple[str, str, str]] = [
       "receive webhooks. The sandbox and each merchant you add there start with a sample café's week (its "
       "processor's batch report and its bank statement), so the batches-against-deposits check has something "
       "to find. It holds no rail credentials, and its requests count against its own allowance, not your "
-      "plan. Takes an admin key or a dashboard session of the live account.")),
+      "plan. Takes an admin key or a dashboard session of the live account. The dashboard's Test mode is the "
+      "same sandbox.")),
     ("reconciliations", "The check",
      ("Run the check over a merchant's orders and payments. Each run is one request and is saved as "
      "verdicts and amounts, never raw payment records.")),
@@ -180,6 +181,11 @@ days old, so it never leaves the check's 120 days. It
 connects no rails yet, holds at most 25 tenants, and its requests count against its own allowance (the free
 plan's), never your plan; its model calls (suggestions) share your account's day. `GET /v1/sandbox/keys` lists
 every key in it, so a test key another test key made can be found and revoked.
+
+The dashboard's Test mode is the same sandbox: a signed-in person switches into it, and their session then reaches
+the sandbox and nothing live, as a test key does; billing stays the live account's. The dashboard does this with an
+`Okwan-Mode: test` header on its session. A key's own kind decides where it reaches, so a key sent with an
+`Okwan-Mode` that is not its own is refused with 400.
 
 ## One declaration, three surfaces
 

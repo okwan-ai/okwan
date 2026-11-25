@@ -10,6 +10,13 @@ import { cache } from "react";
 
 export const SESSION_COOKIE = "okwan_session";
 const SESSION_MAX_AGE = 60 * 60 * 12; // matches the API's SESSION_TTL (12 hours)
+/**
+ * Test mode: the signed-in person working in their account's sandbox. Not a
+ * credential: the cookie only says which side the session is sent to, as
+ * `Okwan-Mode: test`, and the API decides what that session reaches there
+ * (the sandbox and nothing live). Signing in or out starts live again.
+ */
+export const MODE_COOKIE = "okwan_mode";
 
 /**
  * The API version this dashboard is written for (okwan_core/versions.py),
@@ -36,14 +43,21 @@ export type ApiResult<T> = { ok: true; status: number; data: T } | {
 
 export async function api<T>(
   path: string,
-  init: { method?: string; body?: unknown; session?: string | null; idempotencyKey?: string } = {},
+  init: {
+    method?: string; body?: unknown; session?: string | null; idempotencyKey?: string;
+    /** The live account whatever the mode: making the sandbox, signing out. */
+    live?: boolean;
+  } = {},
 ): Promise<ApiResult<T>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Okwan-Version": API_VERSION,
     ...(await forwardedClient()),
   };
-  if (init.session) headers.Authorization = `Bearer ${init.session}`;
+  if (init.session) {
+    headers.Authorization = `Bearer ${init.session}`;
+    if (!init.live && (await testMode())) headers["Okwan-Mode"] = "test";
+  }
   // One header a change may carry, and only this one: a route cannot set
   // or override any other on its way to the API.
   if (init.idempotencyKey) headers["Idempotency-Key"] = init.idempotencyKey;
@@ -126,17 +140,41 @@ export async function session(): Promise<string | null> {
 }
 
 export async function setSession(token: string): Promise<void> {
-  (await cookies()).set(SESSION_COOKIE, token, {
+  const jar = await cookies();
+  jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });
+  jar.delete(MODE_COOKIE);
 }
 
 export async function clearSession(): Promise<void> {
-  (await cookies()).delete(SESSION_COOKIE);
+  const jar = await cookies();
+  jar.delete(SESSION_COOKIE);
+  jar.delete(MODE_COOKIE);
+}
+
+/** Whether this browser is in Test mode. */
+export async function testMode(): Promise<boolean> {
+  return (await cookies()).get(MODE_COOKIE)?.value === "test";
+}
+
+export async function setTestMode(on: boolean): Promise<void> {
+  const jar = await cookies();
+  if (!on) {
+    jar.delete(MODE_COOKIE);
+    return;
+  }
+  jar.set(MODE_COOKIE, "test", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE,
+  });
 }
 
 export type Me = { id: string; name: string };

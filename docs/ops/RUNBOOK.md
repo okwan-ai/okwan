@@ -524,6 +524,14 @@ set. When a customer says something in the sandbox is wrong:
    counts customers only and shows sandboxes apart.
 7. The sandbox goes with its account (`tenant delete`); it gets no daily
    check and no daily mail.
+8. The dashboard's Test mode is the same sandbox: Test mode in the account
+   menu (on a phone, the menu) makes it if need be and sends the session
+   there with `Okwan-Mode: test`. "I can't see my merchants": the yellow
+   banner says Test mode; Leave Test mode goes back. "I can't change my
+   plan in Test mode": billing is the live account's and refuses Test
+   mode. "A key with `Okwan-Mode` gets 400": a key's own kind decides, so
+   a header that disagrees with it is refused; drop the header or use a
+   key of the other kind.
 
 ### Daily checks and their mail
 

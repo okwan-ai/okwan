@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { apiUrl, tenantTree } from "@/lib/api";
+import { apiUrl, tenantTree, testMode } from "@/lib/api";
 import { requireTenant } from "@/lib/guard";
 import { configured, connectors } from "@/lib/merchants";
 import { SETTINGS_TABS, settingsTabOf } from "@/lib/settings-tabs";
@@ -37,7 +37,7 @@ export default async function SettingsPage({ searchParams }: {
   searchParams: Promise<{ tab?: string; days?: string; merchant?: string; upgraded?: string }>;
 }) {
   await requireTenant();
-  const [{ tab, days: daysParam, merchant, upgraded }, tree] = await Promise.all([searchParams, tenantTree()]);
+  const [{ tab, days: daysParam, merchant, upgraded }, tree, testing] = await Promise.all([searchParams, tenantTree(), testMode()]);
   const days = [7, 30, 90].includes(Number(daysParam)) ? Number(daysParam) : 30;
   const active = settingsTabOf(tab);
   if (!tree) return <p className="text-ink-soft">The Okwan API didn&apos;t answer. Try again in a moment.</p>;
@@ -75,31 +75,46 @@ export default async function SettingsPage({ searchParams }: {
               <KeyValueRow label="Merchants">{tree.children.length}</KeyValueRow>
               <KeyValueRow label="Sign-in">Email and password. You are signed out after 30 minutes without activity, and 12 hours after signing in; Sign out in the account menu ends it now.</KeyValueRow>
             </KeyValueList>
-            <Section
-              id="daily-checks"
-              title="Daily checks"
-              description="Okwan checks your connected merchants once a day, and emails you what is new on Open items."
-            >
-              <DailyChecksCard accountId={tree.self.id} />
-            </Section>
-            <Section
-              id="own-connections"
-              title="Your workspace's own connections"
-              description="For accounts your own business collects on. A merchant's connections live on its page."
-            >
-              <OwnConnections selfId={tree.self.id} />
-            </Section>
+            {testing ? (
+              <Section id="sandbox" title="Your sandbox" description="What Test mode holds, and what it doesn't.">
+                <p className="max-w-2xl text-sm text-ink-soft">
+                  The sandbox and each merchant you add in it start with a sample café&apos;s week, its batch report and its
+                  bank statement, so the check has something to find. It gets no daily check or daily mail, and it
+                  connects no rails yet: connect them on your live account. Its requests count against its own allowance,
+                  never your plan.
+                </p>
+              </Section>
+            ) : (
+              <>
+                <Section
+                  id="daily-checks"
+                  title="Daily checks"
+                  description="Okwan checks your connected merchants once a day, and emails you what is new on Open items."
+                >
+                  <DailyChecksCard accountId={tree.self.id} />
+                </Section>
+                <Section
+                  id="own-connections"
+                  title="Your workspace's own connections"
+                  description="For accounts your own business collects on. A merchant's connections live on its page."
+                >
+                  <OwnConnections selfId={tree.self.id} />
+                </Section>
+              </>
+            )}
           </>
         )}
 
-        {active === "plan" && <PlanTab merchants={merchants} selfId={tree.self.id} merchant={merchant ?? null} days={days} upgraded={upgraded === "1"} />}
+        {active === "plan" && <PlanTab merchants={merchants} selfId={tree.self.id} merchant={merchant ?? null} days={days} upgraded={upgraded === "1"} testing={testing} />}
 
         {active === "keys" && (
           <div className="space-y-6">
             <Card>
               <CardHeader
                 title="Issue a key"
-                description="A key reads one merchant's data, or your workspace's, over REST, SQL and MCP, and can't change anything unless you give it admin access. It's shown once."
+                description={testing
+                  ? "In Test mode a key starts okw_test_ and reaches your sandbox and nothing live. It reads over REST, SQL and MCP, and can't change anything unless you give it admin access. It's shown once."
+                  : "A key reads one merchant's data, or your workspace's, over REST, SQL and MCP, and can't change anything unless you give it admin access. It's shown once."}
               />
               <CardBody>
                 <KeyIssuer tenants={[{ id: null, name: "Your workspace" }, ...merchants]} />
@@ -252,12 +267,14 @@ async function OwnConnections({ selfId }: { selfId: string }) {
   );
 }
 
-async function PlanTab({ merchants, selfId, merchant, days, upgraded }: {
+async function PlanTab({ merchants, selfId, merchant, days, upgraded, testing }: {
   merchants: { id: string; name: string }[];
   selfId: string;
   merchant: string | null;
   days: number;
   upgraded: boolean;
+  /** Test mode: the sandbox's allowance; billing is the live account's. */
+  testing: boolean;
 }) {
   const names = Object.fromEntries(merchants.map((m) => [m.id, m.name]));
   const withDays = (q: string) => (days === 30 ? q : `${q}&days=${days}`);
@@ -300,6 +317,12 @@ async function PlanTab({ merchants, selfId, merchant, days, upgraded }: {
   const [usage, bill] = await Promise.all([myUsage(days), billing()]);
   return (
     <>
+      {testing && (
+        <p className="mb-6 max-w-2xl text-sm text-ink-soft">
+          Your plan and billing are your live account&apos;s: leave Test mode to change them. The sandbox has its own
+          allowance, below, which no plan changes.
+        </p>
+      )}
       {bill && (
         <BillingCard
           enabled={bill.enabled}

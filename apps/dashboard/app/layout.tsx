@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { apiUrl, tenantTree } from "@/lib/api";
+import { apiUrl, tenantTree, testMode } from "@/lib/api";
 import { railLabel, type RunDigest } from "@/lib/finding";
 import { digest, seenFindings, storedRuns } from "@/lib/runs";
 import { connectors } from "@/lib/merchants";
@@ -8,6 +8,7 @@ import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import { IdleGuard } from "./_components/idle-guard";
 import { SupportPanel } from "./_components/support-panel";
+import { TestModeBanner } from "./_components/test-mode";
 import { TopBar } from "./_components/top-bar";
 import { OkwanLogo } from "./_components/ui/mark";
 import "./globals.css";
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const tree = await tenantTree();
+  const [tree, testing] = await Promise.all([tenantTree(), testMode()]);
   // The meter, the verdicts and the connector names in the sidebar:
   // unmetered reads per render (the pages share them through React's
   // cache), never a run.
@@ -63,16 +64,18 @@ export default async function RootLayout({
               verdicts={verdicts}
               findings={runs ? seenFindings(runs) : []}
               operator={op !== null}
+              testMode={testing}
             />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
+              {testing && <TestModeBanner />}
               {/* From 2xl the page sits between the sidebar and the docked
                   support column, its title level with the panel's, as drawn. */}
               <div className="mx-auto max-w-[1440px] px-4 pt-6 pb-12 sm:px-8 min-[900px]:pt-0 xl:px-10 2xl:max-w-none 2xl:px-0 2xl:pt-[104px] 2xl:pl-3">
-                <TopBar account={tree.self.name} openFindings={openFindings} />
+                <TopBar account={tree.self.name} openFindings={openFindings} testMode={testing} />
                 {children}
               </div>
             </main>
-            <SupportPanel topBar={<TopBar account={tree.self.name} openFindings={openFindings} docked />} />
+            <SupportPanel topBar={<TopBar account={tree.self.name} openFindings={openFindings} testMode={testing} docked />} />
             <IdleGuard />
           </div>
         ) : (

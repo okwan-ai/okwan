@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { openPalette } from "./command-palette";
 import { openSupport } from "./support-panel";
+import { SwitchTrack, switchMode } from "./test-mode";
 import { IconBell, IconHelp } from "./ui/icons";
 
 /**
@@ -11,8 +12,16 @@ import { IconBell, IconHelp } from "./ui/icons";
  * notification feed: it is the way to Findings, with the signal dot while
  * any order needs a look. Phones have the sidebar's own top bar instead.
  */
-export function TopBar({ account, openFindings, docked = false }: { account: string; openFindings: number; docked?: boolean }) {
+export function TopBar({ account, openFindings, testMode = false, docked = false }: {
+  account: string;
+  openFindings: number;
+  /** The account's sandbox, not the live account (app/_components/test-mode). */
+  testMode?: boolean;
+  docked?: boolean;
+}) {
   const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
 
@@ -73,6 +82,25 @@ export function TopBar({ account, openFindings, docked = false }: { account: str
             <p className="truncate px-3 pt-2 pb-2 text-xs text-ink-muted" title={account}>{account}</p>
             <MenuLink href="/settings" onPick={() => setOpen(false)}>Settings</MenuLink>
             <MenuLink href="/settings?tab=plan" onPick={() => setOpen(false)}>Plan &amp; billing</MenuLink>
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              aria-checked={testMode}
+              disabled={switching}
+              onClick={async () => {
+                setSwitching(true);
+                setSwitchError(null);
+                const said = await switchMode(!testMode);
+                if (said) {
+                  setSwitchError(said);
+                  setSwitching(false);
+                }
+              }}
+              className="flex min-h-11 w-full items-center justify-between rounded-xl px-3 text-left text-sm hover:bg-accent-soft disabled:opacity-60"
+            >
+              Test mode <SwitchTrack on={testMode} />
+            </button>
+            {switchError && <p role="alert" className="px-3 pb-1 text-xs text-danger">{switchError}</p>}
             <button
               type="button"
               role="menuitem"

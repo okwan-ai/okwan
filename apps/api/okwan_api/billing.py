@@ -55,7 +55,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from okwan_vault import accounts
 
 from . import access, disputes, policy, versions
-from .auth import get_store, quota_for
+from .auth import TEST, asked_mode, get_store, quota_for
 from .mail import get_mailer
 from .ratelimit import BILLING_TENANT, client_ip, enforce
 
@@ -260,6 +260,9 @@ async def session_owner(request: Request, authorization: str = Header(default=""
     versions.remember(request, tenant)
     if tenant.parent_id is not None:
         raise HTTPException(403, "billing belongs to the account, not a merchant")
+    if asked_mode(request) == TEST:
+        # The plan is the live account's; Test mode never changes it.
+        raise HTTPException(403, "billing is your live account's: leave Test mode to change your plan")
     return tenant
 
 
