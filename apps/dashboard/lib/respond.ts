@@ -1,6 +1,6 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { sameOrigin } from "./api";
+import { sameOrigin, staleShown } from "./api";
 
 export function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -17,8 +17,12 @@ export const BODY_MAX = 64 * 1024;
 /** Guard for every mutating handler: same-origin, declared JSON (415) and
  *  JSON (400), and no bigger than `max` (413), counted as it arrives: a body
  *  is never read whole before it is known to fit, signed in or not. */
-export async function readBody<T>(req: Request, max: number = BODY_MAX): Promise<T | Response> {
+export async function readBody<T>(req: Request, max: number = BODY_MAX, { anyMode = false } = {}): Promise<T | Response> {
   if (!sameOrigin(req)) return fail("cross-origin request refused", 403);
+  // A page shown in the other mode (another tab switched): nothing it sends
+  // is acted on, wherever the route would act (lib/api.ts, PAGE_MODE_HEADER).
+  const stale = anyMode ? null : await staleShown(req);
+  if (stale) return fail(stale, 409);
   // JSON only, declared as such: a form or a text/plain body (what a page
   // elsewhere can send without asking first) is refused before it is read.
   const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();

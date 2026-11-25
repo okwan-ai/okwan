@@ -531,7 +531,10 @@ set. When a customer says something in the sandbox is wrong:
    plan in Test mode": billing is the live account's and refuses Test
    mode. "A key with `Okwan-Mode` gets 400": a key's own kind decides, so
    a header that disagrees with it is refused; drop the header or use a
-   key of the other kind.
+   key of the other kind. "This page was shown in Test mode … Reload the
+   page": another tab switched mode while this page was open; reloading
+   shows it in the mode the browser is in now. The console refuses Test
+   mode: leave it to answer customers.
 
 ### Daily checks and their mail
 

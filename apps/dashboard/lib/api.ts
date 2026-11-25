@@ -17,6 +17,29 @@ const SESSION_MAX_AGE = 60 * 60 * 12; // matches the API's SESSION_TTL (12 hours
  * (the sandbox and nothing live). Signing in or out starts live again.
  */
 export const MODE_COOKIE = "okwan_mode";
+/**
+ * The mode the page that sent a request was showing (app/_components/
+ * test-mode.tsx stamps it on every request a page makes to /api/). Every tab
+ * shares the mode cookie, so a page left open in one mode while another tab
+ * switches must not act, or read, in the other: such a request is refused
+ * here, and a change that does not say its page's mode is refused too.
+ */
+export const PAGE_MODE_HEADER = "okwan-page-mode";
+
+/** What a request from a page shown in another mode is told, or null when
+ *  the page's mode is this browser's (or the request does not say). */
+function staleFor(shown: string | null, mode: "test" | "live"): string | null {
+  if (shown === null || shown === mode) return null;
+  if (shown === "test") return "This page was shown in Test mode, and this browser has left Test mode since. Reload the page.";
+  if (shown === "live") return "This page was shown outside Test mode, and this browser is in Test mode now. Reload the page.";
+  return "Reload the page, then try again.";
+}
+
+/** For a route handler, before it reads anything: the refusal when the page
+ *  that sent the request was shown in the other mode (respond.ts, readBody). */
+export async function staleShown(req: Request): Promise<string | null> {
+  return staleFor(req.headers.get(PAGE_MODE_HEADER), (await testMode()) ? "test" : "live");
+}
 
 /**
  * The API version this dashboard is written for (okwan_core/versions.py),
@@ -56,7 +79,14 @@ export async function api<T>(
   };
   if (init.session) {
     headers.Authorization = `Bearer ${init.session}`;
-    if (!init.live && (await testMode())) headers["Okwan-Mode"] = "test";
+    if (!init.live) {
+      const mode = (await testMode()) ? "test" : "live";
+      const shown = (await incoming()).get(PAGE_MODE_HEADER);
+      const change = (init.method ?? "GET").toUpperCase() !== "GET";
+      const stale = staleFor(shown, mode) ?? (shown === null && change ? "Reload the page, then try again." : null);
+      if (stale) return { ok: false, status: 409, detail: stale };
+      if (mode === "test") headers["Okwan-Mode"] = "test";
+    }
   }
   // One header a change may carry, and only this one: a route cannot set
   // or override any other on its way to the API.

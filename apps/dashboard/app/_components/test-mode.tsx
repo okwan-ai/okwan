@@ -1,6 +1,83 @@
 "use client";
 
-import { useState } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+
+type Mode = "test" | "live";
+
+/** The mode this page was shown in, and whether it is switching now. */
+let pageMode: Mode = "live";
+let switching = false;
+let stamped = false;
+const CHANNEL = "okwan.mode";
+
+/** Every request this page makes to the dashboard's own /api/ says the mode
+ *  the page was shown in (lib/api.ts, PAGE_MODE_HEADER), so one left open in
+ *  one mode never acts, or reads, in the other. Installed once. */
+function stampRequests() {
+  if (stamped) return;
+  stamped = true;
+  const original = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const href = input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
+    const url = new URL(href, window.location.href);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith("/api/")) return original(input, init);
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    headers.set("Okwan-Page-Mode", pageMode);
+    return original(input, { ...init, headers });
+  };
+}
+
+/** Whether this browser has changed mode since the page was shown, as
+ *  another tab's switch does: the page is then shown again. */
+async function stillSo() {
+  if (switching) return;
+  const res = await fetch("/api/mode", { cache: "no-store" }).catch(() => null);
+  const now = res?.ok ? ((await res.json().catch(() => ({}))) as { mode?: Mode }).mode : undefined;
+  if (now && now !== pageMode && !switching) window.location.reload();
+}
+
+/**
+ * Keeps a page true to the mode it was shown in: its requests say that mode
+ * (stampRequests), and when another tab switches, or the page comes back
+ * into view, or moves to another page after a switch, it is shown again in
+ * the mode the browser is in now. Renders nothing.
+ */
+export function ModeStamp({ mode }: { mode: Mode }) {
+  if (typeof window !== "undefined") {
+    pageMode = mode;
+    stampRequests();
+  }
+  const path = usePathname();
+
+  useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(CHANNEL);
+      channel.onmessage = (e) => {
+        if (!switching && e.data !== pageMode) window.location.reload();
+      };
+    } catch {
+      // No BroadcastChannel: the checks on view and on navigation still run.
+    }
+    const onView = () => {
+      if (document.visibilityState === "visible") void stillSo();
+    };
+    document.addEventListener("visibilitychange", onView);
+    return () => {
+      channel?.close();
+      document.removeEventListener("visibilitychange", onView);
+    };
+  }, []);
+
+  // A page reached by a link after another tab switched is drawn in the new
+  // mode under this page's old banner: show it again, whole.
+  useEffect(() => {
+    void stillSo();
+  }, [path]);
+
+  return null;
+}
 
 /**
  * Test mode on or off (app/api/mode), then Overview: a page of one side (a
@@ -8,14 +85,24 @@ import { useState } from "react";
  * wrong, or null once the page is on its way.
  */
 export async function switchMode(on: boolean): Promise<string | null> {
+  switching = true;
   const res = await fetch("/api/mode", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode: on ? "test" : "live" }),
   }).catch(() => null);
   if (!res?.ok) {
+    switching = false;
     const data = await res?.json().catch(() => ({}));
     return data?.detail ?? "Test mode couldn't be switched. Try again.";
+  }
+  // Every other open tab is shown again in the new mode.
+  try {
+    const channel = new BroadcastChannel(CHANNEL);
+    channel.postMessage(on ? "test" : "live");
+    channel.close();
+  } catch {
+    // They catch up when next in view, or on their next page.
   }
   window.location.href = "/overview";
   return null;

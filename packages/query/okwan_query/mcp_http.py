@@ -66,6 +66,7 @@ async def _caller(ctx: Context):
     tenant = await store.tenant_for_key(key)
     if tenant is None:
         raise Unauthenticated("invalid or revoked API key")
+    _in_mode(ctx, tenant)
 
     from okwan_api import access
 
@@ -86,8 +87,22 @@ async def _key_tenant(ctx: Context):
     tenant = await get_store().tenant_for_key(key)
     if tenant is None:
         raise Unauthenticated("invalid or revoked API key")
+    _in_mode(ctx, tenant)
     access.remember(ctx.headers or {}, _peer(ctx), key)
     return tenant
+
+
+def _in_mode(ctx: Context, tenant) -> None:
+    """As on REST (okwan_api.auth.key_in_mode): a key's own kind decides
+    where it reaches, and an Okwan-Mode that says otherwise, or is not a
+    mode, is refused rather than ignored."""
+    from okwan_api.auth import MODE_HEADER, ModeRefused, key_in_mode, mode_named
+
+    raw = (ctx.headers or {}).get(MODE_HEADER)
+    try:
+        key_in_mode(mode_named([] if raw is None else [raw]), tenant)
+    except ModeRefused as exc:
+        raise Unauthenticated(str(exc)) from None
 
 
 def _peer(ctx: Context) -> str | None:

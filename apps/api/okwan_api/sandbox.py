@@ -31,7 +31,8 @@ checks, open items, decisions and webhooks included.
   Okwan's operator in its place. It gets no daily check and no daily
   mail, is left out of the operator console's customer counts, and goes
   with its account. It is named "Sandbox": nothing of the account's name,
-  for a self-serve account its sign-in address, reaches a test key.
+  for a self-serve account its sign-in address, reaches a test key, and
+  its daily-check settings carry no address (okwan_api/notify.py).
 
 Made from the live account (`POST /v1/sandbox`, an admin key or a
 dashboard session), which also issues, lists and revokes its keys. The

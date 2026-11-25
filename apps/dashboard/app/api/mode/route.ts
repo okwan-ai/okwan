@@ -1,4 +1,4 @@
-import { api, session, setTestMode } from "@/lib/api";
+import { api, session, setTestMode, testMode } from "@/lib/api";
 import { fail, json, readBody } from "@/lib/respond";
 
 /**
@@ -8,8 +8,14 @@ import { fail, json, readBody } from "@/lib/respond";
  * the session is sent to the live account again. Nothing else changes: it
  * is the same session, and the API decides what it reaches on each side.
  */
+/** The mode this browser is in now, for a page to compare with its own. */
+export async function GET() {
+  return json({ mode: (await testMode()) ? "test" : "live" });
+}
+
 export async function POST(req: Request) {
-  const body = await readBody<{ mode?: unknown }>(req);
+  // Switching is what a page left in the other mode may still do.
+  const body = await readBody<{ mode?: unknown }>(req, undefined, { anyMode: true });
   if (body instanceof Response) return body;
   const token = await session();
   if (!token) return fail("signed out", 401);

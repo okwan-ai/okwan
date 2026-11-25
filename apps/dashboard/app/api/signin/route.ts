@@ -2,7 +2,7 @@ import { api, setSession } from "@/lib/api";
 import { fail, json, readBody } from "@/lib/respond";
 
 export async function POST(req: Request) {
-  const body = await readBody<{ email?: string; password?: string }>(req);
+  const body = await readBody<{ email?: string; password?: string }>(req, undefined, { anyMode: true });
   if (body instanceof Response) return body;
   const r = await api<{ session: string }>("/v1/sessions", {
     method: "POST",

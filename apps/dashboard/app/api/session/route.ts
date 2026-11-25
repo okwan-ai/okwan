@@ -6,6 +6,7 @@ import { fail, json } from "@/lib/respond";
 export async function GET() {
   const token = await session();
   if (!token) return fail("signed out", 401);
-  const r = await api("/v1/tenants", { session: token });
+  // Only the session's own clock: whichever mode the page is in.
+  const r = await api("/v1/tenants", { session: token, live: true });
   return r.ok ? json({ ok: true }) : fail("signed out", r.status === 401 ? 401 : r.status);
 }

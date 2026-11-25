@@ -8,7 +8,7 @@ import { myUsage } from "@/lib/usage";
 import { Sidebar } from "./_components/sidebar";
 import { IdleGuard } from "./_components/idle-guard";
 import { SupportPanel } from "./_components/support-panel";
-import { TestModeBanner } from "./_components/test-mode";
+import { ModeStamp, TestModeBanner } from "./_components/test-mode";
 import { TopBar } from "./_components/top-bar";
 import { OkwanLogo } from "./_components/ui/mark";
 import "./globals.css";
@@ -55,6 +55,7 @@ export default async function RootLayout({
         </a>
         {tree ? (
           <div className="min-[900px]:flex">
+            <ModeStamp mode={testing ? "test" : "live"} />
             <Sidebar
               tenant={tree.self.name}
               merchants={tree.children.map((c) => ({ id: c.id, name: c.name }))}

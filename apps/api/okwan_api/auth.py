@@ -121,16 +121,38 @@ MODE_HEADER = "okwan-mode"
 TEST, LIVE = "test", "live"
 
 
-def asked_mode(request: Request) -> str:
-    """The mode a request names: TEST, LIVE, or "" when it names none.
-    Anything else, an empty value or the header twice, is refused."""
-    values = request.headers.getlist(MODE_HEADER)
+class ModeRefused(ValueError):
+    """An Okwan-Mode that is not one, or not the key's own."""
+
+
+def mode_named(values: list[str]) -> str:
+    """The mode the header's values name: TEST, LIVE, or "" for none.
+    Anything else, an empty value or the header twice, is refused. Shared by
+    REST and the hosted MCP server, so the two read it alike."""
     if not values:
         return ""
     mode = values[0].strip().lower()
     if len(values) > 1 or mode not in (TEST, LIVE):
-        raise HTTPException(400, "Okwan-Mode is sent once, as `test` or `live`")
+        raise ModeRefused("Okwan-Mode is sent once, as `test` or `live`")
     return mode
+
+
+def key_in_mode(mode: str, tenant: Tenant) -> None:
+    """A key's own kind decides where it reaches: a mode that says the
+    other is refused, never followed."""
+    if mode and (mode == TEST) != tenant.sandbox:
+        raise ModeRefused(
+            "This is a live key: Okwan-Mode cannot move it into the sandbox. Use a test key (okw_test_…), "
+            "issued by POST /v1/sandbox/keys." if mode == TEST else
+            "This is a test key: it reaches the sandbox and nothing live. Use a live key for live data.")
+
+
+def asked_mode(request: Request) -> str:
+    """The mode a request names (mode_named), or 400."""
+    try:
+        return mode_named(request.headers.getlist(MODE_HEADER))
+    except ModeRefused as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 async def in_mode(tenant: Tenant, mode: str) -> Tenant:
@@ -166,12 +188,10 @@ async def _key_access(request: Request, authorization: str, x_okwan_key: str) ->
     found = await get_store().access_for_key(key)
     if found is None:
         raise HTTPException(401, "invalid or revoked API key")
-    mode = asked_mode(request)
-    if mode and (mode == TEST) != found[0].sandbox:
-        raise HTTPException(400, (
-            "This is a live key: Okwan-Mode cannot move it into the sandbox. Use a test key (okw_test_…), "
-            "issued by POST /v1/sandbox/keys." if mode == TEST else
-            "This is a test key: it reaches the sandbox and nothing live. Use a live key for live data."))
+    try:
+        key_in_mode(asked_mode(request), found[0])
+    except ModeRefused as exc:
+        raise HTTPException(400, str(exc)) from None
     access.remember_request(request, key)
     versions.remember(request, found[0])
     return found
@@ -193,6 +213,26 @@ async def key_version(request: Request) -> None:
     found = await get_store().access_for_key(key)
     if found is not None:
         versions.remember(request, found[0])
+
+
+async def signed_in(
+    request: Request,
+    authorization: str = Header(default=""),
+    x_okwan_key: str = Header(default=""),
+) -> Tenant:
+    """The account a dashboard session belongs to, whatever mode the
+    request names: for what a session does to itself, signing out, which
+    must work even when its Test mode cannot (no sandbox, a bad header)."""
+    token = x_okwan_key.strip()
+    if not token and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token.startswith(f"{accounts.SESSION_PREFIX}_"):
+        raise HTTPException(401, "missing session — sign in")
+    tenant = await get_store().tenant_for_session(accounts.hash_token(token))
+    if tenant is None:
+        raise HTTPException(401, "session expired — sign in again")
+    access.remember_request(request, token)
+    return tenant
 
 
 async def admin_actor(
