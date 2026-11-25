@@ -31,10 +31,15 @@ checks, open items, decisions and webhooks included.
   Okwan's operator in its place. It gets no daily check and no daily
   mail, is left out of the operator console's customer counts, and goes
   with its account. It is named "Sandbox": nothing of the account's name,
-  for a self-serve account its sign-in address, reaches a test key.
+  for a self-serve account its sign-in address, reaches a test key, and
+  its daily-check settings carry no address (okwan_api/notify.py).
 
 Made from the live account (`POST /v1/sandbox`, an admin key or a
-dashboard session), which also issues, lists and revokes its keys. Asked
+dashboard session), which also issues, lists and revokes its keys. The
+dashboard's Test mode is the same sandbox: its session, sent with
+`Okwan-Mode: test`, acts as the sandbox (okwan_api.auth.in_mode), so every
+admin route reaches the sandbox and nothing live, as a test admin key
+does, while billing stays the live account's. Asked
 again, `POST /v1/sandbox` puts a fresh week in any tenant of it whose
 week is missing, half there, or more than REFRESH_AFTER old, and an
 hourly sweep does the same for every sandbox, so the sandbox always holds

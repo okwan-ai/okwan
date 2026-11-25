@@ -110,6 +110,66 @@ async def current_tenant(
     return tenant
 
 
+#: The header the dashboard's Test mode sends with its session: `test`
+#: moves a signed-in person into their account's sandbox, where the session
+#: reaches the sandbox and nothing live, as a test key does. Only a session
+#: is moved by it. A key's own kind decides where it reaches, and a key sent
+#: with a mode that is not its own is refused, so that no one believes a
+#: live key is testing. It is read from the request rather than declared, so
+#: the reference does not offer it on every route as if a key could use it.
+MODE_HEADER = "okwan-mode"
+TEST, LIVE = "test", "live"
+
+
+class ModeRefused(ValueError):
+    """An Okwan-Mode that is not one, or not the key's own."""
+
+
+def mode_named(values: list[str]) -> str:
+    """The mode the header's values name: TEST, LIVE, or "" for none.
+    Anything else, an empty value or the header twice, is refused. Shared by
+    REST and the hosted MCP server, so the two read it alike."""
+    if not values:
+        return ""
+    mode = values[0].strip().lower()
+    if len(values) > 1 or mode not in (TEST, LIVE):
+        raise ModeRefused("Okwan-Mode is sent once, as `test` or `live`")
+    return mode
+
+
+def key_in_mode(mode: str, tenant: Tenant) -> None:
+    """A key's own kind decides where it reaches: a mode that says the
+    other is refused, never followed."""
+    if mode and (mode == TEST) != tenant.sandbox:
+        raise ModeRefused(
+            "This is a live key: Okwan-Mode cannot move it into the sandbox. Use a test key (okw_test_…), "
+            "issued by POST /v1/sandbox/keys." if mode == TEST else
+            "This is a test key: it reaches the sandbox and nothing live. Use a live key for live data.")
+
+
+def asked_mode(request: Request) -> str:
+    """The mode a request names (mode_named), or 400."""
+    try:
+        return mode_named(request.headers.getlist(MODE_HEADER))
+    except ModeRefused as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+async def in_mode(tenant: Tenant, mode: str) -> Tenant:
+    """Where a signed-in person is working: their account, or with TEST its
+    sandbox, which they make first (POST /v1/sandbox, or switching Test mode
+    on in the dashboard)."""
+    if mode != TEST:
+        return tenant
+    if tenant.sandbox or tenant.parent_id is not None:
+        raise HTTPException(400, "Okwan-Mode: test is for an account's own session")
+    found = await get_store().sandbox_for(tenant.id)
+    if found is None:
+        raise HTTPException(409, "no sandbox yet: switch Test mode on in the dashboard, or POST /v1/sandbox, "
+                                 "to make it")
+    return found
+
+
 #: What a read-only key is told at an administration route.
 READ_ONLY = ("This API key is read-only: it reads data through the API, SQL and MCP, and cannot manage "
              "merchants, keys, connections or files. Use the dashboard, or a key issued with admin access.")
@@ -128,6 +188,10 @@ async def _key_access(request: Request, authorization: str, x_okwan_key: str) ->
     found = await get_store().access_for_key(key)
     if found is None:
         raise HTTPException(401, "invalid or revoked API key")
+    try:
+        key_in_mode(asked_mode(request), found[0])
+    except ModeRefused as exc:
+        raise HTTPException(400, str(exc)) from None
     access.remember_request(request, key)
     versions.remember(request, found[0])
     return found
@@ -151,6 +215,26 @@ async def key_version(request: Request) -> None:
         versions.remember(request, found[0])
 
 
+async def signed_in(
+    request: Request,
+    authorization: str = Header(default=""),
+    x_okwan_key: str = Header(default=""),
+) -> Tenant:
+    """The account a dashboard session belongs to, whatever mode the
+    request names: for what a session does to itself, signing out, which
+    must work even when its Test mode cannot (no sandbox, a bad header)."""
+    token = x_okwan_key.strip()
+    if not token and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token.startswith(f"{accounts.SESSION_PREFIX}_"):
+        raise HTTPException(401, "missing session — sign in")
+    tenant = await get_store().tenant_for_session(accounts.hash_token(token))
+    if tenant is None:
+        raise HTTPException(401, "session expired — sign in again")
+    access.remember_request(request, token)
+    return tenant
+
+
 async def admin_actor(
     request: Request,
     authorization: str = Header(default=""),
@@ -165,6 +249,10 @@ async def admin_actor(
     subtree-guarded and metered to the target. The runs also pass the
     same plan gate as `check_quota`.
 
+    A session sent with `Okwan-Mode: test` acts as its account's sandbox
+    (in_mode): every admin route then reaches the sandbox and nothing live,
+    as a test admin key does.
+
     A read-only key is refused here with 403, whatever the route: one
     handed to an AI client or a reporting job can read, but cannot add a
     merchant, issue or revoke a key, replace a saved credential or delete
@@ -178,6 +266,8 @@ async def admin_actor(
         if tenant is None:
             raise HTTPException(401, "session expired — sign in again")
         access.remember_request(request, token)
+        # Test mode: the same person, working in their account's sandbox.
+        tenant = await in_mode(tenant, asked_mode(request))
         versions.remember(request, tenant)
         return tenant
     tenant, scope = await _key_access(request, authorization, x_okwan_key)

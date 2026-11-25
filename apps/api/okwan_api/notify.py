@@ -68,13 +68,18 @@ async def _account(actor, tenant_id: str):
 async def _view(tenant_id: str, settings: dict) -> dict[str, Any]:
     from okwan_recon.registry import get_across
 
+    tenant = await get_store().get_tenant(tenant_id)
+    sandbox = tenant is not None and tenant.sandbox
+
     return {
         "daily_checks": settings["daily_checks"],
         "finding_emails": settings["finding_emails"],
         "aging_days": settings["aging_days"],
         "large_amount": settings["large_amount"],
         # Where the mail goes, and whether this server can send it at all.
-        "email": await get_store().account_email(tenant_id),
+        # A sandbox gets no mail, and its keys never learn the live account's
+        # sign-in address (okwan_api/sandbox.py).
+        "email": None if sandbox else await get_store().account_email(tenant_id),
         "emails_blocked": mail_blocked(),
         "paused_by_operator": not enabled(),
         "check": FOLD,

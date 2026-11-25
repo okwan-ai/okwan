@@ -27,7 +27,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from okwan_vault import accounts
 from pydantic import BaseModel, Field
 
-from .auth import admin_actor, get_store
+from .auth import get_store, signed_in
 from .mail import dashboard_url, deliver_verification, get_mailer
 from .ratelimit import (
     SIGNIN_ADDRESS,
@@ -149,9 +149,12 @@ def build_router() -> APIRouter:
 
     @router.delete("/sessions/current", status_code=204)
     async def sign_out(
-        authorization: str = Header(default=""), _=Depends(admin_actor)
+        authorization: str = Header(default=""), x_okwan_key: str = Header(default=""),
+        _=Depends(signed_in),
     ) -> None:
-        token = authorization[7:].strip()
+        # The session itself, whatever mode the request names: signing out
+        # never depends on the sandbox being there.
+        token = x_okwan_key.strip() or authorization[7:].strip()
         await get_store().delete_session(accounts.hash_token(token))
 
     return router

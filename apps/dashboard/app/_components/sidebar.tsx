@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type RunDigest, type SeenFinding, verdictOf } from "@/lib/finding";
 import { CommandPalette, openPalette } from "./command-palette";
 import { openSupport } from "./support-panel";
+import { TestModeSwitch } from "./test-mode";
 import { useDialog } from "./ui/dialog";
 import type { Usage } from "@/lib/usage-shape";
 import { IconArrowRight, IconClose, IconGear, IconHelp, IconLock, IconMenu, IconSearch, IconSignOut, NavAgents, NavApi, NavFindings, NavHome, NavIntegrations, NavMerchants, NavOpen } from "./ui/icons";
@@ -17,7 +18,7 @@ export type MerchantLink = { id: string; name: string };
 /** `tenant` is the workspace name. A self-serve workspace is named by its
  * verified address, so for most accounts this line is the email; the API
  * exposes no other. */
-export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts, findings, operator = false }: {
+export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts, findings, operator = false, testMode = false }: {
   tenant: string;
   merchants: MerchantLink[];
   /** Every connector, for the palette's Integrations group. */
@@ -31,6 +32,8 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
   /** Okwan staff on the operator allowlist: show the console link. The API
    *  decides; for everyone else the link does not exist. */
   operator?: boolean;
+  /** In the account's sandbox (app/_components/test-mode). */
+  testMode?: boolean;
 }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
@@ -119,9 +122,10 @@ export function Sidebar({ tenant, merchants, connectors, plan, apiBase, verdicts
 
   const footer = (
     <div className="space-y-3">
-      <PlanCard plan={plan} />
+      <PlanCard plan={plan} sandbox={testMode} />
       {/* Phones: the account menu lives here; wide screens have the top bar. */}
       <div className="space-y-1 text-sm min-[900px]:hidden">
+        <TestModeSwitch on={testMode} />
         <Link
           href="/settings"
           aria-current={path === "/settings" ? "page" : undefined}
@@ -282,8 +286,9 @@ function PlanBubble() {
   );
 }
 
-/** The month against the plan, and the one way up from Free. */
-function PlanCard({ plan }: { plan: Usage["plan"] | null }) {
+/** The month against the plan, and the one way up from Free. In Test mode,
+ *  the sandbox's own allowance, which no plan changes. */
+function PlanCard({ plan, sandbox = false }: { plan: Usage["plan"] | null; sandbox?: boolean }) {
   if (!plan) {
     return (
       <div className="px-[13px] text-sm">
@@ -300,7 +305,7 @@ function PlanCard({ plan }: { plan: Usage["plan"] | null }) {
     : `${plan.used.toLocaleString("en-US")} of ${plan.limit.toLocaleString("en-US")} this month`;
   return (
     <div className="pr-[2px] pl-[13px]">
-      <p className="text-[18px] font-bold capitalize 2xl:text-[20px]">{plan.name} Plan</p>
+      <p className="text-[18px] font-bold capitalize 2xl:text-[20px]">{sandbox ? "Sandbox" : `${plan.name} Plan`}</p>
       {s.share !== null && (
         <div
           role="progressbar"
@@ -322,7 +327,7 @@ function PlanCard({ plan }: { plan: Usage["plan"] | null }) {
         href="/settings?tab=plan"
         className="mt-6 -mr-[4px] -ml-[3px] flex min-h-12 items-center justify-center gap-3 rounded-full bg-white text-[16px] font-bold text-accent shadow-[0_10px_24px_-12px_rgba(52,40,160,0.45),0_0_0_1px_rgba(232,233,246,0.9)] hover:bg-accent-soft 2xl:text-[18px]"
       >
-        {free ? "Upgrade Plan" : "Manage plan"} <IconArrowRight />
+        {sandbox ? "Usage" : free ? "Upgrade Plan" : "Manage plan"} <IconArrowRight />
       </Link>
     </div>
   );

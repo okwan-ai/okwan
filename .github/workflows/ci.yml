@@ -130,6 +130,25 @@ jobs:
       - if: matrix.app == 'dashboard'
         name: Layout check
         run: node scripts/layout-check.mjs
+      # Test mode across two tabs (scripts/test-mode-stale-page.mjs, from the
+      # attacker's pass on Test mode): a page left open in one mode never acts
+      # in the other. Its own seeded API and dashboard, so the account starts
+      # with no sandbox. Part of the required `web (dashboard)` check.
+      - if: matrix.app == 'dashboard'
+        name: Test mode across two tabs
+        run: |
+          # A throwaway sign-in for this job's in-memory workspace, not a secret.
+          pw=$(openssl rand -hex 16)
+          echo "::add-mask::$pw"
+          UI_CHECK_EMAIL=stale@okwan.test UI_CHECK_PASSWORD=$pw UI_CHECK_API_PORT=8001 \
+            nohup python ../../scripts/ui_server.py > ui_server_stale.log 2>&1 &
+          for i in $(seq 1 60); do grep -q seeded ui_server_stale.log && break; sleep 1; done
+          grep -q seeded ui_server_stale.log || { cat ui_server_stale.log; exit 1; }
+          PORT=3001 OKWAN_API_URL=http://127.0.0.1:8001 nohup npm start > dashboard_stale.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3001/signup && break; sleep 1; done
+          curl -sf -o /dev/null http://localhost:3001/signup || { cat dashboard_stale.log; exit 1; }
+          BASE=http://localhost:3001 API=http://127.0.0.1:8001 EMAIL=stale@okwan.test PASSWORD=$pw \
+            node scripts/test-mode-stale-page.mjs
       - if: failure() && matrix.app == 'dashboard'
         uses: actions/upload-artifact@v4
         with:

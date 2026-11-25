@@ -153,7 +153,8 @@ def test_every_handler_acts_on_the_origin_checks_refusal_before_anything_else():
             seen += 1
             if any("await" in line for line in lines[:at]):
                 faults.append(f"{where} {found[1]}: something is awaited before the Origin check")
-            taken = re.fullmatch(r"const (\w+) = await readBody(?:<.+>)?\(req\);", lines[at])
+            # readBody(req), or with its size limit and options after it.
+            taken = re.fullmatch(r"const (\w+) = await readBody(?:<.+>)?\(req(?:, [^;]+)?\);", lines[at])
             if taken:
                 if lines[at + 1] != f"if ({taken[1]} instanceof Response) return {taken[1]};":
                     faults.append(f"{where} {found[1]}: the refusal `readBody` answered is not returned")

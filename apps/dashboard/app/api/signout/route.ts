@@ -5,7 +5,7 @@ import { sameOrigin } from "@/lib/api";
 export async function POST(req: Request) {
   if (!sameOrigin(req)) return fail("cross-origin request refused", 403);
   const token = await session();
-  if (token) await api("/v1/sessions/current", { method: "DELETE", session: token });
+  if (token) await api("/v1/sessions/current", { method: "DELETE", session: token, live: true });
   await clearSession();
   return json({ ok: true });
 }

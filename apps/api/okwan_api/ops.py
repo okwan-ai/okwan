@@ -36,7 +36,7 @@ from okwan_vault.usage import month_start, quota
 from pydantic import BaseModel, Field
 
 from . import disputes, versions
-from .auth import get_store
+from .auth import TEST, asked_mode, get_store
 from .mail import MailNotSent, get_mailer
 from .ratelimit import OPS_UNLOCK, OPS_UNLOCK_IP, client_ip, enforce
 from .support import CATEGORY_LABELS, redact
@@ -86,6 +86,10 @@ async def operator(request: Request, authorization: str = Header(default="")) ->
     email = await store.account_email(tenant.id)
     if not email or accounts.normalize_email(email) not in allowed:
         raise _not_found()
+    if asked_mode(request) == TEST:
+        # The console is Okwan's and live: what it does reaches customers.
+        # Only an operator is told, so the console stays unseen by others.
+        raise HTTPException(403, "the console is live: leave Test mode to use it")
     until = await store.session_operator_until(token_hash)
     return Operator(accounts.normalize_email(email), tenant.id, token_hash, until)
 
